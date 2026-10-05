@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Danh sách email Google được phép dùng app. Thêm email đồng nghiệp vào đây rồi Publish.
+    function allowed() {
+      return request.auth != null && request.auth.token.email in [
+        'email-chu-shop@gmail.com',
+        'email-dong-nghiep@gmail.com'
+      ];
+    }
+    match /shops/{shopId}/{document=**} {
+      allow read, write: if allowed();
+    }
+  }
+}
