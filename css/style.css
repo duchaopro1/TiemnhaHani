@@ -81,7 +81,7 @@ a { color: var(--blue); }
 
 /* ---------- Layout ---------- */
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
   display: flex; align-items: center; gap: 20px;
   padding: 12px 24px;
   background: rgba(255,255,255,.85);
@@ -200,6 +200,9 @@ dialog::backdrop { background: rgba(29, 36, 51, .35); backdrop-filter: blur(2px)
 .modal-head .icon-btn { margin-left: auto; font-size: 20px; }
 .modal-body { padding: 18px 20px; }
 .modal-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 14px 20px; border-top: 1px solid var(--line); position: sticky; bottom: 0; background: #fff; }
+
+dialog.confirm { width: min(420px, calc(100vw - 32px)); }
+dialog.confirm p { margin: 0; font-size: 15px; }
 
 /* order line editor */
 .line {

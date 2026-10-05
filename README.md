@@ -47,9 +47,20 @@ Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng k�
    Mẹo: đặt **SKU** sản phẩm trong app trùng với SKU phân loại trên Shopee là app tự khớp luôn.
 4. Nhập lại file cũ không bị trùng đơn. App chỉ cập nhật trạng thái và phí sàn, còn đóng gói bạn đã chọn thì giữ nguyên.
 
+## Link dùng chung (đang chạy)
+
+👉 **https://claude.ai/artifact/S67N4vcEEpb6iSEQSnFGhA**
+
+Bản này chạy trên Claude, dữ liệu lưu online và đồng bộ ngay giữa mọi người.
+Thêm đồng nghiệp: mở link, bấm **Share**, mời bằng email với quyền **Editor** (hoặc **Contributor** nếu cùng team Claude).
+Người chỉ có quyền xem (Viewer) thì xem được nhưng không lưu được thay đổi. Mỗi người cần có tài khoản claude.ai.
+
+Trang chính của bản này là `hani.html` (dùng chung `css/` và `js/` với `index.html`).
+Muốn cập nhật bản online sau khi sửa code, nhờ Claude xuất bản lại `hani.html` vào đúng link trên.
+
 ## Lưu dữ liệu & chia sẻ link cho đồng nghiệp
 
-App có 2 chế độ:
+Ngoài link Claude ở trên, app còn chạy được ở 2 chế độ khi tự host:
 
 - **Chỉ máy này** (mặc định, chưa cấu hình gì): dữ liệu lưu trong trình duyệt. Dùng để thử.
 - **Dùng chung online** (Firebase, miễn phí): dữ liệu lưu trên cloud và đồng bộ realtime. Ai có link và email được cấp quyền đều dùng được, kể cả trên điện thoại.

@@ -44,7 +44,7 @@ class LocalStore extends BaseStore {
     try {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(this.state));
     } catch (e) {
-      alert('Không lưu được dữ liệu vào trình duyệt: ' + e.message);
+      this.onError?.({ code: 'local', message: 'Không lưu được dữ liệu vào trình duyệt: ' + e.message });
     }
   }
   async upsert(coll, doc) {
@@ -146,8 +146,80 @@ class FirebaseStore extends BaseStore {
   }
 }
 
+// Shared store of a Claude artifact page (the `db` capability): realtime, kept server-side,
+// shared by everyone the page is shared with.
+class ArtifactStore extends BaseStore {
+  mode = 'artifact';
+  constructor(db) {
+    super();
+    this.db = db;
+  }
+  async init() {
+    for (const c of COLLECTIONS) {
+      this.db.collection(c).onSnapshot(
+        (snap) => {
+          this.data[c] = new Map(snap.docs.map((d) => [d.id, { ...d.data(), id: d.id }]));
+          this.emit();
+        },
+        (err) => this.onError?.(err),
+      );
+    }
+  }
+  async write(coll, doc) {
+    doc.id ||= uid();
+    doc.updatedAt = Date.now();
+    const body = JSON.parse(JSON.stringify(doc));
+    this.data[coll].set(doc.id, body); // show it right away; the snapshot confirms it
+    try {
+      await this.db.collection(coll).doc(doc.id).set(body);
+    } catch (err) {
+      this.onError?.(err);
+      throw err;
+    }
+    return doc;
+  }
+  async upsert(coll, doc) {
+    const out = await this.write(coll, doc);
+    this.emit();
+    return out;
+  }
+  async upsertMany(coll, docs) {
+    // A few writes in flight at a time keeps big Shopee imports quick without hitting rate limits.
+    const queue = [...docs];
+    const worker = async () => { while (queue.length) await this.write(coll, queue.shift()); };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    this.emit();
+  }
+  async remove(coll, id) {
+    this.data[coll].delete(id);
+    this.emit();
+    try {
+      await this.db.collection(coll).doc(id).delete();
+    } catch (err) {
+      this.onError?.(err);
+      throw err;
+    }
+  }
+}
+
 export const firebaseEnabled = Boolean(firebaseConfig && firebaseConfig.apiKey);
-export const store = firebaseEnabled ? new FirebaseStore() : new LocalStore();
+
+// Picked by initStore(): Firebase when configured, the artifact's shared db when the
+// page runs as a Claude artifact, otherwise this browser's localStorage.
+export let store;
+
+export async function initStore() {
+  if (firebaseEnabled) {
+    store = new FirebaseStore();
+  } else {
+    let db = null;
+    try {
+      db = window.claude?.use ? await window.claude.use('db') : null;
+    } catch { /* not served here */ }
+    store = db ? new ArtifactStore(db) : new LocalStore();
+  }
+  return store;
+}
 
 /** Replace all data with a backup (JSON exported from Cài đặt). */
 export async function restoreBackup(backup) {

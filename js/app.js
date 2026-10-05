@@ -1,4 +1,4 @@
-import { store, firebaseEnabled, restoreBackup, uid } from './store.js';
+import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
   costTable, lineCost, orderSummary, stockLevels, aggregate,
@@ -18,13 +18,36 @@ const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'vi');
 
 const CATEGORIES = { her: 'for her', him: 'for him', friend: 'for friend', other: 'khác' };
 
-function toast(msg) {
+function toast(msg, ms = 2600) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = msg;
   document.body.append(el);
-  setTimeout(() => el.remove(), 2600);
+  setTimeout(() => el.remove(), ms);
 }
+const notify = (msg) => toast(msg, 5000);
+
+/** In-page yes/no dialog (browser confirm() is blocked inside Claude artifacts). */
+function ask(message, okLabel = 'Xoá') {
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog');
+    d.className = 'confirm';
+    d.innerHTML = `<div class="modal-body"><p></p></div>
+      <div class="modal-foot"><button class="btn ghost" value="no">Huỷ</button><button class="btn danger" value="yes"></button></div>`;
+    $('p', d).textContent = message;
+    $('[value=yes]', d).textContent = okLabel;
+    d.addEventListener('click', (e) => { if (e.target.value) d.close(e.target.value); });
+    d.addEventListener('close', () => { resolve(d.returnValue === 'yes'); d.remove(); });
+    document.body.append(d);
+    d.showModal();
+  });
+}
+
+const MODES = {
+  firebase: { dot: '', label: () => store.user?.email || 'Online', title: 'Dữ liệu đồng bộ qua Firebase' },
+  artifact: { dot: '', label: () => 'Dùng chung', title: 'Dữ liệu lưu online, dùng chung với những người được chia sẻ trang' },
+  local: { dot: 'local', label: () => 'Chỉ máy này', title: 'Dữ liệu chỉ lưu trong trình duyệt này' },
+};
 
 /* ================= derived state ================= */
 let S, costs, stock, settings;
@@ -69,8 +92,8 @@ function render() {
       <nav class="tabs">
         ${Object.entries(TABS).map(([k, v]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${v}</button>`).join('')}
       </nav>
-      <span class="sync" title="${firebaseEnabled ? 'Dữ liệu đồng bộ qua Firebase' : 'Dữ liệu chỉ lưu trong trình duyệt này'}">
-        <i class="dot ${firebaseEnabled ? '' : 'local'}"></i>${firebaseEnabled ? esc(store.user?.email || 'Online') : 'Chỉ máy này'}
+      <span class="sync" title="${MODES[store.mode].title}">
+        <i class="dot ${MODES[store.mode].dot}"></i>${esc(MODES[store.mode].label())}
       </span>
     </header>
     <main>${pages[tab]()}</main>`;
@@ -431,7 +454,7 @@ async function importShopeeFile(file) {
     else await commitShopee(parsed);
   } catch (e) {
     console.error(e);
-    alert('Lỗi đọc file: ' + e.message);
+    notify('Lỗi đọc file: ' + e.message);
   }
 }
 
@@ -568,7 +591,7 @@ function openImportForm(existing) {
       form.addEventListener('change', sync);
       sync();
       $('[data-close2]', m).onclick = () => m.close();
-      if (existing) $('#imp-del', m).onclick = async () => { if (confirm('Xoá phiếu nhập này?')) { await store.remove('imports', existing.id); m.close(); } };
+      if (existing) $('#imp-del', m).onclick = async () => { if (await ask('Xoá phiếu nhập này?')) { await store.remove('imports', existing.id); m.close(); } };
       $('#imp-save', m).onclick = async () => {
         if (!form.reportValidity()) return;
         const d = formData(form);
@@ -760,14 +783,17 @@ function pageSettings() {
     <div class="grid two">
       <div class="card">
         <h3>Lưu trữ & chia sẻ</h3>
-        ${firebaseEnabled ? `
+        ${store.mode === 'firebase' ? `
           <p>✅ Đang đồng bộ online qua Firebase. Mọi thay đổi hiện ngay trên máy đồng nghiệp.</p>
           <p class="small muted">Đăng nhập: <b>${esc(store.user?.email || '')}</b></p>
           <div class="toolbar"><button class="btn" data-action="copy-link">Sao chép link gửi đồng nghiệp</button><button class="btn ghost" data-action="sign-out">Đăng xuất</button></div>
           <p class="small muted">Đồng nghiệp cần đăng nhập Google bằng email đã được thêm vào <code>firestore.rules</code>.</p>`
+        : store.mode === 'artifact' ? `
+          <p>✅ Dữ liệu lưu online và dùng chung. Ai được chia sẻ trang này đều thấy cùng một dữ liệu, cập nhật ngay khi có người sửa.</p>
+          <p class="small muted">Để thêm đồng nghiệp: bấm <b>Share</b> ở góc trên trang, mời bằng email với quyền <b>Editor</b> (hoặc Contributor nếu cùng team). Người chỉ có quyền xem sẽ không lưu được thay đổi.</p>`
         : `
           <p>⚠️ Đang ở chế độ <b>chỉ máy này</b>: dữ liệu lưu trong trình duyệt, đồng nghiệp chưa xem được.</p>
-          <p class="small muted">Để dùng chung: tạo project Firebase (miễn phí), dán cấu hình vào <code>js/firebase-config.js</code> rồi deploy — xem hướng dẫn trong README. Dữ liệu hiện có có thể chuyển sang bằng nút Sao lưu/Khôi phục.</p>`}
+          <p class="small muted">Để dùng chung: dùng link trang Hani trên Claude, hoặc tự cấu hình Firebase theo README. Dữ liệu hiện có chuyển sang bằng nút Sao lưu rồi Khôi phục.</p>`}
       </div>
       <div class="card">
         <h3>Sao lưu</h3>
@@ -787,7 +813,12 @@ function pageSettings() {
     </div>`;
 }
 
-function download(name, text, type) {
+async function download(name, text, type) {
+  const downloads = store.mode === 'artifact' ? await window.claude.use('downloads') : null;
+  if (downloads) {
+    try { await downloads.save({ filename: name, data: text }); } catch { /* viewer declined */ }
+    return;
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = name;
@@ -849,7 +880,7 @@ document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const id = btn.dataset.id;
-  const confirmDel = async (coll, msg) => { if (confirm(msg)) await store.remove(coll, id); };
+  const confirmDel = async (coll, msg) => { if (await ask(msg)) await store.remove(coll, id); };
   switch (btn.dataset.action) {
     case 'new-order': return openOrderForm();
     case 'edit-order': return openOrderForm(store.get('orders', id));
@@ -862,7 +893,7 @@ document.addEventListener('click', async (e) => {
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
     case 'del-product':
-      if (S.orders.some((o) => o.items?.some((l) => l.productId === id))) return alert('Sản phẩm đã có trong đơn hàng, không xoá được.');
+      if (S.orders.some((o) => o.items?.some((l) => l.productId === id))) return notify('Sản phẩm đã có trong đơn hàng, không xoá được.');
       return confirmDel('products', 'Xoá sản phẩm này?');
     case 'new-pack': return openPackForm();
     case 'del-pack': return confirmDel('packaging', 'Xoá dụng cụ này? (Các đơn cũ dùng dụng cụ này sẽ mất chi phí đóng gói tương ứng)');
@@ -870,8 +901,12 @@ document.addEventListener('click', async (e) => {
     case 'edit-preset': return openPresetForm(store.get('presets', id));
     case 'del-preset': return confirmDel('presets', 'Xoá bộ đóng gói này?');
     case 'copy-link':
-      await navigator.clipboard.writeText(location.origin + location.pathname);
-      return toast('Đã sao chép link');
+      try {
+        await navigator.clipboard.writeText(location.origin + location.pathname);
+        return toast('Đã sao chép link');
+      } catch {
+        return notify('Không sao chép được. Hãy copy link trên thanh địa chỉ.');
+      }
     case 'sign-out': return store.signOut();
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
     case 'export-orders': return exportOrdersCsv();
@@ -900,8 +935,8 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'restore-file' && t.files[0]) {
     try {
       const backup = JSON.parse(await t.files[0].text());
-      if (confirm('Thay toàn bộ dữ liệu hiện tại bằng bản sao lưu này?')) { await restoreBackup(backup); toast('Đã khôi phục'); }
-    } catch (err) { alert('File sao lưu không hợp lệ: ' + err.message); }
+      if (await ask('Thay toàn bộ dữ liệu hiện tại bằng bản sao lưu này?', 'Khôi phục')) { await restoreBackup(backup); toast('Đã khôi phục'); }
+    } catch (err) { notify('File sao lưu không hợp lệ: ' + err.message); }
     t.value = '';
   }
 });
@@ -921,19 +956,31 @@ function renderLogin(message = '') {
   $('#login-btn').onclick = () => store.signIn().catch((err) => renderLogin(err.message));
 }
 
-let renderQueued = false;
-store.onChange(() => {
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; if (!firebaseEnabled || store.user) render(); });
-});
-
-if (firebaseEnabled) {
-  $('#app').innerHTML = '<div class="login"><div class="logo big">hani</div></div>';
-  store.onError = (err) => {
-    if (err.code === 'permission-denied') renderLogin(`Email ${store.user?.email} chưa được cấp quyền. Nhờ chủ shop thêm email vào firestore.rules.`);
-  };
-  store.init((user) => (user ? render() : renderLogin())).catch((err) => renderLogin('Không kết nối được Firebase: ' + err.message));
-} else {
-  store.init().then(render);
+function onStoreError(err) {
+  if (err.code === 'permission-denied') return renderLogin(`Email ${store.user?.email} chưa được cấp quyền. Nhờ chủ shop thêm email vào firestore.rules.`);
+  if (err.code === 'invalid_argument' || err.code === 'not_granted') return notify('Không lưu được: bạn đang chỉ có quyền xem. Nhờ chủ shop chia sẻ quyền Editor.');
+  if (err.code === 'quota_exceeded') return notify('Kho dữ liệu đã đầy. Hãy xuất sao lưu rồi xoá bớt đơn cũ.');
+  if (err.code === 'revoked') return notify('Quyền truy cập trang đã thay đổi. Tải lại trang để tiếp tục.');
+  notify('Lỗi lưu dữ liệu: ' + (err.message || err.code));
 }
+
+async function boot() {
+  $('#app').innerHTML = '<div class="login"><div class="logo big">hani</div></div>';
+  await initStore();
+  store.onError = onStoreError;
+  let renderQueued = false;
+  store.onChange(() => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => { renderQueued = false; if (!firebaseEnabled || store.user) render(); });
+  });
+  if (firebaseEnabled) {
+    store.init((user) => (user ? render() : renderLogin())).catch((err) => renderLogin('Không kết nối được Firebase: ' + err.message));
+  } else {
+    await store.init();
+    render();
+  }
+}
+
+window.addEventListener('unhandledrejection', (e) => { if (e.reason?.code) e.preventDefault(); });
+boot();
