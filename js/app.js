@@ -108,7 +108,7 @@ function render() {
   $('#app').innerHTML = `
     <header class="topbar">
       <span class="logo">hani</span>
-      <span class="tag">quà nhỏ, kỉ niệm "to đùng"</span>
+      <span class="tag">món quà nho nhỏ, kỉ niệm "to đùng"</span>
       <nav class="tabs">
         ${Object.entries(TABS).map(([k, v]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${v}</button>`).join('')}
       </nav>
