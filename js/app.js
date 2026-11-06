@@ -91,7 +91,8 @@ const TABS = {
   settings: 'Cài đặt',
 };
 const ui = {
-  period: 'month',
+  period: 'month', // 'month' (the month in dashMonth), '30d' or 'all'
+  dashMonth: isoLocal(new Date()).slice(0, 7),
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '' },
   products: { q: '' },
@@ -175,19 +176,25 @@ async function saveImage(file) {
 }
 
 /* ================= DASHBOARD ================= */
+const thisMonth = () => isoLocal(new Date()).slice(0, 7);
+/** 'YYYY-MM' moved by n months. */
+const shiftMonth = (ym, n) => {
+  const [y, m] = ym.split('-').map(Number);
+  return isoLocal(new Date(y, m - 1 + n, 1)).slice(0, 7);
+};
+/** Show a month on the dashboard, never one in the future. */
+const viewMonth = (ym) => Object.assign(ui, { period: 'month', dashMonth: ym > thisMonth() ? thisMonth() : ym });
+
+/** [from, to, label] of the dashboard's selected period. */
 function periodRange() {
-  const now = new Date();
-  const iso = isoLocal;
-  switch (ui.period) {
-    case 'month': return [iso(new Date(now.getFullYear(), now.getMonth(), 1)), '9999'];
-    case 'lastmonth': return [iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), iso(new Date(now.getFullYear(), now.getMonth(), 0))];
-    case '30d': return [iso(new Date(now - 29 * 864e5)), '9999'];
-    default: return ['0000', '9999'];
-  }
+  if (ui.period === '30d') return [isoLocal(new Date(Date.now() - 29 * 864e5)), isoLocal(new Date()), '30 ngày qua'];
+  if (ui.period === 'all') return ['0000', '9999', 'Toàn bộ thời gian'];
+  const r = exportRange({ mode: 'month', month: ui.dashMonth });
+  return [r.from, r.to, r.label];
 }
 
 function pageDashboard() {
-  const [from, to] = periodRange();
+  const [from, to, periodLabel] = periodRange();
   const orders = S.orders.filter((o) => o.date >= from && o.date <= to);
   const agg = aggregate(costs, orders);
   const margin = agg.revenue ? (agg.profit / agg.revenue) * 100 : 0;
@@ -200,12 +207,27 @@ function pageDashboard() {
   const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= num(k.lowStock ?? settings.lowStock));
   const unmapped = S.orders.filter((o) => !INACTIVE_STATUSES.has(o.status) && o.items?.some((l) => !l.productId)).length;
   const pendingCount = S.orders.filter((o) => o.status === 'pending').length;
-  const periods = { month: 'Tháng này', lastmonth: 'Tháng trước', '30d': '30 ngày', all: 'Tất cả' };
+  const cur = thisMonth();
+  const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
+  const periods = [
+    ['this', 'Tháng này', isMonth(cur)],
+    ['prev', 'Tháng trước', isMonth(shiftMonth(cur, -1))],
+    ['30d', '30 ngày', ui.period === '30d'],
+    ['all', 'Tất cả', ui.period === 'all'],
+  ];
+  const pickedOther = ui.period === 'month' && !isMonth(cur) && !isMonth(shiftMonth(cur, -1));
 
   return `
     <div class="page-head">
-      <div><h1>Tổng quan</h1><p>Doanh thu & lợi nhuận đã trừ giá vốn, đóng gói, phí sàn và ship shop chịu.</p></div>
-      <div class="actions"><div class="seg">${Object.entries(periods).map(([k, v]) => `<button data-period="${k}" class="${ui.period === k ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+      <div><h1>Tổng quan</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · doanh thu & lợi nhuận đã trừ giá vốn, đóng gói, phí sàn và ship shop chịu.</p></div>
+      <div class="actions period-bar">
+        <div class="seg">${periods.map(([k, v, on]) => `<button data-period="${k}" class="${on ? 'on' : ''}">${v}</button>`).join('')}</div>
+        <div class="month-nav ${pickedOther ? 'on' : ''}">
+          <button class="icon-btn" data-month-step="-1" title="Tháng trước đó" aria-label="Tháng trước đó">‹</button>
+          <input type="month" id="dash-month" value="${esc(ui.period === 'month' ? ui.dashMonth : '')}" max="${cur}" aria-label="Chọn tháng">
+          <button class="icon-btn" data-month-step="1" title="Tháng sau" aria-label="Tháng sau" ${ui.period === 'month' && ui.dashMonth >= cur ? 'disabled' : ''}>›</button>
+        </div>
+      </div>
     </div>
     <div class="grid kpi">
       <div class="card kpi-card him"><div class="label">Doanh thu</div><div class="value">${money(agg.revenue)}</div></div>
@@ -1357,7 +1379,20 @@ document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]');
   if (tab) { location.hash = tab.dataset.tab; return; }
   const period = e.target.closest('[data-period]');
-  if (period) { ui.period = period.dataset.period; render(); return; }
+  if (period) {
+    const k = period.dataset.period;
+    if (k === 'this' || k === 'prev') viewMonth(shiftMonth(thisMonth(), k === 'prev' ? -1 : 0));
+    else ui.period = k;
+    render();
+    return;
+  }
+  const step = e.target.closest('[data-month-step]');
+  if (step && !step.disabled) {
+    // From "30 ngày"/"Tất cả" the arrows start at the current month.
+    viewMonth(ui.period === 'month' ? shiftMonth(ui.dashMonth, +step.dataset.monthStep) : thisMonth());
+    render();
+    return;
+  }
   const kind = e.target.closest('[data-import-kind]');
   if (kind) { ui.imports.kind = kind.dataset.importKind; render(); return; }
   const goto = e.target.closest('[data-goto-status]');
@@ -1411,6 +1446,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-platform') { ui.orders.platform = t.value; render(); }
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
+  if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.dataset.orderStatus) {
     const o = store.get('orders', t.dataset.orderStatus);
     await store.upsert('orders', { ...o, status: t.value });
