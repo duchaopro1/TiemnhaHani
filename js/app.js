@@ -4,6 +4,7 @@ import {
   costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize } from './shopee.js';
+import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -11,7 +12,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n) => `${Math.round(+n || 0).toLocaleString('vi-VN')}đ`;
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => isoLocal(new Date());
 const fmtDate = (d) => (d ? d.split('-').reverse().join('/') : '');
 const signCls = (n) => (n > 0 ? 'pos' : n < 0 ? 'neg' : '');
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'vi');
@@ -95,6 +96,7 @@ const ui = {
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '' },
   products: { q: '', cat: '' },
+  export: null, // last choices in the export dialog, kept for the visit
 };
 const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard');
 
@@ -176,7 +178,7 @@ async function saveImage(file) {
 /* ================= DASHBOARD ================= */
 function periodRange() {
   const now = new Date();
-  const iso = (d) => d.toISOString().slice(0, 10);
+  const iso = isoLocal;
   switch (ui.period) {
     case 'month': return [iso(new Date(now.getFullYear(), now.getMonth(), 1)), '9999'];
     case 'lastmonth': return [iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), iso(new Date(now.getFullYear(), now.getMonth(), 0))];
@@ -263,6 +265,7 @@ function pageOrders() {
       <div><h1>Đơn hàng</h1><p>Đơn Shopee nhập từ file Excel của Kênh Người Bán · Đơn Threads/Instagram thêm bằng tay.</p></div>
       <div class="actions">
         <label class="btn ghost">⬆ Nhập file Shopee<input type="file" id="shopee-file" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng</button>
         <button class="btn pink" data-action="new-order">＋ Thêm đơn</button>
       </div>
     </div>
@@ -1122,7 +1125,7 @@ function pageSettings() {
         <div class="toolbar">
           <button class="btn" data-action="backup">⬇ Tải bản sao lưu (.json)</button>
           <label class="btn ghost">⬆ Khôi phục<input type="file" id="restore-file" accept=".json" hidden></label>
-          <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng (.csv)</button>
+          <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng (Excel / CSV)</button>
         </div>
         <p class="small muted">Nên tải bản sao lưu định kỳ. Khôi phục sẽ <b>thay toàn bộ</b> dữ liệu hiện tại.</p>
       </div>
@@ -1135,28 +1138,157 @@ function pageSettings() {
     </div>`;
 }
 
-async function download(name, text, type) {
+async function download(name, data, type) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type });
   const downloads = store.mode === 'artifact' ? await window.claude.use('downloads') : null;
   if (downloads) {
-    try { await downloads.save({ filename: name, data: text }); } catch { /* viewer declined */ }
+    try { await downloads.save({ filename: name, data: blob }); } catch { /* viewer declined */ }
     return;
   }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-function exportOrdersCsv() {
-  const head = ['Ngày', 'Nền tảng', 'Mã đơn', 'Khách', 'Trạng thái', 'Sản phẩm', 'Doanh thu', 'Giá vốn SP', 'Đóng gói', 'Phí sàn', 'Ship shop chịu', 'Lợi nhuận'];
-  const rows = [...S.orders].sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((o) => {
-    const s = orderSummary(costs, o);
-    return [o.date, PLATFORMS[o.platform]?.label, o.code, o.customer, STATUSES[o.status],
-      (o.items || []).map((l) => `${itemLabel(l.productId, l.variantId, l.productName || '?')} x${l.qty}`).join('; '),
-      s.revenue, s.product, s.packaging, s.fee, s.ship, s.profit].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',');
+/* ---------- export orders ---------- */
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function openExportDialog() {
+  const q = quickRanges();
+  const st = ui.export ||= {
+    mode: 'month', day: q.today.day, month: q.thisMonth.month, from: q.last7.from, to: q.today.day,
+    platforms: Object.keys(PLATFORMS), includeInactive: false, format: 'xlsx',
+  };
+  const names = { item: itemLabel, pack: (id) => pack(id)?.name || '' };
+  const selection = () => {
+    const range = exportRange(st);
+    const orders = range ? ordersInRange(S.orders, range, { platforms: st.platforms, includeInactive: st.includeInactive }) : [];
+    return { range, orders };
+  };
+
+  openModal({
+    title: 'Xuất đơn hàng',
+    wide: false,
+    body: `<form id="export-form" class="export">
+      <div class="field"><span>Chọn nhanh</span>
+        <div class="chips">${Object.entries(q).map(([k, r]) => `<button type="button" class="chip-btn" data-quick="${k}">${r.label}</button>`).join('')}</div>
+      </div>
+      <div class="field"><span>Xuất theo</span>
+        <div class="seg" id="ex-mode">
+          <button type="button" data-v="day">Theo ngày</button>
+          <button type="button" data-v="month">Theo tháng</button>
+          <button type="button" data-v="range">Khoảng tuỳ chọn</button>
+        </div>
+      </div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr">
+        <label class="field" data-show="day">Ngày<input type="date" id="ex-day"></label>
+        <label class="field" data-show="month">Tháng<input type="month" id="ex-month"></label>
+        <label class="field" data-show="range">Từ ngày<input type="date" id="ex-from"></label>
+        <label class="field" data-show="range">Đến ngày<input type="date" id="ex-to"></label>
+      </div>
+      <div class="field"><span>Nền tảng</span>
+        <div class="chips">${Object.entries(PLATFORMS).map(([k, v]) => `<label class="check"><input type="checkbox" data-pf="${k}"> <span class="chip ${k}">${v.label}</span></label>`).join('')}</div>
+      </div>
+      <label class="check"><input type="checkbox" id="ex-inactive"> Gồm cả đơn đã huỷ / trả hàng (liệt kê nhưng không cộng vào tổng)</label>
+      <div class="field"><span>Định dạng file</span>
+        <div class="seg" id="ex-format">
+          <button type="button" data-v="xlsx">Excel (.xlsx)</button>
+          <button type="button" data-v="csv">CSV</button>
+        </div>
+        <span class="small muted" id="ex-format-note"></span>
+      </div>
+      <div class="summary" id="ex-sum"></div>
+    </form>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="ex-go">⬇ Tải file</button>`,
+    onMount(m) {
+      const form = $('#export-form', m);
+      const sync = () => {
+        $$('#ex-mode button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.mode));
+        $$('#ex-format button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.format));
+        $$('[data-show]', m).forEach((el) => (el.hidden = el.dataset.show !== st.mode));
+        $('#ex-day', m).value = st.day || '';
+        $('#ex-month', m).value = st.month || '';
+        $('#ex-from', m).value = st.from || '';
+        $('#ex-to', m).value = st.to || '';
+        $$('[data-pf]', m).forEach((c) => (c.checked = st.platforms.includes(c.dataset.pf)));
+        $('#ex-inactive', m).checked = st.includeInactive;
+        $('#ex-format-note', m).textContent = st.format === 'xlsx'
+          ? '3 sheet: Tổng hợp · Đơn hàng · Chi tiết sản phẩm'
+          : '1 bảng: mỗi dòng một đơn hàng';
+        const { range, orders } = selection();
+        const total = range ? buildSheets({ orders, costs, range, names }).total : null;
+        $('#ex-sum', m).innerHTML = range
+          ? `<div><span>Thời gian</span><b>${esc(range.label)}</b></div>
+             <div><span>Số đơn</span><b>${orders.length}</b></div>
+             <div><span>Doanh thu</span><b>${money(total.revenue)}</b></div>
+             <div class="profit ${total.profit < 0 ? 'neg' : ''}"><span>Lợi nhuận</span><b>${money(total.profit)}</b></div>`
+          : '<div><span>Thời gian</span><b>Chọn đủ ngày</b></div>';
+        const go = $('#ex-go', m);
+        go.disabled = !range || !orders.length;
+        go.textContent = !range ? '⬇ Tải file' : orders.length ? `⬇ Tải ${orders.length} đơn` : 'Không có đơn nào';
+      };
+      form.addEventListener('click', (e) => {
+        const quick = e.target.closest('[data-quick]');
+        if (quick) Object.assign(st, q[quick.dataset.quick]);
+        const mode = e.target.closest('#ex-mode [data-v]');
+        if (mode) st.mode = mode.dataset.v;
+        const fmt = e.target.closest('#ex-format [data-v]');
+        if (fmt) st.format = fmt.dataset.v;
+        if (quick || mode || fmt) sync();
+      });
+      form.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t.id === 'ex-day') st.day = t.value;
+        if (t.id === 'ex-month') st.month = t.value;
+        if (t.id === 'ex-from') st.from = t.value;
+        if (t.id === 'ex-to') st.to = t.value;
+        if (t.id === 'ex-inactive') st.includeInactive = t.checked;
+        if (t.dataset.pf) st.platforms = $$('[data-pf]', m).filter((c) => c.checked).map((c) => c.dataset.pf);
+        sync();
+      });
+      $('[data-close2]', m).onclick = () => m.close();
+      $('#ex-go', m).onclick = async () => {
+        const { range, orders } = selection();
+        if (!range || !orders.length) return;
+        const sheets = buildSheets({ orders, costs, range, names });
+        const name = `hani-don-hang_${range.slug}`;
+        $('#ex-go', m).disabled = true;
+        try {
+          if (st.format === 'csv') {
+            await download(`${name}.csv`, toCsv(sheets.orders), 'text/csv');
+          } else {
+            await download(`${name}.xlsx`, await toXlsx(sheets), XLSX_TYPE);
+          }
+          m.close();
+        } catch (err) {
+          notify('Không tạo được file: ' + (err.message || err.code));
+          $('#ex-go', m).disabled = false;
+        }
+      };
+      sync();
+    },
   });
-  download(`hani-don-hang-${today()}.csv`, '﻿' + [head.join(','), ...rows].join('\n'), 'text/csv');
+}
+
+/** Build the .xlsx workbook: numbers formatted with thousand separators, sensible column widths. */
+async function toXlsx(sheets) {
+  const XLSX = await loadXLSX();
+  const wb = XLSX.utils.book_new();
+  const add = (rows, title, widths) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    for (const ref of Object.keys(ws)) {
+      if (ref[0] !== '!' && ws[ref].t === 'n') ws[ref].z = '#,##0';
+    }
+    ws['!cols'] = widths.map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, ws, title);
+  };
+  add(sheets.summary, 'Tổng hợp', [30, 28, 14, 14]);
+  add(sheets.orders, 'Đơn hàng', [11, 10, 16, 18, 12, 40, 9, 12, 10, 12, 12, 10, 10, 10, 11, 12, 12, 12, 24]);
+  add(sheets.lines, 'Chi tiết sản phẩm', [11, 10, 16, 12, 28, 14, 9, 12, 12, 12, 30, 10, 12, 12]);
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([out], { type: XLSX_TYPE });
 }
 
 async function loadDemo() {
@@ -1239,7 +1371,7 @@ document.addEventListener('click', async (e) => {
       }
     case 'sign-out': return store.signOut();
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
-    case 'export-orders': return exportOrdersCsv();
+    case 'export-orders': return openExportDialog();
     case 'clear-map': return store.upsert('meta', { ...settings, shopeeMap: {} });
     case 'demo': return loadDemo();
   }

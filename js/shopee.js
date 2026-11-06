@@ -60,7 +60,8 @@ export function parseDate(v) {
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date(); // today in local time, not UTC
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 function findColumns(headers) {

@@ -343,3 +343,16 @@ dialog.confirm p { margin: 0; font-size: 15px; }
   .vedit-row .vstock { text-align: left; }
   .vqty-head, .vqty-row { grid-template-columns: 1fr 48px 110px; }
 }
+
+/* export dialog */
+.export { display: flex; flex-direction: column; gap: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn {
+  border: 1.5px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  border-radius: 999px; padding: 5px 12px; font: 600 13px var(--font-body);
+}
+.chip-btn:hover { border-color: var(--blue); color: var(--blue); }
+.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px; color: var(--ink); }
+.check input { width: auto; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.export .seg { align-self: flex-start; max-width: 100%; }
