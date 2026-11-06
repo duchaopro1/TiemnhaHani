@@ -17,7 +17,6 @@ const fmtDate = (d) => (d ? d.split('-').reverse().join('/') : '');
 const signCls = (n) => (n > 0 ? 'pos' : n < 0 ? 'neg' : '');
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'vi');
 
-const CATEGORIES = { her: 'for her', him: 'for him', friend: 'for friend', other: 'khác' };
 
 function toast(msg, ms = 2600) {
   const el = document.createElement('div');
@@ -95,7 +94,7 @@ const ui = {
   period: 'month',
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '' },
-  products: { q: '', cat: '' },
+  products: { q: '' },
   export: null, // last choices in the export dialog, kept for the visit
 };
 const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard');
@@ -239,7 +238,7 @@ function pageDashboard() {
       <div class="card">
         <h3>Sắp hết hàng</h3>
         ${lowP.length + lowK.length ? `<div class="table-wrap"><table><thead><tr><th>Mặt hàng</th><th>Loại</th><th class="num">Tồn</th></tr></thead><tbody>
-          ${lowP.map(({ p, v, n }) => `<tr><td><span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span></td><td><span class="chip ${p.category || 'other'}">Sản phẩm</span></td><td class="num neg">${n}</td></tr>`).join('')}
+          ${lowP.map(({ p, v, n }) => `<tr><td><span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span></td><td><span class="chip him">Sản phẩm</span></td><td class="num neg">${n}</td></tr>`).join('')}
           ${lowK.map((k) => `<tr><td>${esc(k.name)}</td><td><span class="chip backup">Đóng gói</span></td><td class="num neg">${num(stock.packaging[k.id])}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">Kho vẫn ổn ✨</div>'}
       </div>
@@ -326,7 +325,7 @@ function openOrderForm(existing) {
         </label>
         ${hasVariants(product(l.productId)) ? `<select data-f="variantId" aria-label="Phân loại">
           <option value="">— chọn phân loại —</option>
-          ${product(l.productId).variants.map((v) => `<option value="${esc(v.id)}" ${v.id === l.variantId ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(l.productId, v.id)})</option>`).join('')}
+          ${product(l.productId).variants.map((v) => `<option value="${esc(v.id)}" ${v.id === l.variantId ? 'selected' : ''}>${esc(v.name)} · ${money(variantPrice(product(l.productId), v))} (còn ${vStock(l.productId, v.id)})</option>`).join('')}
         </select>` : ''}
       </div>
       <label class="field">SL<input type="number" min="1" data-f="qty" value="${num(l.qty)}"></label>
@@ -437,6 +436,9 @@ function openOrderForm(existing) {
           drawMeta(i);
         } else if (f === 'variantId') {
           l.variantId = e.target.value;
+          const p = product(l.productId);
+          l.price = variantPrice(p, variantOf(l.productId, l.variantId));
+          $(`[data-line="${i}"] [data-f="price"]`, m).value = l.price;
           drawMeta(i);
         } else if (f === 'packEach') {
           l.packEach = e.target.checked;
@@ -642,7 +644,7 @@ function pageImports() {
           return `<tr>
             <td>${fmtDate(i.date)}</td>
             <td><span class="item">${i.kind === 'packaging' ? '' : thumb(variantOf(i.itemId, i.variantId)?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>${i.note ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
-            <td><span class="chip ${i.kind === 'packaging' ? 'backup' : item?.category || 'him'}">${i.kind === 'packaging' ? 'Đóng gói' : 'Sản phẩm'}</span></td>
+            <td><span class="chip ${i.kind === 'packaging' ? 'backup' : 'him'}">${i.kind === 'packaging' ? 'Đóng gói' : 'Sản phẩm'}</span></td>
             <td class="num">${num(i.qty)}</td>
             <td class="num">${money(i.unitCost)}</td>
             <td class="num">${money(i.extraFee)}</td>
@@ -818,64 +820,36 @@ function openImportForm(existing, preset = {}) {
 }
 
 /* ================= PRODUCTS ================= */
-function pageProducts() {
-  const f = ui.products;
-  const q = normalize(f.q);
-  const list = S.products
-    .filter((p) => !f.cat || (p.category || 'other') === f.cat)
-    .filter((p) => !q || normalize([p.name, p.sku, ...(p.variants || []).flatMap((v) => [v.name, v.sku])].join(' ')).includes(q));
-  const fullCost = (p) => num(costs.product[p.id]) + presetCost(store.get('presets', p.defaultPreset));
+/** Pastel tile colour for a product without a photo, stable per product. */
+const TILE_TONES = ['her', 'him', 'friend', 'backup'];
+const toneOf = (p) => TILE_TONES[[...(p.id || p.name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TILE_TONES.length];
+/** Sale price of one variant: its own price, or the product's when not set. */
+const variantPrice = (p, v) => (v && num(v.price) > 0 ? num(v.price) : num(p.salePrice));
+const isLow = (p) => (hasVariants(p) ? p.variants.some((v) => vStock(p.id, v.id) <= lowOf(p)) : num(stock.products[p.id]) <= lowOf(p));
 
-  const card = (p) => {
-    const fc = fullCost(p);
-    const profit = num(p.salePrice) - fc;
-    const total = num(stock.products[p.id]);
-    const variants = p.variants || [];
-    const unassigned = total - variants.reduce((s, v) => s + vStock(p.id, v.id), 0);
-    const low = hasVariants(p) ? variants.some((v) => vStock(p.id, v.id) <= lowOf(p)) : total <= lowOf(p);
-    return `<article class="pcard">
-      <button class="pimg cat-${p.category || 'other'}" data-action="edit-item" data-kind="product" data-id="${p.id}" aria-label="Sửa ${esc(p.name)}">
-        ${thumb(p.image, p.name, 'xl')}
-        <span class="chip ${p.category || 'other'}">${CATEGORIES[p.category] || 'khác'}</span>
-      </button>
-      <div class="pbody">
-        <div class="ptitle"><h3>${esc(p.name)}</h3>${p.sku ? `<span class="muted small">${esc(p.sku)}</span>` : ''}</div>
-        <dl class="pnums">
-          <div><dt>Giá bán</dt><dd>${money(p.salePrice)}</dd></div>
-          <div><dt>Giá thành</dt><dd>${money(fc)}</dd></div>
-          <div><dt>Lãi / cái</dt><dd class="${signCls(profit)}">${money(profit)}</dd></div>
-        </dl>
-        <div class="pstock ${low ? 'low' : ''}"><span>Tồn kho</span><b>${total}</b>${low ? '<span class="chip warn">sắp hết</span>' : ''}</div>
-        ${variants.length ? `<ul class="vlist">
-          ${variants.map((v) => {
-            const n = vStock(p.id, v.id);
-            return `<li class="${n <= lowOf(p) ? 'low' : ''}">${thumb(v.image, v.name, 'sm')}<span class="vname">${esc(v.name)}</span><b>${n}</b></li>`;
-          }).join('')}
-          ${unassigned ? `<li class="muted"><span class="thumb sm ph">?</span><span class="vname">Chưa phân loại</span><b>${unassigned}</b></li>` : ''}
-        </ul>` : ''}
-      </div>
-      <div class="pactions">
-        <button class="btn ghost sm" data-action="import-product" data-id="${p.id}">＋ Nhập hàng</button>
-        <button class="icon-btn" data-action="edit-item" data-kind="product" data-id="${p.id}" title="Sửa">✎</button>
-        <button class="icon-btn del" data-action="del-product" data-id="${p.id}" title="Xoá">🗑</button>
-      </div>
-    </article>`;
-  };
+function pageProducts() {
+  const q = normalize(ui.products.q);
+  const list = S.products.filter((p) => !q || normalize([p.name, p.sku, ...(p.variants || []).flatMap((v) => [v.name, v.sku])].join(' ')).includes(q));
+
+  const tile = (p) => `<button class="ptile tone-${toneOf(p)}" data-action="open-product" data-id="${p.id}">
+      <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
+      <span class="ptile-name">${esc(p.name)}</span>
+      ${isLow(p) ? '<span class="chip warn ptile-flag">sắp hết</span>' : ''}
+    </button>`;
 
   return `
     <div class="page-head">
-      <div><h1>Sản phẩm</h1><p>Mỗi sản phẩm có thể chia phân loại (màu, size…) với tồn kho riêng. Bấm vào ảnh để sửa.</p></div>
+      <div><h1>Sản phẩm</h1><p>Bấm vào sản phẩm để xem các phân loại, số lượng tồn và giá bán.</p></div>
       <div class="actions"><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
     </div>
     <div class="toolbar">
-      <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(f.q)}">
-      <div class="seg">${[['', 'Tất cả'], ...Object.entries(CATEGORIES)].map(([k, v]) => `<button data-product-cat="${k}" class="${f.cat === k ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(ui.products.q)}">
       <span class="muted small" style="margin-left:auto">${list.length} sản phẩm</span>
     </div>
-    ${list.length ? `<div class="pgrid">${list.map(card).join('')}</div>`
-      : `<div class="card empty">${S.products.length ? 'Không có sản phẩm khớp bộ lọc.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
+    ${list.length ? `<div class="ptiles">${list.map(tile).join('')}</div>`
+      : `<div class="card empty">${S.products.length ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
     ${S.products.length && S.presets.length ? `
-    <div class="card" style="margin-top:16px">
+    <div class="card" style="margin-top:20px">
       <h3>Bảng giá thành theo cách đóng gói</h3>
       <p class="small muted" style="margin-top:-6px">Giá vốn SP + chi phí bộ đóng gói (1 cái). Dùng để chọn giá bán cho từng kiểu gói quà.</p>
       <div class="table-wrap"><table>
@@ -886,6 +860,58 @@ function pageProducts() {
         }).join('')}</tr>`).join('')}</tbody>
       </table></div>
     </div>` : ''}`;
+}
+
+/** Product detail: its variants with stock and sale price, plus actions. */
+function openProductDetail(id) {
+  const p = product(id);
+  if (!p) return;
+  const fullCost = num(costs.product[p.id]) + presetCost(store.get('presets', p.defaultPreset));
+  const total = num(stock.products[p.id]);
+  const rows = hasVariants(p)
+    ? p.variants.map((v) => ({ v, image: v.image, name: v.name, sku: v.sku, n: vStock(p.id, v.id), price: variantPrice(p, v) }))
+    : [{ image: p.image, name: 'Tất cả', sku: p.sku, n: total, price: num(p.salePrice) }];
+  const unassigned = hasVariants(p) ? total - rows.reduce((s, r) => s + r.n, 0) : 0;
+
+  openModal({
+    title: esc(p.name),
+    wide: false,
+    body: `<div class="pdetail">
+      <div class="pdetail-head">
+        <span class="pdetail-img tone-${toneOf(p)}">${thumb(p.image, p.name, 'xl')}</span>
+        <dl class="pdetail-facts">
+          <div><dt>Tổng tồn kho</dt><dd>${total}</dd></div>
+          <div><dt>Giá thành / cái</dt><dd>${money(fullCost)}</dd></div>
+          ${p.sku ? `<div><dt>SKU</dt><dd class="small">${esc(p.sku)}</dd></div>` : ''}
+        </dl>
+      </div>
+      <div class="vcards">
+        ${rows.map((r) => {
+          const profit = r.price - fullCost;
+          const low = r.n <= lowOf(p);
+          return `<div class="vcard ${low ? 'low' : ''}">
+            ${thumb(r.image, r.name, '')}
+            <div class="vcard-name"><b>${esc(r.name)}</b>${r.sku ? `<span class="muted small">${esc(r.sku)}</span>` : ''}</div>
+            <div class="vcard-num"><span>Số lượng</span><b>${r.n}</b>${low ? '<span class="chip warn">sắp hết</span>' : ''}</div>
+            <div class="vcard-num"><span>Giá bán</span><b>${money(r.price)}</b><span class="small ${signCls(profit)}">lãi ${money(profit)}</span></div>
+          </div>`;
+        }).join('')}
+        ${unassigned ? `<p class="small muted">Còn ${unassigned} cái nhập trước khi chia phân loại (chưa gắn màu). Sửa phiếu nhập để gắn màu.</p>` : ''}
+      </div>
+      ${p.note ? `<p class="small muted">${esc(p.note)}</p>` : ''}
+    </div>`,
+    foot: `<button class="btn danger" id="pd-del" style="margin-right:auto">Xoá</button>
+      <button class="btn ghost" id="pd-edit">✎ Sửa</button>
+      <button class="btn" id="pd-import">＋ Nhập hàng</button>`,
+    onMount(m) {
+      $('#pd-edit', m).onclick = () => openProductForm(p);
+      $('#pd-import', m).onclick = () => openImportForm(undefined, { kind: 'product', itemId: p.id });
+      $('#pd-del', m).onclick = async () => {
+        if (S.orders.some((o) => o.items?.some((l) => l.productId === p.id))) return notify('Sản phẩm đã có trong đơn hàng, không xoá được.');
+        if (await ask(`Xoá sản phẩm "${p.name}"?`)) { await store.remove('products', p.id); m.close(); }
+      };
+    },
+  });
 }
 
 function openProductForm(existing) {
@@ -912,9 +938,8 @@ function openProductForm(existing) {
         </div>
         <div class="form-grid" style="grid-template-columns:1fr 1fr">
           <label class="field" style="grid-column:1/-1">Tên sản phẩm<input name="name" value="${esc(p.name)}" required placeholder="VD: Cúp pha lê mini"></label>
-          <label class="field">Nhóm<select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}" ${p.category === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-          <label class="field">SKU (trùng SKU trên Shopee)<input name="sku" value="${esc(p.sku)}"></label>
-          <label class="field">Giá bán<input type="number" min="0" step="1000" name="salePrice" value="${num(p.salePrice)}"></label>
+          <label class="field" style="grid-column:1/-1">SKU (trùng SKU trên Shopee)<input name="sku" value="${esc(p.sku)}"></label>
+          <label class="field">Giá bán<input type="number" min="0" step="1000" name="salePrice" value="${num(p.salePrice)}" title="Giá chung; mỗi phân loại có thể đặt giá riêng bên dưới"></label>
           <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(p.baseCost)}"></label>
           <label class="field" style="grid-column:1/-1">Bộ đóng gói mặc định<select name="defaultPreset">${options(S.presets, p.defaultPreset, '— không —')}</select></label>
           <label class="field">Cảnh báo khi tồn ≤<input type="number" min="0" name="lowStock" value="${esc(p.lowStock ?? '')}" placeholder="${settings.lowStock}"></label>
@@ -925,7 +950,7 @@ function openProductForm(existing) {
       <div class="vsection">
         <div class="vsection-head">
           <h3>Phân loại</h3>
-          <span class="muted small">Màu, size, mẫu… Mỗi phân loại có ảnh và tồn kho riêng. VD: Cúp → Đỏ, Xanh, Vàng.</span>
+          <span class="muted small">Màu, size, mẫu… Mỗi phân loại có ảnh, giá bán và tồn kho riêng. VD: Cúp → Đỏ, Xanh, Vàng. Để trống giá bán thì dùng giá chung.</span>
         </div>
         <div id="variants"></div>
         <button type="button" class="btn ghost sm" id="add-variant">＋ Thêm phân loại</button>
@@ -944,11 +969,12 @@ function openProductForm(existing) {
       const drawVariants = () => {
         $('#adjust-wrap', m).hidden = p.variants.length > 0;
         $('#variants', m).innerHTML = p.variants.length ? `<div class="vedit">
-          <div class="vedit-head"><span>Ảnh</span><span>Tên phân loại</span><span>SKU</span><span>Tồn</span><span title="Điều chỉnh tồn kho (±)">Chỉnh ±</span><span></span></div>
+          <div class="vedit-head"><span>Ảnh</span><span>Tên phân loại</span><span>SKU</span><span>Giá bán</span><span>Tồn</span><span title="Điều chỉnh tồn kho (±)">Chỉnh ±</span><span></span></div>
           ${p.variants.map((v, i) => `<div class="vedit-row" data-v="${i}">
             <label class="imgpick sm" title="Chọn ảnh cho ${esc(v.name || 'phân loại')}">${thumb(v.image, v.name || '+', 'sm')}<input type="file" accept="image/*" data-vimg="${i}" hidden></label>
             <input data-vf="name" value="${esc(v.name)}" placeholder="VD: Đỏ" aria-label="Tên phân loại" required>
             <input data-vf="sku" value="${esc(v.sku || '')}" placeholder="SKU Shopee" aria-label="SKU">
+            <input type="number" min="0" step="1000" data-vf="price" value="${num(v.price) || ''}" placeholder="${num(form.salePrice.value) || 'giá chung'}" aria-label="Giá bán ${esc(v.name)}">
             <b class="vstock">${existing ? vStock(p.id, v.id) : 0}</b>
             <input type="number" data-vf="adjust" value="${num(v.adjust)}" aria-label="Điều chỉnh tồn">
             <button type="button" class="icon-btn del" data-vdel="${i}" title="${used(v.id) ? 'Đã có nhập/đơn — không xoá được' : 'Xoá phân loại'}">✕</button>
@@ -979,7 +1005,8 @@ function openProductForm(existing) {
         const row = e.target.closest('[data-v]');
         if (!row || !e.target.dataset.vf) return;
         const v = p.variants[+row.dataset.v];
-        v[e.target.dataset.vf] = e.target.dataset.vf === 'adjust' ? num(e.target.value) : e.target.value;
+        const f = e.target.dataset.vf;
+        v[f] = f === 'adjust' || f === 'price' ? num(e.target.value) : e.target.value;
       });
       $('#variants', m).addEventListener('change', (e) => {
         const i = e.target.dataset.vimg;
@@ -996,7 +1023,7 @@ function openProductForm(existing) {
         drawVariants();
       });
       $('#add-variant', m).onclick = () => {
-        p.variants.push({ id: uid(), name: '', sku: '', image: '', adjust: 0 });
+        p.variants.push({ id: uid(), name: '', sku: '', image: '', adjust: 0, price: 0 });
         drawVariants();
         $(`[data-v="${p.variants.length - 1}"] [data-vf="name"]`, m).focus();
       };
@@ -1007,10 +1034,10 @@ function openProductForm(existing) {
         if (!form.reportValidity()) return;
         const d = formData(form);
         await store.upsert('products', {
-          ...p, name: d.name.trim(), category: d.category, sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
+          ...p, name: d.name.trim(), category: p.category || 'other', sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
           defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
           adjust: p.variants.length ? num(p.adjust) : num(d.adjust), note: d.note.trim(),
-          variants: p.variants.map((v) => ({ ...v, name: v.name.trim(), sku: (v.sku || '').trim() })),
+          variants: p.variants.map((v) => ({ ...v, name: v.name.trim(), sku: (v.sku || '').trim(), price: num(v.price) })),
         });
         m.close();
         toast('Đã lưu sản phẩm');
@@ -1304,7 +1331,7 @@ async function loadDemo() {
   await store.upsertMany('packaging', [box, paper, ribbon, bag, card]);
   await store.upsertMany('presets', presets);
   const cup = { id: uid(), name: 'Cúp pha lê mini', sku: 'CUP-01', category: 'friend', salePrice: 89000, defaultPreset: presets[1].id,
-    variants: [{ id: uid(), name: 'Đỏ', sku: 'CUP-01-DO' }, { id: uid(), name: 'Xanh', sku: 'CUP-01-XANH' }, { id: uid(), name: 'Vàng', sku: 'CUP-01-VANG' }] };
+    variants: [{ id: uid(), name: 'Đỏ', sku: 'CUP-01-DO' }, { id: uid(), name: 'Xanh', sku: 'CUP-01-XANH' }, { id: uid(), name: 'Vàng', sku: 'CUP-01-VANG', price: 99000 }] };
   await store.upsertMany('products', [p1, p2, p3, cup]);
   const d = today();
   await store.upsertMany('imports', [
@@ -1331,8 +1358,6 @@ document.addEventListener('click', async (e) => {
   if (tab) { location.hash = tab.dataset.tab; return; }
   const period = e.target.closest('[data-period]');
   if (period) { ui.period = period.dataset.period; render(); return; }
-  const cat = e.target.closest('[data-product-cat]');
-  if (cat) { ui.products.cat = cat.dataset.productCat; render(); return; }
   const kind = e.target.closest('[data-import-kind]');
   if (kind) { ui.imports.kind = kind.dataset.importKind; render(); return; }
   const goto = e.target.closest('[data-goto-status]');
@@ -1350,13 +1375,10 @@ document.addEventListener('click', async (e) => {
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'del-import': return confirmDel('imports', 'Xoá phiếu nhập này? Tồn kho và giá vốn sẽ tính lại.');
     case 'new-product': return openProductForm();
-    case 'import-product': return openImportForm(undefined, { kind: 'product', itemId: id });
+    case 'open-product': return openProductDetail(id);
     case 'edit-item':
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
-    case 'del-product':
-      if (S.orders.some((o) => o.items?.some((l) => l.productId === id))) return notify('Sản phẩm đã có trong đơn hàng, không xoá được.');
-      return confirmDel('products', 'Xoá sản phẩm này?');
     case 'new-pack': return openPackForm();
     case 'del-pack': return confirmDel('packaging', 'Xoá dụng cụ này? (Các đơn cũ dùng dụng cụ này sẽ mất chi phí đóng gói tương ứng)');
     case 'new-preset': return openPresetForm();
