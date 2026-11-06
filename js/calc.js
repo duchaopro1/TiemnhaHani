@@ -85,25 +85,63 @@ export function orderSummary(costs, order) {
   return { gross, discount, revenue, product, packaging, fee, ship, cost, profit: revenue - cost };
 }
 
-/** Current stock = imported − used by active orders (+ manual adjustments). */
+/** Key of one product variant (e.g. one colour of a trophy) in stock tables. */
+export const variantKey = (productId, variantId) => `${productId}:${variantId}`;
+
+/**
+ * Current stock = imported − used by active orders (+ manual adjustments).
+ * `products` holds each product's total; `variants` holds each variant's own count,
+ * keyed by variantKey(). Imports/order lines without a variant only count in the total.
+ */
 export function stockLevels(state) {
-  const products = {}, packaging = {};
-  for (const p of state.products || []) products[p.id] = num(p.adjust);
+  const products = {}, packaging = {}, variants = {};
+  const addVariant = (pid, vid, n) => {
+    if (!vid) return;
+    const k = variantKey(pid, vid);
+    variants[k] = num(variants[k]) + n;
+  };
+  for (const p of state.products || []) {
+    products[p.id] = num(p.adjust);
+    for (const v of p.variants || []) {
+      variants[variantKey(p.id, v.id)] = num(v.adjust);
+      products[p.id] += num(v.adjust);
+    }
+  }
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
-    const bucket = imp.kind === 'packaging' ? packaging : products;
-    bucket[imp.itemId] = num(bucket[imp.itemId]) + num(imp.qty);
+    if (imp.kind === 'packaging') {
+      packaging[imp.itemId] = num(packaging[imp.itemId]) + num(imp.qty);
+    } else {
+      products[imp.itemId] = num(products[imp.itemId]) + num(imp.qty);
+      addVariant(imp.itemId, imp.variantId, num(imp.qty));
+    }
   }
   for (const order of state.orders || []) {
     if (INACTIVE_STATUSES.has(order.status)) continue;
     for (const line of order.items || []) {
-      if (line.productId) products[line.productId] = num(products[line.productId]) - num(line.qty);
+      if (line.productId) {
+        products[line.productId] = num(products[line.productId]) - num(line.qty);
+        addVariant(line.productId, line.variantId, -num(line.qty));
+      }
       for (const slot of PACK_SLOTS) {
         if (line[slot]) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
       }
     }
   }
-  return { products, packaging };
+  return { products, packaging, variants };
+}
+
+/** Split a batch fee across rows in proportion to their quantity (shares sum to the fee). */
+export function splitFee(fee, qtys) {
+  const total = qtys.reduce((s, q) => s + num(q), 0);
+  if (!total) return qtys.map(() => 0);
+  let left = num(fee);
+  return qtys.map((q, i) => {
+    if (i === qtys.length - 1) return left;
+    const share = Math.round((num(fee) * num(q)) / total);
+    left -= share;
+    return share;
+  });
 }
 
 /** Aggregate stats for a list of orders. */

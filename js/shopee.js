@@ -112,9 +112,12 @@ export function rowsToOrders(rows) {
     const lineTotal = parseNumber(get(row, 'lineTotal'));
     const price = lineTotal ? lineTotal / qty : parseNumber(get(row, 'unitPrice'));
     const variant = String(get(row, 'variant') || '').trim();
+    const baseName = String(get(row, 'productName') || '').trim();
     order.items.push({
       sku: String(get(row, 'sku') || '').trim(),
-      productName: [String(get(row, 'productName') || '').trim(), variant].filter(Boolean).join(' — '),
+      baseName,
+      variantName: variant,
+      productName: [baseName, variant].filter(Boolean).join(' — '),
       qty,
       price,
     });

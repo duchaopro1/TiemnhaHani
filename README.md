@@ -9,8 +9,8 @@ Giao diện theo Brand Guidelines của Hani (xanh `#1479C4`, bảng màu for he
 |---|---|
 | **Tổng quan** | Doanh thu, chi phí, lợi nhuận, biên lãi theo tháng; so sánh 3 nền tảng; top sản phẩm lãi nhất; cảnh báo sắp hết hàng |
 | **Đơn hàng** | Thêm đơn bằng tay (Threads/Instagram) · nhập file Excel đơn hàng Shopee · mỗi dòng gồm **Sản phẩm, Số lượng, Dụng cụ đóng gói 1/2/3** · phí ship **Khách chịu / Shop chịu** · tính lãi ngay khi nhập |
-| **Nhập hàng** | Phiếu nhập sản phẩm & dụng cụ đóng gói, có phí ship nhập · **sửa / xoá phiếu đã nhập** (tồn kho và giá vốn tự tính lại) · bấm tên mặt hàng để sửa thông tin mặt hàng |
-| **Sản phẩm** | Giá bán, giá vốn TB, bộ đóng gói mặc định, giá thành đủ, lãi/cái, tồn kho · **bảng giá thành theo từng cách đóng gói** |
+| **Nhập hàng** | Phiếu nhập sản phẩm & dụng cụ đóng gói, có phí ship nhập · nhập **số lượng từng phân loại** trong một phiếu (VD: cúp đỏ 5, xanh 3, vàng 2; phí ship chia theo số lượng) · **sửa / xoá phiếu đã nhập** (tồn kho và giá vốn tự tính lại) · bấm tên mặt hàng để sửa thông tin mặt hàng |
+| **Sản phẩm** | Thẻ sản phẩm có **ảnh** · chia **phân loại** (màu, size…), mỗi phân loại có ảnh, SKU và tồn kho riêng · giá thành đủ, lãi/cái · **bảng giá thành theo từng cách đóng gói** |
 | **Đóng gói** | Dụng cụ đóng gói (hộp, giấy, ruy băng, thiệp…) và **Bộ đóng gói** dùng nhanh |
 | **Cài đặt** | Chia sẻ link, sao lưu / khôi phục JSON, xuất CSV đơn hàng, dữ liệu mẫu |
 

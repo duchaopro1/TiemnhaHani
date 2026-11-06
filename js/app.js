@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize } from './shopee.js';
 
@@ -62,6 +62,23 @@ function derive() {
 }
 const product = (id) => store.get('products', id);
 const pack = (id) => store.get('packaging', id);
+const variantOf = (pid, vid) => (vid ? product(pid)?.variants?.find((v) => v.id === vid) : undefined);
+const hasVariants = (p) => Boolean(p?.variants?.length);
+/** "Cúp · Đỏ", or just the product name when there is no variant. */
+const itemLabel = (pid, vid, fallback = '') => {
+  const p = product(pid);
+  if (!p) return fallback;
+  const v = variantOf(pid, vid);
+  return v ? `${p.name} · ${v.name}` : p.name;
+};
+const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
+const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
+/** Images are stored as "asset:<id>" (artifact asset store) or as a data: URL. */
+const imgSrc = (ref) => (!ref ? '' : ref.startsWith('asset:') ? '/_blob/' + ref.slice(6) : ref);
+const thumb = (ref, name, cls = '') =>
+  ref
+    ? `<img class="thumb ${cls}" src="${esc(imgSrc(ref))}" alt="" loading="lazy">`
+    : `<span class="thumb ph ${cls}" aria-hidden="true">${esc((name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
 const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] ? num(costs.packaging[preset[k]]) : 0), 0);
 
 /* ================= routing ================= */
@@ -77,6 +94,7 @@ const ui = {
   period: 'month',
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '' },
+  products: { q: '', cat: '' },
 };
 const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard');
 
@@ -121,6 +139,40 @@ const options = (list, selected, empty) =>
   list.map((x) => `<option value="${esc(x.id)}" ${x.id === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 const formData = (form) => Object.fromEntries(new FormData(form).entries());
 
+/* ================= images ================= */
+async function resizeImage(file, max) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff'; // JPEG has no transparency
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.82));
+}
+
+/** Shrink a picked photo and store it; returns the reference to keep on the product. */
+async function saveImage(file) {
+  if (!file.type.startsWith('image/')) throw new Error('File không phải hình ảnh');
+  if (store.mode === 'artifact') {
+    const assets = await window.claude.use('assets');
+    if (assets) {
+      const res = await assets.upload(await resizeImage(file, 640), { type: 'image/jpeg' });
+      return 'asset:' + res.id;
+    }
+  }
+  // Local / Firebase: keep a small copy inside the product document.
+  const blob = await resizeImage(file, 320);
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
 /* ================= DASHBOARD ================= */
 function periodRange() {
   const now = new Date();
@@ -140,7 +192,10 @@ function pageDashboard() {
   const margin = agg.revenue ? (agg.profit / agg.revenue) * 100 : 0;
   const maxRev = Math.max(1, ...Object.values(agg.byPlatform).map((p) => p.revenue));
   const top = Object.entries(agg.byProduct).sort((a, b) => b[1].profit - a[1].profit).slice(0, 8);
-  const lowP = S.products.filter((p) => num(stock.products[p.id]) <= num(p.lowStock ?? settings.lowStock));
+  // Products with variants are checked colour by colour, others by their total.
+  const lowP = S.products.flatMap((p) => (hasVariants(p)
+    ? p.variants.filter((v) => vStock(p.id, v.id) <= lowOf(p)).map((v) => ({ p, v, n: vStock(p.id, v.id) }))
+    : num(stock.products[p.id]) <= lowOf(p) ? [{ p, n: num(stock.products[p.id]) }] : []));
   const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= num(k.lowStock ?? settings.lowStock));
   const unmapped = S.orders.filter((o) => !INACTIVE_STATUSES.has(o.status) && o.items?.some((l) => !l.productId)).length;
   const pendingCount = S.orders.filter((o) => o.status === 'pending').length;
@@ -182,7 +237,7 @@ function pageDashboard() {
       <div class="card">
         <h3>Sắp hết hàng</h3>
         ${lowP.length + lowK.length ? `<div class="table-wrap"><table><thead><tr><th>Mặt hàng</th><th>Loại</th><th class="num">Tồn</th></tr></thead><tbody>
-          ${lowP.map((p) => `<tr><td>${esc(p.name)}</td><td><span class="chip ${p.category || 'other'}">Sản phẩm</span></td><td class="num neg">${num(stock.products[p.id])}</td></tr>`).join('')}
+          ${lowP.map(({ p, v, n }) => `<tr><td><span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span></td><td><span class="chip ${p.category || 'other'}">Sản phẩm</span></td><td class="num neg">${n}</td></tr>`).join('')}
           ${lowK.map((k) => `<tr><td>${esc(k.name)}</td><td><span class="chip backup">Đóng gói</span></td><td class="num neg">${num(stock.packaging[k.id])}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">Kho vẫn ổn ✨</div>'}
       </div>
@@ -195,7 +250,7 @@ function filteredOrders() {
   const q = normalize(f.q);
   return S.orders
     .filter((o) => (!f.platform || o.platform === f.platform) && (!f.status || o.status === f.status) && (!f.month || (o.date || '').startsWith(f.month)))
-    .filter((o) => !q || normalize([o.code, o.customer, o.note, ...(o.items || []).map((l) => product(l.productId)?.name || l.productName)].join(' ')).includes(q))
+    .filter((o) => !q || normalize([o.code, o.customer, o.note, ...(o.items || []).map((l) => itemLabel(l.productId, l.variantId, l.productName))].join(' ')).includes(q))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
@@ -231,13 +286,15 @@ function orderRow(o) {
   const inactive = INACTIVE_STATUSES.has(o.status);
   const items = (o.items || []).map((l) => {
     const p = product(l.productId);
-    return p ? `${esc(p.name)} <span class="muted">×${l.qty}</span>` : `<span class="chip warn">chưa gắn</span> ${esc(l.productName || '')} ×${l.qty}`;
-  }).join('<br>');
+    if (!p) return `<span class="chip warn">chưa gắn</span> ${esc(l.productName || '')} ×${l.qty}`;
+    const v = variantOf(l.productId, l.variantId);
+    return `<span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}<span>${esc(itemLabel(l.productId, l.variantId))} <span class="muted">×${l.qty}</span>${hasVariants(p) && !v ? ' <span class="chip warn">chưa chọn phân loại</span>' : ''}</span></span>`;
+  }).join('');
   return `<tr style="${inactive ? 'opacity:.55' : ''}">
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b><br><span class="muted small">${esc(o.customer || '')}</span></td>
-    <td class="small">${items}</td>
+    <td class="small"><div class="items">${items}</div></td>
     <td class="num">${money(s.revenue)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
@@ -248,7 +305,7 @@ function orderRow(o) {
 }
 
 function blankLine() {
-  return { productId: '', qty: 1, price: 0, pack1: '', pack2: '', pack3: '', packEach: false };
+  return { productId: '', variantId: '', qty: 1, price: 0, pack1: '', pack2: '', pack3: '', packEach: false };
 }
 
 function openOrderForm(existing) {
@@ -260,9 +317,15 @@ function openOrderForm(existing) {
 
   const lineHtml = (l, i) => `
     <div class="line" data-line="${i}">
-      <label class="field">Sản phẩm
-        <select data-f="productId">${options(S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>
-      </label>
+      <div class="field">
+        <label class="field">Sản phẩm
+          <select data-f="productId">${options(S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>
+        </label>
+        ${hasVariants(product(l.productId)) ? `<select data-f="variantId" aria-label="Phân loại">
+          <option value="">— chọn phân loại —</option>
+          ${product(l.productId).variants.map((v) => `<option value="${esc(v.id)}" ${v.id === l.variantId ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(l.productId, v.id)})</option>`).join('')}
+        </select>` : ''}
+      </div>
       <label class="field">SL<input type="number" min="1" data-f="qty" value="${num(l.qty)}"></label>
       <label class="field">Giá bán / cái<input type="number" min="0" step="1000" data-f="price" value="${num(l.price)}"></label>
       <label class="field">Bộ đóng gói nhanh
@@ -324,7 +387,8 @@ function openOrderForm(existing) {
           <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" data-f="packEach" ${l.packEach ? 'checked' : ''} style="width:auto"> Đóng gói riêng từng cái (×${num(l.qty)})</label>
           <span>Giá vốn SP: <b>${money(c.product)}</b></span>
           <span>Đóng gói: <b>${money(c.packaging)}</b></span>
-          <span>Tồn kho: <b>${l.productId ? num(stock.products[l.productId]) : '—'}</b></span>
+          <span>Tồn kho: <b>${!l.productId ? '—' : l.variantId ? vStock(l.productId, l.variantId) : num(stock.products[l.productId])}</b></span>
+          ${hasVariants(product(l.productId)) && !l.variantId ? '<span class="neg">Chưa chọn phân loại</span>' : ''}
           <span>Lãi dòng: <b class="${signCls(c.profit)}">${money(c.profit)}</b></span>`;
       };
       const drawSummary = () => {
@@ -354,6 +418,7 @@ function openOrderForm(existing) {
         const f = e.target.dataset.f;
         if (f === 'productId') {
           l.productId = e.target.value;
+          l.variantId = '';
           const p = product(l.productId);
           if (p) {
             l.price = num(p.salePrice);
@@ -366,6 +431,9 @@ function openOrderForm(existing) {
           const pr = store.get('presets', e.target.value);
           if (pr) PACK_SLOTS.forEach((k) => (l[k] = pr[k] || ''));
           PACK_SLOTS.forEach((k) => ($(`[data-line="${i}"] [data-f="${k}"]`, m).value = l[k]));
+          drawMeta(i);
+        } else if (f === 'variantId') {
+          l.variantId = e.target.value;
           drawMeta(i);
         } else if (f === 'packEach') {
           l.packEach = e.target.checked;
@@ -405,6 +473,8 @@ function openOrderForm(existing) {
         Object.assign(o, readHeader());
         o.items = o.items.filter((l) => l.productId || l.productName).map(({ preset, ...l }) => l);
         if (!o.items.length) return toast('Chọn ít nhất 1 sản phẩm');
+        const noVariant = o.items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
+        if (noVariant && !existing) return notify(`Chọn phân loại (màu, size…) cho "${product(noVariant.productId).name}"`);
         if (!o.code) o.code = `${o.platform.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-6)}`;
         await store.upsert('orders', o);
         m.close();
@@ -428,17 +498,35 @@ async function loadXLSX() {
   return window.XLSX;
 }
 
-function matchProduct(line) {
-  const key = listingKey(line);
-  const mapped = settings.shopeeMap[key];
-  if (mapped && product(mapped)) return mapped;
-  if (line.sku) {
-    const bySku = S.products.find((p) => p.sku && normalize(p.sku) === normalize(line.sku));
-    if (bySku) return bySku.id;
+/** Which product (and variant) a Shopee order line is: remembered choice, then SKU, then name. */
+function matchListing(line) {
+  const none = { productId: '', variantId: '' };
+  const guessVariant = (p) => p.variants?.find((v) => normalize(v.name) === normalize(line.variantName))?.id || '';
+  const mapped = settings.shopeeMap[listingKey(line)];
+  if (mapped) {
+    const [productId, variantId = ''] = mapped.split(':');
+    if (product(productId) && (!variantId || variantOf(productId, variantId))) return { productId, variantId };
   }
-  const byName = S.products.find((p) => normalize(p.name) === normalize(line.productName));
-  return byName?.id || '';
+  if (line.sku) {
+    const sku = normalize(line.sku);
+    for (const p of S.products) {
+      const v = p.variants?.find((x) => x.sku && normalize(x.sku) === sku);
+      if (v) return { productId: p.id, variantId: v.id };
+    }
+    const p = S.products.find((x) => x.sku && normalize(x.sku) === sku);
+    if (p) return { productId: p.id, variantId: guessVariant(p) };
+  }
+  const names = [normalize(line.baseName), normalize(line.productName)].filter(Boolean);
+  const p = S.products.find((x) => names.includes(normalize(x.name)));
+  return p ? { productId: p.id, variantId: guessVariant(p) } : none;
 }
+const needsMapping = (line) => {
+  const m = matchListing(line);
+  return !m.productId || (hasVariants(product(m.productId)) && !m.variantId);
+};
+const listingOptions = (selected) => S.products.map((p) =>
+  `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>` +
+  (p.variants || []).map((v) => `<option value="${esc(p.id)}:${esc(v.id)}">　↳ ${esc(p.name)} · ${esc(v.name)}</option>`).join('')).join('');
 
 async function importShopeeFile(file) {
   try {
@@ -449,7 +537,7 @@ async function importShopeeFile(file) {
     if (!parsed.length) return toast('File không có đơn hàng nào');
 
     const unmatched = new Map();
-    for (const o of parsed) for (const l of o.items) if (!matchProduct(l)) unmatched.set(listingKey(l), l);
+    for (const o of parsed) for (const l of o.items) if (needsMapping(l)) unmatched.set(listingKey(l), l);
     if (unmatched.size) openMappingDialog(parsed, [...unmatched.entries()]);
     else await commitShopee(parsed);
   } catch (e) {
@@ -464,7 +552,7 @@ function openMappingDialog(parsed, unmatched) {
     body: `<p class="muted">Có ${unmatched.length} sản phẩm trong file chưa biết là hàng nào trong kho. Chọn một lần, lần sau app tự nhớ.</p>
       <div class="table-wrap"><table><thead><tr><th>Sản phẩm trên Shopee</th><th>SKU</th><th>Hàng trong kho</th></tr></thead><tbody>
       ${unmatched.map(([key, l], i) => `<tr><td>${esc(l.productName)}</td><td class="muted">${esc(l.sku)}</td>
-        <td><select data-map="${i}"><option value="">— bỏ qua (gắn sau) —</option><option value="__new">＋ Tạo sản phẩm mới</option>${options(S.products, '')}</select></td></tr>`).join('')}
+        <td><select data-map="${i}"><option value="">— bỏ qua (gắn sau) —</option><option value="__new">＋ Tạo sản phẩm mới</option>${listingOptions(matchListing(l).productId)}</select></td></tr>`).join('')}
       </tbody></table></div>`,
     foot: `<button class="btn" id="map-ok">Tiếp tục nhập ${parsed.length} đơn</button>`,
     onMount(m) {
@@ -498,14 +586,19 @@ async function commitShopee(parsed) {
     if (old) {
       updated++;
       // Keep packaging/product choices the shop already made; refresh Shopee-side numbers.
-      const items = old.items?.length ? old.items.map((l) => (l.productId ? l : { ...l, productId: matchProduct(l) })) : o.items;
+      const fill = (l) => {
+        if (l.productId && (l.variantId || !hasVariants(product(l.productId)))) return l;
+        const m = matchListing(l);
+        return { ...l, productId: l.productId || m.productId, variantId: l.variantId || (l.productId && l.productId !== m.productId ? '' : m.variantId) };
+      };
+      const items = old.items?.length ? old.items.map(fill) : o.items;
       return { ...old, status: o.status, platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, items };
     }
     added++;
     o.items = o.items.map((l) => {
-      const productId = matchProduct(l);
+      const { productId, variantId } = matchListing(l);
       const pr = store.get('presets', product(productId)?.defaultPreset);
-      return { ...l, productId, pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '', packEach: false };
+      return { ...l, productId, variantId, pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '', packEach: false };
     });
     return o;
   });
@@ -517,13 +610,14 @@ async function commitShopee(parsed) {
 function itemOf(imp) {
   return imp.kind === 'packaging' ? pack(imp.itemId) : product(imp.itemId);
 }
+const importLabel = (imp) => (imp.kind === 'packaging' ? pack(imp.itemId)?.name : itemLabel(imp.itemId, imp.variantId));
 
 function pageImports() {
   const f = ui.imports;
   const q = normalize(f.q);
   const list = S.imports
     .filter((i) => !f.kind || i.kind === f.kind)
-    .filter((i) => !q || normalize([itemOf(i)?.name, i.supplier, i.note].join(' ')).includes(q))
+    .filter((i) => !q || normalize([importLabel(i), i.supplier, i.note].join(' ')).includes(q))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
   const total = list.reduce((s, i) => s + num(i.qty) * num(i.unitCost) + num(i.extraFee), 0);
   return `
@@ -544,7 +638,7 @@ function pageImports() {
           const totalRow = num(i.qty) * num(i.unitCost) + num(i.extraFee);
           return `<tr>
             <td>${fmtDate(i.date)}</td>
-            <td><a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(item?.name || '(đã xoá)')}</a>${i.note ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
+            <td><span class="item">${i.kind === 'packaging' ? '' : thumb(variantOf(i.itemId, i.variantId)?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>${i.note ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
             <td><span class="chip ${i.kind === 'packaging' ? 'backup' : item?.category || 'him'}">${i.kind === 'packaging' ? 'Đóng gói' : 'Sản phẩm'}</span></td>
             <td class="num">${num(i.qty)}</td>
             <td class="num">${money(i.unitCost)}</td>
@@ -559,55 +653,162 @@ function pageImports() {
     </div>`;
 }
 
-function openImportForm(existing) {
-  const imp = existing ? { ...existing } : { kind: ui.imports.kind || 'product', itemId: '', date: today(), qty: 1, unitCost: 0, extraFee: 0, supplier: '', note: '' };
+function openImportForm(existing, preset = {}) {
+  const imp = existing ? { ...existing } : {
+    kind: preset.kind || ui.imports.kind || 'product', itemId: preset.itemId || '', variantId: '',
+    date: today(), qty: 1, unitCost: 0, extraFee: 0, supplier: '', note: '',
+  };
+  // New import of a product: one quantity per variant (e.g. each colour of a trophy).
+  // rows: [{ variantId, name, image, qty, isNew }]
+  let rows = [];
+  const loadRows = () => {
+    const p = product(imp.itemId);
+    rows = imp.kind === 'product' && hasVariants(p)
+      ? p.variants.map((v) => ({ variantId: v.id, name: v.name, image: v.image, qty: 0 }))
+      : [];
+  };
+  if (!existing) loadRows();
   const itemOptions = (kind, sel) => options(kind === 'packaging' ? S.packaging : S.products, sel, '— chọn —') + '<option value="__new">＋ Mặt hàng mới…</option>';
+
   openModal({
     title: existing ? 'Sửa phiếu nhập' : 'Phiếu nhập hàng',
     wide: false,
     body: `<form id="import-form" class="form-grid" style="grid-template-columns:1fr 1fr">
-      <label class="field">Loại<select name="kind"><option value="product" ${imp.kind !== 'packaging' ? 'selected' : ''}>Sản phẩm</option><option value="packaging" ${imp.kind === 'packaging' ? 'selected' : ''}>Dụng cụ đóng gói</option></select></label>
+      <label class="field">Loại<select name="kind" ${existing ? 'disabled' : ''}><option value="product" ${imp.kind !== 'packaging' ? 'selected' : ''}>Sản phẩm</option><option value="packaging" ${imp.kind === 'packaging' ? 'selected' : ''}>Dụng cụ đóng gói</option></select></label>
       <label class="field">Ngày nhập<input type="date" name="date" value="${esc(imp.date)}" required></label>
       <label class="field" style="grid-column:1/-1">Mặt hàng<select name="itemId" required>${itemOptions(imp.kind, imp.itemId)}</select></label>
-      <label class="field" style="grid-column:1/-1;display:none" id="new-item-wrap">Tên mặt hàng mới<input name="newName" placeholder="VD: Móc khoá mica 5cm"></label>
-      <label class="field">Số lượng<input type="number" min="0" name="qty" value="${num(imp.qty)}" required></label>
+      <label class="field" style="grid-column:1/-1" id="new-item-wrap" hidden>Tên mặt hàng mới<input name="newName" placeholder="VD: Cúp pha lê mini"></label>
+      <div id="qty-area" style="grid-column:1/-1"></div>
       <label class="field">Giá nhập / đơn vị<input type="number" min="0" step="100" name="unitCost" value="${num(imp.unitCost)}" required></label>
       <label class="field">Phí ship / phí khác (cả lô)<input type="number" min="0" step="1000" name="extraFee" value="${num(imp.extraFee)}"></label>
       <label class="field">Nhà cung cấp<input name="supplier" value="${esc(imp.supplier)}"></label>
-      <label class="field" style="grid-column:1/-1">Ghi chú<input name="note" value="${esc(imp.note)}"></label>
+      <label class="field">Ghi chú<input name="note" value="${esc(imp.note)}"></label>
       <div class="summary" style="grid-column:1/-1" id="imp-sum"></div>
     </form>`,
     foot: `${existing ? '<button class="btn danger" id="imp-del" style="margin-right:auto">Xoá phiếu</button>' : ''}<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="imp-save">Lưu</button>`,
     onMount(m) {
       const form = $('#import-form', m);
+      const totalQty = () => (rows.length ? rows.reduce((s, r) => s + num(r.qty), 0) : num(form.qty?.value));
+
+      const drawQty = () => {
+        const p = product(imp.itemId);
+        const area = $('#qty-area', m);
+        if (existing) {
+          // Editing one saved row: its quantity, plus which variant it belongs to.
+          area.innerHTML = `<div class="form-grid" style="grid-template-columns:1fr 1fr">
+            ${imp.kind === 'product' && hasVariants(p) ? `<label class="field">Phân loại<select name="variantId">
+              <option value="">— chưa phân loại —</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === imp.variantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+            </select></label>` : ''}
+            <label class="field">Số lượng<input type="number" min="0" name="qty" value="${num(imp.qty)}" required></label>
+          </div>`;
+          return;
+        }
+        if (imp.kind === 'packaging' || !rows.length) {
+          area.innerHTML = `<div class="form-grid" style="grid-template-columns:1fr 1fr;align-items:end">
+            <label class="field">Số lượng<input type="number" min="0" name="qty" value="${num(imp.qty)}" required></label>
+            ${imp.kind === 'product' ? '<button type="button" class="btn ghost sm" id="split-variants" style="justify-self:start">＋ Chia theo phân loại (màu, size…)</button>' : ''}
+          </div>`;
+          return;
+        }
+        area.innerHTML = `<div class="vqty">
+          <div class="vqty-head"><span>Phân loại</span><span>Đang có</span><span>Số lượng nhập</span></div>
+          ${rows.map((r, i) => `<div class="vqty-row" data-row="${i}">
+            <span class="item">${thumb(r.image, r.isNew ? '+' : r.name, 'sm')}${r.isNew
+              ? `<input data-rf="name" value="${esc(r.name)}" placeholder="VD: Màu đỏ" aria-label="Tên phân loại" required>`
+              : `<b>${esc(r.name)}</b>`}</span>
+            <span class="muted">${r.isNew ? 'mới' : vStock(imp.itemId, r.variantId)}</span>
+            <span class="vqty-in"><input type="number" min="0" data-rf="qty" value="${num(r.qty)}" aria-label="Số lượng ${esc(r.name)}">
+              ${r.isNew ? `<button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ phân loại này">✕</button>` : ''}</span>
+          </div>`).join('')}
+          <button type="button" class="btn ghost sm" id="add-variant-row">＋ Thêm phân loại mới</button>
+        </div>`;
+      };
+
       const sync = () => {
         const d = formData(form);
-        $('#new-item-wrap', m).style.display = d.itemId === '__new' ? '' : 'none';
-        const total = num(d.qty) * num(d.unitCost) + num(d.extraFee);
-        $('#imp-sum', m).innerHTML = `<div><span>Thành tiền</span><b>${money(total)}</b></div><div><span>Vốn / đơn vị</span><b>${money(num(d.qty) ? total / num(d.qty) : 0)}</b></div>`;
+        $('#new-item-wrap', m).hidden = d.itemId !== '__new';
+        const qty = totalQty();
+        const total = qty * num(d.unitCost) + num(d.extraFee);
+        $('#imp-sum', m).innerHTML = `<div><span>Tổng số lượng</span><b>${qty}</b></div><div><span>Thành tiền</span><b>${money(total)}</b></div><div><span>Vốn / đơn vị</span><b>${money(qty ? total / qty : 0)}</b></div>`;
       };
-      form.kind.onchange = () => { form.itemId.innerHTML = itemOptions(form.kind.value, ''); sync(); };
-      form.addEventListener('input', sync);
+      const redraw = () => { drawQty(); sync(); };
+
+      form.kind.onchange = () => {
+        imp.kind = form.kind.value;
+        imp.itemId = '';
+        rows = [];
+        form.itemId.innerHTML = itemOptions(imp.kind, '');
+        redraw();
+      };
+      form.itemId.onchange = () => {
+        imp.itemId = form.itemId.value === '__new' ? '' : form.itemId.value;
+        if (!existing) loadRows();
+        redraw();
+      };
+      $('#qty-area', m).addEventListener('input', (e) => {
+        const rowEl = e.target.closest('[data-row]');
+        if (rowEl) rows[+rowEl.dataset.row][e.target.dataset.rf] = e.target.dataset.rf === 'qty' ? num(e.target.value) : e.target.value;
+        if (e.target.name === 'qty') imp.qty = num(e.target.value);
+        sync();
+      });
+      $('#qty-area', m).addEventListener('click', (e) => {
+        if (e.target.id === 'split-variants' || e.target.id === 'add-variant-row') {
+          rows.push({ name: '', qty: 0, isNew: true });
+          redraw();
+          $(`[data-row="${rows.length - 1}"] [data-rf="name"]`, m)?.focus();
+        }
+        const rm = e.target.closest('[data-rm]');
+        if (rm) { rows.splice(+rm.dataset.rm, 1); redraw(); }
+      });
+      form.addEventListener('input', (e) => { if (!e.target.closest('#qty-area')) sync(); });
       form.addEventListener('change', sync);
-      sync();
+      redraw();
       $('[data-close2]', m).onclick = () => m.close();
       if (existing) $('#imp-del', m).onclick = async () => { if (await ask('Xoá phiếu nhập này?')) { await store.remove('imports', existing.id); m.close(); } };
+
       $('#imp-save', m).onclick = async () => {
         if (!form.reportValidity()) return;
         const d = formData(form);
+        const kind = existing ? imp.kind : d.kind;
+        const common = { kind, date: d.date, unitCost: num(d.unitCost), supplier: d.supplier.trim(), note: d.note.trim() };
+
+        if (existing) {
+          await store.upsert('imports', { ...imp, ...common, variantId: d.variantId || '', qty: num(d.qty), extraFee: num(d.extraFee) });
+          m.close();
+          return toast('Đã cập nhật phiếu nhập');
+        }
+
+        const filled = rows.filter((r) => num(r.qty) > 0);
+        if (rows.length && !filled.length) return toast('Nhập số lượng cho ít nhất 1 phân loại');
+        if (rows.some((r) => r.isNew && !r.name.trim())) return toast('Đặt tên cho phân loại mới');
+
+        // Create the product, or add the new variants to it.
         let itemId = d.itemId;
+        const coll = kind === 'packaging' ? 'packaging' : 'products';
+        const newVariants = rows.filter((r) => r.isNew).map((r) => {
+          r.variantId = uid();
+          return { id: r.variantId, name: r.name.trim(), sku: '', image: '', adjust: 0 };
+        });
         if (itemId === '__new') {
           if (!d.newName.trim()) return toast('Nhập tên mặt hàng mới');
-          const coll = d.kind === 'packaging' ? 'packaging' : 'products';
-          const item = await store.upsert(coll, { name: d.newName.trim(), ...(coll === 'products' ? { category: 'other', salePrice: 0 } : {}) });
+          const item = await store.upsert(coll, {
+            name: d.newName.trim(),
+            ...(coll === 'products' ? { category: 'other', salePrice: 0, variants: newVariants } : {}),
+          });
           itemId = item.id;
+        } else if (newVariants.length) {
+          const p = product(itemId);
+          await store.upsert('products', { ...p, variants: [...(p.variants || []), ...newVariants] });
         }
-        await store.upsert('imports', {
-          ...imp, kind: d.kind, itemId, date: d.date, qty: num(d.qty), unitCost: num(d.unitCost), extraFee: num(d.extraFee),
-          supplier: d.supplier.trim(), note: d.note.trim(),
-        });
+
+        if (filled.length) {
+          const fees = splitFee(num(d.extraFee), filled.map((r) => r.qty));
+          await store.upsertMany('imports', filled.map((r, i) => ({ ...common, itemId, variantId: r.variantId, qty: num(r.qty), extraFee: fees[i] })));
+        } else {
+          await store.upsert('imports', { ...common, itemId, variantId: '', qty: num(d.qty), extraFee: num(d.extraFee) });
+        }
         m.close();
-        toast(existing ? 'Đã cập nhật phiếu nhập' : 'Đã nhập hàng 📦');
+        toast(filled.length > 1 ? `Đã nhập ${filled.length} phân loại 📦` : 'Đã nhập hàng 📦');
       };
     },
   });
@@ -615,40 +816,68 @@ function openImportForm(existing) {
 
 /* ================= PRODUCTS ================= */
 function pageProducts() {
+  const f = ui.products;
+  const q = normalize(f.q);
+  const list = S.products
+    .filter((p) => !f.cat || (p.category || 'other') === f.cat)
+    .filter((p) => !q || normalize([p.name, p.sku, ...(p.variants || []).flatMap((v) => [v.name, v.sku])].join(' ')).includes(q));
   const fullCost = (p) => num(costs.product[p.id]) + presetCost(store.get('presets', p.defaultPreset));
+
+  const card = (p) => {
+    const fc = fullCost(p);
+    const profit = num(p.salePrice) - fc;
+    const total = num(stock.products[p.id]);
+    const variants = p.variants || [];
+    const unassigned = total - variants.reduce((s, v) => s + vStock(p.id, v.id), 0);
+    const low = hasVariants(p) ? variants.some((v) => vStock(p.id, v.id) <= lowOf(p)) : total <= lowOf(p);
+    return `<article class="pcard">
+      <button class="pimg cat-${p.category || 'other'}" data-action="edit-item" data-kind="product" data-id="${p.id}" aria-label="Sửa ${esc(p.name)}">
+        ${thumb(p.image, p.name, 'xl')}
+        <span class="chip ${p.category || 'other'}">${CATEGORIES[p.category] || 'khác'}</span>
+      </button>
+      <div class="pbody">
+        <div class="ptitle"><h3>${esc(p.name)}</h3>${p.sku ? `<span class="muted small">${esc(p.sku)}</span>` : ''}</div>
+        <dl class="pnums">
+          <div><dt>Giá bán</dt><dd>${money(p.salePrice)}</dd></div>
+          <div><dt>Giá thành</dt><dd>${money(fc)}</dd></div>
+          <div><dt>Lãi / cái</dt><dd class="${signCls(profit)}">${money(profit)}</dd></div>
+        </dl>
+        <div class="pstock ${low ? 'low' : ''}"><span>Tồn kho</span><b>${total}</b>${low ? '<span class="chip warn">sắp hết</span>' : ''}</div>
+        ${variants.length ? `<ul class="vlist">
+          ${variants.map((v) => {
+            const n = vStock(p.id, v.id);
+            return `<li class="${n <= lowOf(p) ? 'low' : ''}">${thumb(v.image, v.name, 'sm')}<span class="vname">${esc(v.name)}</span><b>${n}</b></li>`;
+          }).join('')}
+          ${unassigned ? `<li class="muted"><span class="thumb sm ph">?</span><span class="vname">Chưa phân loại</span><b>${unassigned}</b></li>` : ''}
+        </ul>` : ''}
+      </div>
+      <div class="pactions">
+        <button class="btn ghost sm" data-action="import-product" data-id="${p.id}">＋ Nhập hàng</button>
+        <button class="icon-btn" data-action="edit-item" data-kind="product" data-id="${p.id}" title="Sửa">✎</button>
+        <button class="icon-btn del" data-action="del-product" data-id="${p.id}" title="Xoá">🗑</button>
+      </div>
+    </article>`;
+  };
+
   return `
     <div class="page-head">
-      <div><h1>Sản phẩm</h1><p>Giá thành đầy đủ = giá vốn SP + bộ đóng gói mặc định. Gắn SKU trùng với Shopee để nhập đơn tự khớp.</p></div>
+      <div><h1>Sản phẩm</h1><p>Mỗi sản phẩm có thể chia phân loại (màu, size…) với tồn kho riêng. Bấm vào ảnh để sửa.</p></div>
       <div class="actions"><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
     </div>
-    <div class="card table-wrap">
-      ${S.products.length ? `<table>
-        <thead><tr><th>Sản phẩm</th><th>Nhóm</th><th>SKU</th><th class="num">Giá bán</th><th class="num">Giá vốn TB</th><th>Bộ đóng gói mặc định</th><th class="num">Giá thành đủ</th><th class="num">Lãi / cái</th><th class="num">Tồn</th><th></th></tr></thead>
-        <tbody>${S.products.map((p) => {
-          const fc = fullCost(p);
-          const profit = num(p.salePrice) - fc;
-          const st = num(stock.products[p.id]);
-          return `<tr>
-            <td><b>${esc(p.name)}</b></td>
-            <td><span class="chip ${p.category || 'other'}">${CATEGORIES[p.category] || 'khác'}</span></td>
-            <td class="muted small">${esc(p.sku || '')}</td>
-            <td class="num">${money(p.salePrice)}</td>
-            <td class="num">${money(costs.product[p.id])}</td>
-            <td class="small">${esc(store.get('presets', p.defaultPreset)?.name || '—')}</td>
-            <td class="num">${money(fc)}</td>
-            <td class="num ${signCls(profit)}">${money(profit)} <span class="small muted">${num(p.salePrice) ? Math.round((profit / num(p.salePrice)) * 100) + '%' : ''}</span></td>
-            <td class="num ${st <= num(p.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b></td>
-            <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-item" data-kind="product" data-id="${p.id}">✎</button><button class="icon-btn del" data-action="del-product" data-id="${p.id}">🗑</button></td>
-          </tr>`;
-        }).join('')}</tbody></table>` : '<div class="empty">Chưa có sản phẩm. Thêm sản phẩm hoặc tạo phiếu nhập.</div>'}
+    <div class="toolbar">
+      <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(f.q)}">
+      <div class="seg">${[['', 'Tất cả'], ...Object.entries(CATEGORIES)].map(([k, v]) => `<button data-product-cat="${k}" class="${f.cat === k ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <span class="muted small" style="margin-left:auto">${list.length} sản phẩm</span>
     </div>
+    ${list.length ? `<div class="pgrid">${list.map(card).join('')}</div>`
+      : `<div class="card empty">${S.products.length ? 'Không có sản phẩm khớp bộ lọc.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
     ${S.products.length && S.presets.length ? `
     <div class="card" style="margin-top:16px">
       <h3>Bảng giá thành theo cách đóng gói</h3>
       <p class="small muted" style="margin-top:-6px">Giá vốn SP + chi phí bộ đóng gói (1 cái). Dùng để chọn giá bán cho từng kiểu gói quà.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Sản phẩm</th><th class="num">Không gói</th>${S.presets.map((pr) => `<th class="num">${esc(pr.name)}<br><span class="small muted">+${money(presetCost(pr))}</span></th>`).join('')}</tr></thead>
-        <tbody>${S.products.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${money(costs.product[p.id])}</td>${S.presets.map((pr) => {
+        <tbody>${S.products.map((p) => `<tr><td><span class="item">${thumb(p.image, p.name, 'sm')}${esc(p.name)}</span></td><td class="num">${money(costs.product[p.id])}</td>${S.presets.map((pr) => {
           const c = num(costs.product[p.id]) + presetCost(pr);
           return `<td class="num" ${pr.id === p.defaultPreset ? 'style="background:var(--blue-soft);font-weight:700"' : ''}>${money(c)}</td>`;
         }).join('')}</tr>`).join('')}</tbody>
@@ -657,40 +886,133 @@ function pageProducts() {
 }
 
 function openProductForm(existing) {
-  const p = existing ? { ...existing } : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '' };
+  const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };
+  p.variants ||= [];
   const imports = existing ? S.imports.filter((i) => i.kind !== 'packaging' && i.itemId === p.id).sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [];
+  // A variant that already has imports or orders keeps its stock history, so it can be renamed but not removed.
+  const used = (vid) => S.imports.some((i) => i.itemId === p.id && i.variantId === vid)
+    || S.orders.some((o) => o.items?.some((l) => l.productId === p.id && l.variantId === vid));
+
   openModal({
     title: existing ? 'Sửa sản phẩm' : 'Thêm sản phẩm',
-    wide: false,
-    body: `<form id="product-form" class="form-grid" style="grid-template-columns:1fr 1fr">
-      <label class="field" style="grid-column:1/-1">Tên sản phẩm<input name="name" value="${esc(p.name)}" required></label>
-      <label class="field">Nhóm<select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}" ${p.category === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <label class="field">SKU (trùng SKU trên Shopee)<input name="sku" value="${esc(p.sku)}"></label>
-      <label class="field">Giá bán<input type="number" min="0" step="1000" name="salePrice" value="${num(p.salePrice)}"></label>
-      <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(p.baseCost)}"></label>
-      <label class="field" style="grid-column:1/-1">Bộ đóng gói mặc định<select name="defaultPreset">${options(S.presets, p.defaultPreset, '— không —')}</select></label>
-      <label class="field">Cảnh báo khi tồn ≤<input type="number" min="0" name="lowStock" value="${esc(p.lowStock ?? '')}" placeholder="${settings.lowStock}"></label>
-      <label class="field">Điều chỉnh tồn kho (±)<input type="number" name="adjust" value="${num(p.adjust)}" title="Dùng cho hàng hỏng, kiểm kê lệch…"></label>
-      <label class="field" style="grid-column:1/-1">Ghi chú<input name="note" value="${esc(p.note)}"></label>
+    body: `<form id="product-form">
+      <div class="pform">
+        <div class="pform-img">
+          <label class="imgpick" id="p-img-pick" title="Chọn ảnh sản phẩm">
+            <span id="p-img-preview">${thumb(p.image, p.name || '+', 'xl')}</span>
+            <input type="file" accept="image/*" id="p-img" hidden>
+          </label>
+          <div class="imgpick-actions">
+            <label class="btn ghost sm" for="p-img">${p.image ? 'Đổi ảnh' : 'Thêm ảnh'}</label>
+            <button type="button" class="btn ghost sm" id="p-img-clear" ${p.image ? '' : 'hidden'}>Bỏ ảnh</button>
+          </div>
+        </div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr">
+          <label class="field" style="grid-column:1/-1">Tên sản phẩm<input name="name" value="${esc(p.name)}" required placeholder="VD: Cúp pha lê mini"></label>
+          <label class="field">Nhóm<select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}" ${p.category === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+          <label class="field">SKU (trùng SKU trên Shopee)<input name="sku" value="${esc(p.sku)}"></label>
+          <label class="field">Giá bán<input type="number" min="0" step="1000" name="salePrice" value="${num(p.salePrice)}"></label>
+          <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(p.baseCost)}"></label>
+          <label class="field" style="grid-column:1/-1">Bộ đóng gói mặc định<select name="defaultPreset">${options(S.presets, p.defaultPreset, '— không —')}</select></label>
+          <label class="field">Cảnh báo khi tồn ≤<input type="number" min="0" name="lowStock" value="${esc(p.lowStock ?? '')}" placeholder="${settings.lowStock}"></label>
+          <label class="field" id="adjust-wrap">Điều chỉnh tồn kho (±)<input type="number" name="adjust" value="${num(p.adjust)}" title="Dùng cho hàng hỏng, kiểm kê lệch…"></label>
+        </div>
+      </div>
+
+      <div class="vsection">
+        <div class="vsection-head">
+          <h3>Phân loại</h3>
+          <span class="muted small">Màu, size, mẫu… Mỗi phân loại có ảnh và tồn kho riêng. VD: Cúp → Đỏ, Xanh, Vàng.</span>
+        </div>
+        <div id="variants"></div>
+        <button type="button" class="btn ghost sm" id="add-variant">＋ Thêm phân loại</button>
+      </div>
+
+      <label class="field" style="margin-top:14px">Ghi chú<input name="note" value="${esc(p.note)}"></label>
     </form>
     ${existing ? `<h3 style="margin:16px 0 8px">Lịch sử nhập (${imports.length})</h3>
-      ${imports.length ? `<table><tbody>${imports.map((i) => `<tr><td>${fmtDate(i.date)}</td><td class="num">${num(i.qty)} cái</td><td class="num">${money(i.unitCost)}/cái</td><td><button class="icon-btn" data-edit-imp="${i.id}">✎</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted small">Chưa nhập lần nào.</p>'}
+      ${imports.length ? `<div class="table-wrap"><table><tbody>${imports.map((i) => `<tr><td>${fmtDate(i.date)}</td><td>${esc(variantOf(p.id, i.variantId)?.name || '')}</td><td class="num">${num(i.qty)} cái</td><td class="num">${money(i.unitCost)}/cái</td><td><button class="icon-btn" data-edit-imp="${i.id}">✎</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">Chưa nhập lần nào.</p>'}
       <p class="small">Giá vốn TB: <b>${money(costs.product[p.id])}</b> · Tồn: <b>${num(stock.products[p.id])}</b></p>` : ''}`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="p-save">Lưu</button>`,
     onMount(m) {
       const form = $('#product-form', m);
+      let busy = 0;
+
+      const drawVariants = () => {
+        $('#adjust-wrap', m).hidden = p.variants.length > 0;
+        $('#variants', m).innerHTML = p.variants.length ? `<div class="vedit">
+          <div class="vedit-head"><span>Ảnh</span><span>Tên phân loại</span><span>SKU</span><span>Tồn</span><span title="Điều chỉnh tồn kho (±)">Chỉnh ±</span><span></span></div>
+          ${p.variants.map((v, i) => `<div class="vedit-row" data-v="${i}">
+            <label class="imgpick sm" title="Chọn ảnh cho ${esc(v.name || 'phân loại')}">${thumb(v.image, v.name || '+', 'sm')}<input type="file" accept="image/*" data-vimg="${i}" hidden></label>
+            <input data-vf="name" value="${esc(v.name)}" placeholder="VD: Đỏ" aria-label="Tên phân loại" required>
+            <input data-vf="sku" value="${esc(v.sku || '')}" placeholder="SKU Shopee" aria-label="SKU">
+            <b class="vstock">${existing ? vStock(p.id, v.id) : 0}</b>
+            <input type="number" data-vf="adjust" value="${num(v.adjust)}" aria-label="Điều chỉnh tồn">
+            <button type="button" class="icon-btn del" data-vdel="${i}" title="${used(v.id) ? 'Đã có nhập/đơn — không xoá được' : 'Xoá phân loại'}">✕</button>
+          </div>`).join('')}
+        </div>` : '<p class="muted small">Chưa có phân loại. Sản phẩm sẽ tính tồn kho chung.</p>';
+      };
+      const setImage = (ref) => {
+        p.image = ref;
+        $('#p-img-preview', m).innerHTML = thumb(ref, form.name.value || '+', 'xl');
+        $('#p-img-clear', m).hidden = !ref;
+      };
+      const upload = async (file, done) => {
+        busy++;
+        $('#p-save', m).disabled = true;
+        try {
+          done(await saveImage(file));
+        } catch (err) {
+          notify('Không tải được ảnh: ' + (err.message || err.code));
+        } finally {
+          busy--;
+          $('#p-save', m).disabled = busy > 0;
+        }
+      };
+
+      $('#p-img', m).onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) upload(f, setImage); };
+      $('#p-img-clear', m).onclick = () => setImage('');
+      $('#variants', m).addEventListener('input', (e) => {
+        const row = e.target.closest('[data-v]');
+        if (!row || !e.target.dataset.vf) return;
+        const v = p.variants[+row.dataset.v];
+        v[e.target.dataset.vf] = e.target.dataset.vf === 'adjust' ? num(e.target.value) : e.target.value;
+      });
+      $('#variants', m).addEventListener('change', (e) => {
+        const i = e.target.dataset.vimg;
+        if (i === undefined || !e.target.files[0]) return;
+        const file = e.target.files[0];
+        upload(file, (ref) => { p.variants[+i].image = ref; drawVariants(); });
+      });
+      $('#variants', m).addEventListener('click', (e) => {
+        const del = e.target.closest('[data-vdel]');
+        if (!del) return;
+        const v = p.variants[+del.dataset.vdel];
+        if (used(v.id)) return notify(`"${v.name}" đã có phiếu nhập hoặc đơn hàng nên không xoá được. Bạn có thể đổi tên.`);
+        p.variants.splice(+del.dataset.vdel, 1);
+        drawVariants();
+      });
+      $('#add-variant', m).onclick = () => {
+        p.variants.push({ id: uid(), name: '', sku: '', image: '', adjust: 0 });
+        drawVariants();
+        $(`[data-v="${p.variants.length - 1}"] [data-vf="name"]`, m).focus();
+      };
       $('[data-close2]', m).onclick = () => m.close();
       $$('[data-edit-imp]', m).forEach((b) => (b.onclick = () => openImportForm(store.get('imports', b.dataset.editImp))));
       $('#p-save', m).onclick = async () => {
+        if (busy) return toast('Đang tải ảnh, chờ chút…');
         if (!form.reportValidity()) return;
         const d = formData(form);
         await store.upsert('products', {
           ...p, name: d.name.trim(), category: d.category, sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
-          defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock), adjust: num(d.adjust), note: d.note.trim(),
+          defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
+          adjust: p.variants.length ? num(p.adjust) : num(d.adjust), note: d.note.trim(),
+          variants: p.variants.map((v) => ({ ...v, name: v.name.trim(), sku: (v.sku || '').trim() })),
         });
         m.close();
         toast('Đã lưu sản phẩm');
       };
+      drawVariants();
     },
   });
 }
@@ -831,7 +1153,7 @@ function exportOrdersCsv() {
   const rows = [...S.orders].sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((o) => {
     const s = orderSummary(costs, o);
     return [o.date, PLATFORMS[o.platform]?.label, o.code, o.customer, STATUSES[o.status],
-      (o.items || []).map((l) => `${product(l.productId)?.name || l.productName || '?'} x${l.qty}`).join('; '),
+      (o.items || []).map((l) => `${itemLabel(l.productId, l.variantId, l.productName || '?')} x${l.qty}`).join('; '),
       s.revenue, s.product, s.packaging, s.fee, s.ship, s.profit].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',');
   });
   download(`hani-don-hang-${today()}.csv`, '﻿' + [head.join(','), ...rows].join('\n'), 'text/csv');
@@ -849,12 +1171,15 @@ async function loadDemo() {
   const p3 = { id: uid(), name: 'Set quà anni', sku: 'SET-AN', category: 'friend', salePrice: 259000, defaultPreset: presets[1].id };
   await store.upsertMany('packaging', [box, paper, ribbon, bag, card]);
   await store.upsertMany('presets', presets);
-  await store.upsertMany('products', [p1, p2, p3]);
+  const cup = { id: uid(), name: 'Cúp pha lê mini', sku: 'CUP-01', category: 'friend', salePrice: 89000, defaultPreset: presets[1].id,
+    variants: [{ id: uid(), name: 'Đỏ', sku: 'CUP-01-DO' }, { id: uid(), name: 'Xanh', sku: 'CUP-01-XANH' }, { id: uid(), name: 'Vàng', sku: 'CUP-01-VANG' }] };
+  await store.upsertMany('products', [p1, p2, p3, cup]);
   const d = today();
   await store.upsertMany('imports', [
     { kind: 'product', itemId: p1.id, date: d, qty: 100, unitCost: 15000, extraFee: 50000, supplier: 'Xưởng in A' },
     { kind: 'product', itemId: p2.id, date: d, qty: 30, unitCost: 55000, extraFee: 30000, supplier: 'Xưởng gỗ B' },
     { kind: 'product', itemId: p3.id, date: d, qty: 20, unitCost: 140000, extraFee: 0, supplier: '' },
+    ...cup.variants.map((v, i) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty: [12, 8, 4][i], unitCost: 32000, extraFee: [12000, 8000, 4000][i], supplier: 'Xưởng pha lê C' })),
     ...[box, paper, ribbon, bag, card].map((x) => ({ kind: 'packaging', itemId: x.id, date: d, qty: 200, unitCost: x.baseCost, extraFee: 0 })),
   ]);
   await store.upsertMany('orders', [
@@ -862,6 +1187,8 @@ async function loadDemo() {
       items: [{ productId: p1.id, qty: 2, price: 45000, pack1: bag.id, pack2: card.id, pack3: '', packEach: true }] },
     { platform: 'threads', code: 'TH-0001', date: d, customer: '@minh', status: 'shipping', shipFee: 25000, shipPayer: 'shop', discount: 10000, platformFee: 0,
       items: [{ productId: p3.id, qty: 1, price: 259000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
+    { platform: 'instagram', code: 'IG-0002', date: d, customer: '@thu.ha', status: 'pending', shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
+      items: [{ productId: cup.id, variantId: cup.variants[2].id, qty: 2, price: 89000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
   ]);
   toast('Đã nạp dữ liệu mẫu');
 }
@@ -872,6 +1199,8 @@ document.addEventListener('click', async (e) => {
   if (tab) { location.hash = tab.dataset.tab; return; }
   const period = e.target.closest('[data-period]');
   if (period) { ui.period = period.dataset.period; render(); return; }
+  const cat = e.target.closest('[data-product-cat]');
+  if (cat) { ui.products.cat = cat.dataset.productCat; render(); return; }
   const kind = e.target.closest('[data-import-kind]');
   if (kind) { ui.imports.kind = kind.dataset.importKind; render(); return; }
   const goto = e.target.closest('[data-goto-status]');
@@ -889,6 +1218,7 @@ document.addEventListener('click', async (e) => {
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'del-import': return confirmDel('imports', 'Xoá phiếu nhập này? Tồn kho và giá vốn sẽ tính lại.');
     case 'new-product': return openProductForm();
+    case 'import-product': return openImportForm(undefined, { kind: 'product', itemId: id });
     case 'edit-item':
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
@@ -919,6 +1249,7 @@ document.addEventListener('input', (e) => {
   const t = e.target;
   if (t.id === 'order-q') { ui.orders.q = t.value; render(); }
   if (t.id === 'import-q') { ui.imports.q = t.value; render(); }
+  if (t.id === 'product-q') { ui.products.q = t.value; render(); }
 });
 
 document.addEventListener('change', async (e) => {

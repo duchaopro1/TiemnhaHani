@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus } from '../js/shopee.js';
 
 const state = {
@@ -62,4 +62,28 @@ test('đọc file xuất đơn Shopee, gộp nhiều dòng cùng mã đơn', () 
   assert.equal(orders[1].date, '2024-10-05');
   assert.equal(parseNumber('1.250.000'), 1250000);
   assert.equal(mapStatus('Đang giao'), 'shipping');
+});
+
+test('tồn kho theo phân loại (cúp 3 màu) và tổng sản phẩm', () => {
+  const s = {
+    products: [{ id: 'cup', name: 'Cúp', variants: [{ id: 'do' }, { id: 'xanh', adjust: -1 }, { id: 'vang' }] }],
+    packaging: [],
+    imports: [
+      { kind: 'product', itemId: 'cup', variantId: 'do', qty: 10 },
+      { kind: 'product', itemId: 'cup', variantId: 'xanh', qty: 5 },
+      { kind: 'product', itemId: 'cup', variantId: 'vang', qty: 3 },
+    ],
+    orders: [{ status: 'done', items: [{ productId: 'cup', variantId: 'do', qty: 2 }] }],
+  };
+  const st = stockLevels(s);
+  assert.equal(st.variants[variantKey('cup', 'do')], 8);
+  assert.equal(st.variants[variantKey('cup', 'xanh')], 4);
+  assert.equal(st.variants[variantKey('cup', 'vang')], 3);
+  assert.equal(st.products.cup, 15);
+});
+
+test('chia phí ship nhập theo số lượng từng phân loại', () => {
+  assert.deepEqual(splitFee(30000, [10, 5, 5]), [15000, 7500, 7500]);
+  assert.deepEqual(splitFee(10000, [1, 1, 1]), [3333, 3333, 3334]);
+  assert.deepEqual(splitFee(5000, [0, 0]), [0, 0]);
 });
