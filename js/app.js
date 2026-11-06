@@ -91,7 +91,7 @@ const TABS = {
   settings: 'Cài đặt',
 };
 const ui = {
-  period: 'month', // 'month' (the month in dashMonth), '30d' or 'all'
+  period: 'month', // 'month' (the month in dashMonth) or 'all'
   dashMonth: isoLocal(new Date()).slice(0, 7),
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '' },
@@ -187,7 +187,6 @@ const viewMonth = (ym) => Object.assign(ui, { period: 'month', dashMonth: ym > t
 
 /** [from, to, label] of the dashboard's selected period. */
 function periodRange() {
-  if (ui.period === '30d') return [isoLocal(new Date(Date.now() - 29 * 864e5)), isoLocal(new Date()), '30 ngày qua'];
   if (ui.period === 'all') return ['0000', '9999', 'Toàn bộ thời gian'];
   const r = exportRange({ mode: 'month', month: ui.dashMonth });
   return [r.from, r.to, r.label];
@@ -209,24 +208,19 @@ function pageDashboard() {
   const pendingCount = S.orders.filter((o) => o.status === 'pending').length;
   const cur = thisMonth();
   const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
-  const periods = [
-    ['this', 'Tháng này', isMonth(cur)],
-    ['prev', 'Tháng trước', isMonth(shiftMonth(cur, -1))],
-    ['30d', '30 ngày', ui.period === '30d'],
-    ['all', 'Tất cả', ui.period === 'all'],
-  ];
-  const pickedOther = ui.period === 'month' && !isMonth(cur) && !isMonth(shiftMonth(cur, -1));
+  const pickedOther = ui.period === 'month' && !isMonth(cur);
 
   return `
     <div class="page-head">
       <div><h1>Tổng quan</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · doanh thu & lợi nhuận đã trừ giá vốn, đóng gói, phí sàn và ship shop chịu.</p></div>
       <div class="actions period-bar">
-        <div class="seg">${periods.map(([k, v, on]) => `<button data-period="${k}" class="${on ? 'on' : ''}">${v}</button>`).join('')}</div>
-        <div class="month-nav ${pickedOther ? 'on' : ''}">
+        <button class="period-btn ${isMonth(cur) ? 'on' : ''}" data-period="this">Tháng này</button>
+        <div class="month-nav ${pickedOther ? 'on' : ''}" title="Chọn các tháng trước">
           <button class="icon-btn" data-month-step="-1" title="Tháng trước đó" aria-label="Tháng trước đó">‹</button>
           <input type="month" id="dash-month" value="${esc(ui.period === 'month' ? ui.dashMonth : '')}" max="${cur}" aria-label="Chọn tháng">
           <button class="icon-btn" data-month-step="1" title="Tháng sau" aria-label="Tháng sau" ${ui.period === 'month' && ui.dashMonth >= cur ? 'disabled' : ''}>›</button>
         </div>
+        <button class="period-btn ${ui.period === 'all' ? 'on' : ''}" data-period="all">Tất cả</button>
       </div>
     </div>
     <div class="grid kpi">
@@ -1381,14 +1375,14 @@ document.addEventListener('click', async (e) => {
   const period = e.target.closest('[data-period]');
   if (period) {
     const k = period.dataset.period;
-    if (k === 'this' || k === 'prev') viewMonth(shiftMonth(thisMonth(), k === 'prev' ? -1 : 0));
-    else ui.period = k;
+    if (k === 'this') viewMonth(thisMonth());
+    else ui.period = 'all';
     render();
     return;
   }
   const step = e.target.closest('[data-month-step]');
   if (step && !step.disabled) {
-    // From "30 ngày"/"Tất cả" the arrows start at the current month.
+    // From "Tất cả" the arrows start at the current month.
     viewMonth(ui.period === 'month' ? shiftMonth(ui.dashMonth, +step.dataset.monthStep) : thisMonth());
     render();
     return;

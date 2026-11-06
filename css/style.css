@@ -371,3 +371,8 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .month-nav input:focus { box-shadow: none; }
 .month-nav .icon-btn { font-size: 20px; line-height: 1; padding: 2px 8px; color: var(--blue); }
 .month-nav .icon-btn:disabled { opacity: .3; cursor: default; background: transparent; }
+.period-btn {
+  border: 1.5px solid var(--blue); background: var(--card); color: var(--blue); cursor: pointer;
+  border-radius: 999px; padding: 7px 16px; font: 600 13px var(--font-body);
+}
+.period-btn.on { background: var(--blue); color: #fff; }
