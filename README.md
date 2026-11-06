@@ -97,6 +97,8 @@ Không cần build. App là HTML/CSS/JS thuần (`index.html`, `css/`, `js/`).
 
 ## Font
 
-Brand dùng **CS Mocha Demo** (logo) và **Oilvare Base** (tiêu đề), 2 font này không có trên Google Fonts.
-Nếu có file font, đặt vào thư mục `fonts/` với tên `CSMochaDemo.otf` và `OilvareBase.otf`, app sẽ tự dùng.
-Nếu không có, app dùng Fredoka / Lilita One thay thế. Font nội dung là **Cabin**, đúng theo guideline.
+Brand dùng **CS Mocha Demo** (logo), **Oilvare Base** (tiêu đề) và **Cabin** (nội dung).
+
+- **Tiêu đề: Baloo 2 ExtraBold** (Google Fonts). Oilvare Base, và cả Lilita One dùng thay trước đây, không có dấu tiếng Việt: các chữ như ả, ơ, ậ bị lấy từ font khác nên trông lỗi. Baloo 2 có đủ tiếng Việt, nét tròn dày gần với phong cách brand.
+- **Nội dung: Cabin**, đúng guideline, có đủ tiếng Việt.
+- **Logo "hani"**: CS Mocha Demo nếu đặt file `CSMochaDemo.otf` vào thư mục `fonts/`, nếu không thì dùng Fredoka. Chữ "hani" không có dấu nên không bị lỗi.

@@ -1,8 +1,10 @@
 /* Hani brand — theo Brand Guidelines
    Logo: CS Mocha Demo  ·  Title: Oilvare Base  ·  Body: Cabin
+   Oilvare Base and the Google fallbacks Lilita One / Fredoka have no Vietnamese glyphs (ả, ơ, ậ… fall back
+   to another font), so titles use Baloo 2, a rounded heavy face with full Vietnamese support. The logo keeps
+   its bubbly face since "hani" has no diacritics.
    Nếu có file font gốc, đặt vào thư mục /fonts với tên bên dưới, app sẽ tự dùng. */
 @font-face { font-family: 'CS Mocha'; src: url('../fonts/CSMochaDemo.otf') format('opentype'); font-display: swap; }
-@font-face { font-family: 'Oilvare'; src: url('../fonts/OilvareBase.otf') format('opentype'); font-display: swap; }
 
 :root {
   --blue: #1479c4;
@@ -24,8 +26,9 @@
   --danger: #d6455d;
   --ok: #3c9a5f;
 
-  --font-logo: 'CS Mocha', 'Fredoka', 'Lilita One', system-ui, sans-serif;
-  --font-title: 'Oilvare', 'Lilita One', 'Fredoka', system-ui, sans-serif;
+  --font-logo: 'CS Mocha', 'Fredoka', 'Baloo 2', system-ui, sans-serif;
+  --font-title: 'Baloo 2', 'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --title-weight: 800;
   --font-body: 'Cabin', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   --radius: 16px;
@@ -46,7 +49,7 @@ body {
   font-size: 15px;
   line-height: 1.45;
 }
-h1, h2, h3, .title { font-family: var(--font-title); color: var(--blue); font-weight: 400; letter-spacing: .3px; margin: 0; }
+h1, h2, h3, .title { font-family: var(--font-title); color: var(--blue); font-weight: var(--title-weight); line-height: 1.25; margin: 0; text-wrap: balance; }
 h1 { font-size: 30px; }
 h2 { font-size: 22px; }
 h3 { font-size: 17px; }
@@ -93,7 +96,7 @@ a { color: var(--blue); }
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .tab {
   border: 0; background: transparent; cursor: pointer;
-  font-family: var(--font-title); font-size: 15px; color: var(--muted);
+  font-family: var(--font-title); font-weight: 700; font-size: 15px; color: var(--muted);
   padding: 8px 14px; border-radius: 999px; white-space: nowrap;
 }
 .tab:hover { background: var(--blue-soft); color: var(--blue); }
@@ -122,7 +125,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 80px; }
 
 .kpi-card { position: relative; overflow: hidden; }
 .kpi-card .label { color: var(--muted); font-size: 13px; }
-.kpi-card .value { font-family: var(--font-title); font-size: 26px; color: var(--ink); margin-top: 4px; }
+.kpi-card .value { font-family: var(--font-title); font-weight: var(--title-weight); font-size: 26px; line-height: 1.3; color: var(--ink); margin-top: 4px; }
 .kpi-card.her { background: linear-gradient(160deg, var(--her) 0, #fff 70%); }
 .kpi-card.him { background: linear-gradient(160deg, var(--him) 0, #fff 70%); }
 .kpi-card.friend { background: linear-gradient(160deg, var(--friend) 0, #fff 70%); }
@@ -132,7 +135,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 80px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 10px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-family: var(--font-title); font-weight: 400; color: var(--blue); font-size: 13px; white-space: nowrap; background: var(--blue-soft); }
+th { font-family: var(--font-title); font-weight: 700; color: var(--blue); font-size: 13px; white-space: nowrap; background: var(--blue-soft); }
 th:first-child { border-top-left-radius: 10px; }
 th:last-child { border-top-right-radius: 10px; }
 tr:hover td { background: #fbfdff; }
@@ -216,7 +219,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 14px; }
 .summary div { background: var(--blue-soft); border-radius: 12px; padding: 10px 12px; }
 .summary div span { display: block; font-size: 12px; color: var(--muted); }
-.summary div b { font-family: var(--font-title); font-weight: 400; font-size: 18px; }
+.summary div b { font-family: var(--font-title); font-weight: var(--title-weight); font-size: 18px; }
 .summary .profit { background: var(--backup); }
 .summary .profit.neg { background: #fde2e6; }
 
@@ -248,7 +251,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
   display: inline-grid; place-items: center; flex: none;
   width: 40px; height: 40px; border-radius: 10px; object-fit: cover;
   background: var(--blue-soft); color: var(--blue);
-  font: 400 18px var(--font-title);
+  font: 800 18px var(--font-title);
 }
 .thumb.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 13px; }
 .thumb.xl { width: 100%; height: 100%; border-radius: 0; font-size: 56px; }
@@ -283,7 +286,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .pnums dd { margin: 0; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pstock { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--bg); }
 .pstock span:first-child { font-size: 12px; color: var(--muted); }
-.pstock b { font-family: var(--font-title); font-weight: 400; font-size: 22px; font-variant-numeric: tabular-nums; }
+.pstock b { font-family: var(--font-title); font-weight: var(--title-weight); font-size: 22px; font-variant-numeric: tabular-nums; }
 .pstock .chip { margin-left: auto; }
 .pstock.low b { color: var(--danger); }
 .vlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
