@@ -1,4 +1,4 @@
-Đặt file font gốc của brand vào đây (không bắt buộc):
-- CSMochaDemo.otf  (logo)
-- OilvareBase.otf  (tiêu đề)
-Nếu không có, app dùng font thay thế gần giống: Fredoka / Lilita One / Cabin.
+Đặt file font logo gốc của brand vào đây (không bắt buộc):
+- CSMochaDemo.otf  (logo "hani" — không có dấu nên dùng được)
+Tiêu đề dùng Baloo 2 (Google Fonts) vì Oilvare Base không có đủ dấu tiếng Việt.
+Nếu không có file logo, app dùng Fredoka thay thế.

@@ -8,6 +8,8 @@ export const PLATFORMS = {
 
 export const STATUSES = {
   pending: 'Chờ xử lý',
+  designed: 'Đã thiết kế',
+  packed: 'Đã đóng gói',
   shipping: 'Đang giao',
   done: 'Hoàn thành',
   cancelled: 'Đã huỷ',
@@ -16,6 +18,51 @@ export const STATUSES = {
 
 // Orders in these statuses don't consume stock and don't count toward revenue/profit.
 export const INACTIVE_STATUSES = new Set(['cancelled', 'returned']);
+
+/**
+ * What the customer has to pay for an order and how much of it is still to collect.
+ * total     = goods after discount + shipping when the customer pays it
+ * tracked   = the shop wrote down a payment (`paid` is a number, 0 included); blank means "not tracked"
+ * remaining = total − paid (negative = paid too much). Deposits never change revenue or profit.
+ */
+export function orderPayment(costs, order) {
+  const s = orderSummary(costs, order);
+  const total = s.revenue + (order.shipPayer === 'shop' ? 0 : num(order.shipFee));
+  const tracked = order.paid !== undefined && order.paid !== null && order.paid !== '' && Number.isFinite(+order.paid);
+  const paid = tracked ? num(order.paid) : 0;
+  return { total, tracked, paid, remaining: tracked ? total - paid : 0 };
+}
+
+/**
+ * Money still to collect at delivery for the orders that are not finished yet. A finished order
+ * counts as collected; cancelled or returned ones have nothing to collect.
+ */
+export function toCollect(costs, orders) {
+  let amount = 0, count = 0;
+  for (const o of orders) {
+    if (!OPEN_STATUSES.has(o.status)) continue;
+    const p = orderPayment(costs, o);
+    if (p.tracked && p.remaining > 0) { amount += p.remaining; count += 1; }
+  }
+  return { amount, count };
+}
+
+/** Stock level: 'out' at 0 (or below), 'low' down to the warning level, otherwise 'ok'. */
+export function stockState(n, low) {
+  const x = Number(n) || 0;
+  if (x <= 0) return 'out';
+  return x <= (Number(low) || 0) ? 'low' : 'ok';
+}
+
+/** Orders that still have work left: not yet done, cancelled or returned. */
+export const OPEN_STATUSES = new Set(['pending', 'designed', 'packed', 'shipping']);
+
+/** How many orders are in each status; every status is present, even at 0. */
+export function countByStatus(orders) {
+  const counts = Object.fromEntries(Object.keys(STATUSES).map((k) => [k, 0]));
+  for (const o of orders) if (o.status in counts) counts[o.status] += 1;
+  return counts;
+}
 
 export const PACK_SLOTS = ['pack1', 'pack2', 'pack3'];
 
@@ -30,11 +77,15 @@ const num = (v) => (Number.isFinite(+v) ? +v : 0);
 export function costTable(state) {
   const table = { product: {}, packaging: {} };
   for (const imp of state.imports || []) {
+    if (!isReceived(imp)) continue; // goods still on their way don't set the cost yet
     const kind = imp.kind === 'packaging' ? 'packaging' : 'product';
     const row = (table[kind][imp.itemId] ||= { qty: 0, total: 0 });
     row.qty += num(imp.qty);
     row.total += num(imp.qty) * num(imp.unitCost) + num(imp.extraFee);
   }
+  // Shared supplies (tape, bubble wrap, staples) are an operating cost, never part of an order.
+  const shared = {};
+  for (const k of state.packaging || []) if (k.shared) shared[k.id] = true;
   const avg = (kind, list) => {
     const out = {};
     for (const item of list || []) {
@@ -43,7 +94,7 @@ export function costTable(state) {
     }
     return out;
   };
-  return { product: avg('product', state.products), packaging: avg('packaging', state.packaging) };
+  return { product: avg('product', state.products), packaging: avg('packaging', state.packaging), shared };
 }
 
 /** Number of packaging units a line uses: once per line, or once per product unit. */
@@ -57,7 +108,7 @@ export function lineCost(costs, line) {
   const product = qty * num(costs.product[line.productId]);
   let packaging = 0;
   for (const slot of PACK_SLOTS) {
-    if (line[slot]) packaging += num(costs.packaging[line[slot]]) * packUnits(line);
+    if (line[slot] && !costs.shared?.[line[slot]]) packaging += num(costs.packaging[line[slot]]) * packUnits(line);
   }
   const revenue = qty * num(line.price);
   return { revenue, product, packaging, total: product + packaging, profit: revenue - product - packaging };
@@ -85,25 +136,115 @@ export function orderSummary(costs, order) {
   return { gross, discount, revenue, product, packaging, fee, ship, cost, profit: revenue - cost };
 }
 
-/** Current stock = imported − used by active orders (+ manual adjustments). */
+/**
+ * An import slip is either ordered (goods on their way) or received. Only received slips count as
+ * stock, cost and operating cost. Slips written before this status existed have none: they are received.
+ */
+export const isReceived = (imp) => imp.status !== 'ordered';
+/** The date a slip counts for money: when the goods arrived, else when it was written. */
+export const importDate = (imp) => (isReceived(imp) && imp.receivedDate) || imp.date;
+
+/** Key of one product variant (e.g. one colour of a trophy) in stock tables. */
+export const variantKey = (productId, variantId) => `${productId}:${variantId}`;
+
+/**
+ * Current stock = imported − used by active orders (+ manual adjustments).
+ * `products` holds each product's total; `variants` holds each variant's own count,
+ * keyed by variantKey(). Imports/order lines without a variant only count in the total.
+ */
 export function stockLevels(state) {
-  const products = {}, packaging = {};
-  for (const p of state.products || []) products[p.id] = num(p.adjust);
+  const products = {}, packaging = {}, variants = {};
+  const incoming = { products: {}, packaging: {}, variants: {} }; // ordered, not yet received
+  const addVariant = (pid, vid, n) => {
+    if (!vid) return;
+    const k = variantKey(pid, vid);
+    variants[k] = num(variants[k]) + n;
+  };
+  for (const p of state.products || []) {
+    products[p.id] = num(p.adjust);
+    for (const v of p.variants || []) {
+      variants[variantKey(p.id, v.id)] = num(v.adjust);
+      products[p.id] += num(v.adjust);
+    }
+  }
+  const sharedIds = new Set((state.packaging || []).filter((k) => k.shared).map((k) => k.id));
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
-    const bucket = imp.kind === 'packaging' ? packaging : products;
-    bucket[imp.itemId] = num(bucket[imp.itemId]) + num(imp.qty);
+    if (!isReceived(imp)) {
+      const n = num(imp.qty);
+      if (imp.kind === 'packaging') incoming.packaging[imp.itemId] = num(incoming.packaging[imp.itemId]) + n;
+      else {
+        incoming.products[imp.itemId] = num(incoming.products[imp.itemId]) + n;
+        if (imp.variantId) {
+          const k = variantKey(imp.itemId, imp.variantId);
+          incoming.variants[k] = num(incoming.variants[k]) + n;
+        }
+      }
+      continue;
+    }
+    if (imp.kind === 'packaging') {
+      packaging[imp.itemId] = num(packaging[imp.itemId]) + num(imp.qty);
+    } else {
+      products[imp.itemId] = num(products[imp.itemId]) + num(imp.qty);
+      addVariant(imp.itemId, imp.variantId, num(imp.qty));
+    }
   }
   for (const order of state.orders || []) {
     if (INACTIVE_STATUSES.has(order.status)) continue;
     for (const line of order.items || []) {
-      if (line.productId) products[line.productId] = num(products[line.productId]) - num(line.qty);
+      if (line.productId) {
+        products[line.productId] = num(products[line.productId]) - num(line.qty);
+        addVariant(line.productId, line.variantId, -num(line.qty));
+      }
       for (const slot of PACK_SLOTS) {
-        if (line[slot]) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
+        if (line[slot] && !sharedIds.has(line[slot])) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
       }
     }
   }
-  return { products, packaging };
+  return { products, packaging, variants, incoming };
+}
+
+/**
+ * Operating cost of the period: everything bought of the shared supplies (packaging items marked
+ * `shared`) with an import date inside [from, to]. Stock adjustments never change it: the money
+ * was spent when the supplies were bought; adjusting only tells how much of them is used up.
+ */
+export function operatingCosts(state, from = '0000', to = '9999') {
+  const shared = new Map((state.packaging || []).filter((k) => k.shared).map((k) => [k.id, k]));
+  const rows = {};
+  let total = 0;
+  for (const imp of state.imports || []) {
+    if (imp.kind !== 'packaging' || !shared.has(imp.itemId) || !isReceived(imp)) continue;
+    const when = importDate(imp);
+    if (when < from || when > to) continue;
+    const amount = num(imp.qty) * num(imp.unitCost) + num(imp.extraFee);
+    const row = (rows[imp.itemId] ||= { id: imp.itemId, name: shared.get(imp.itemId).name, qty: 0, amount: 0 });
+    row.qty += num(imp.qty);
+    row.amount += amount;
+    total += amount;
+  }
+  return { total, items: Object.values(rows).sort((a, b) => b.amount - a.amount) };
+}
+
+/**
+ * New stock adjustment so the book stock matches a physical count.
+ * Only the adjustment changes: import slips, unit costs and operating costs are untouched.
+ */
+export function adjustForCount(currentAdjust, stockNow, counted) {
+  return (Number(currentAdjust) || 0) + (Number(counted) || 0) - (Number(stockNow) || 0);
+}
+
+/** Split a batch fee across rows in proportion to their quantity (shares sum to the fee). */
+export function splitFee(fee, qtys) {
+  const total = qtys.reduce((s, q) => s + num(q), 0);
+  if (!total) return qtys.map(() => 0);
+  let left = num(fee);
+  return qtys.map((q, i) => {
+    if (i === qtys.length - 1) return left;
+    const share = Math.round((num(fee) * num(q)) / total);
+    left -= share;
+    return share;
+  });
 }
 
 /** Aggregate stats for a list of orders. */
@@ -130,4 +271,13 @@ export function aggregate(costs, orders) {
     }
   }
   return total;
+}
+
+/**
+ * Share a parcel's shipping fee across its lines. `mode` 'qty' splits by number of pieces,
+ * 'value' by goods value (qty x unit price). Shares are whole dong and always sum to the fee.
+ */
+export function allocateShipping(fee, lines, mode = 'qty') {
+  const weights = lines.map((l) => (mode === 'value' ? num(l.qty) * num(l.unitCost) : num(l.qty)));
+  return splitFee(fee, weights);
 }

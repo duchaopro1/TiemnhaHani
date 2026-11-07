@@ -7,14 +7,18 @@ Giao diện theo Brand Guidelines của Hani (xanh `#1479C4`, bảng màu for he
 
 | Tab | Làm gì |
 |---|---|
-| **Tổng quan** | Doanh thu, chi phí, lợi nhuận, biên lãi theo tháng; so sánh 3 nền tảng; top sản phẩm lãi nhất; cảnh báo sắp hết hàng |
-| **Đơn hàng** | Thêm đơn bằng tay (Threads/Instagram) · nhập file Excel đơn hàng Shopee · mỗi dòng gồm **Sản phẩm, Số lượng, Dụng cụ đóng gói 1/2/3** · phí ship **Khách chịu / Shop chịu** · tính lãi ngay khi nhập |
-| **Nhập hàng** | Phiếu nhập sản phẩm & dụng cụ đóng gói, có phí ship nhập · **sửa / xoá phiếu đã nhập** (tồn kho và giá vốn tự tính lại) · bấm tên mặt hàng để sửa thông tin mặt hàng |
-| **Sản phẩm** | Giá bán, giá vốn TB, bộ đóng gói mặc định, giá thành đủ, lãi/cái, tồn kho · **bảng giá thành theo từng cách đóng gói** |
-| **Đóng gói** | Dụng cụ đóng gói (hộp, giấy, ruy băng, thiệp…) và **Bộ đóng gói** dùng nhanh |
+| **Tổng quan** | Doanh thu, chi phí, lợi nhuận, biên lãi · xem **Tháng này**, **tháng bất kỳ** (ô chọn tháng và nút ‹ ›) hoặc **Tất cả** · **bảng trạng thái đơn hàng** (số đơn và tỉ lệ ở từng trạng thái, bấm vào để mở danh sách đơn đó) · **chi phí vận hành** (tiền nhập vật tư dùng chung trong thời gian đang xem) được cộng vào tổng chi phí và trừ khỏi lợi nhuận · so sánh 3 nền tảng · top sản phẩm lãi nhất · bảng **đã hết & sắp hết** (tồn bằng 0 ghi **Đã hết** màu đỏ đặc, từ 1 tới mức cảnh báo ghi **Sắp hết**; hàng đã hết xếp trước) |
+| **Đơn hàng** | Thêm đơn bằng tay (Threads/Instagram) · nhập file Excel đơn hàng Shopee · mỗi dòng gồm **Sản phẩm, Số lượng, Dụng cụ đóng gói 1/2/3** · phí ship **Khách chịu / Shop chịu** · tick **Có thiệp** khi khách nhờ thiết kế thiệp · trạng thái đi theo công việc: Chờ xử lý → **Đã thiết kế** → **Đã đóng gói** → Đang giao → Hoàn thành (hoặc Đã huỷ / Trả hàng), mỗi trạng thái một màu · ô **Thanh toán của khách** ghi số tiền đã trả / cọc, app tính **còn lại thu khi nhận hàng** (nút nhập nhanh: chưa trả, cọc 50%, đã trả đủ; để trống nếu không cần theo dõi) · · đơn có **ghi chú** thì ghi chú hiện ngay dưới sản phẩm trong bảng (tìm kiếm cũng tìm được theo nội dung ghi chú) · tính lãi ngay khi nhập |
+| **Nhập hàng** | Phiếu nhập sản phẩm & dụng cụ đóng gói, có phí ship nhập · nhập **số lượng từng phân loại** trong một phiếu (VD: cúp đỏ 5, xanh 3, vàng 2; phí ship chia theo số lượng) · **sửa / xoá phiếu đã nhập** (tồn kho và giá vốn tự tính lại) · bấm tên mặt hàng để sửa thông tin mặt hàng · **tình trạng hàng**: phiếu mới là *Đang đặt* (chưa vào kho, giá vốn, chi phí; hiện "đang về +N" ở sản phẩm), khi hàng về bấm **Đã nhận hàng**, chọn ngày và số thực nhận (nhận thiếu thì giữ phần còn lại đang về) mới cộng vào kho · phiếu cũ coi như đã nhận · nút **Kiện nhiều mặt hàng**: nhập một kiện gộp nhiều mặt hàng với **tổng phí ship một lần**, app chia phí ship cho từng dòng **theo số lượng hoặc theo giá trị hàng** và hiện luôn vốn/cái · bấm ✎ ở dòng gộp để **sửa hàng loạt** các phân loại của một mặt hàng (số lượng từng phân loại, giá, ngày, tình trạng, phí ship chia lại theo số lượng) |
+| **Sản phẩm** | Mỗi sản phẩm là một **ô vuông có ảnh và tên**; bấm vào để xem các **phân loại** (màu, size…) với **số lượng tồn** và **giá bán riêng** từng phân loại · sửa, nhập hàng, xoá ngay từ đó · **bảng giá thành theo từng cách đóng gói** |
+| **Đóng gói** | Dụng cụ đóng gói chọn trong đơn (hộp, túi, ruy băng…) và **Bộ đóng gói** dùng nhanh · nút **Chỉnh tồn** ở mọi dụng cụ: **đếm lại số còn** hoặc **ghi đã dùng / hao**, chỉ đổi số lượng tồn kho, không đổi giá nhập hay tiền nhập hàng (nhập số lượng ước chừng cũng được) · **Vật tư dùng chung** (băng keo, giấy chống sốc, ghim…): không chọn trong đơn, tiền nhập tính hết vào **chi phí vận hành**, nút **Ghi đã dùng** hoặc ô điều chỉnh tồn kho để biết đã xài bao nhiêu (số tiền không đổi) |
 | **Cài đặt** | Chia sẻ link, sao lưu / khôi phục JSON, xuất CSV đơn hàng, dữ liệu mẫu |
 
 ## Cách tính giá thành & lợi nhuận
+
+> **Tiền cọc / còn thu:** khách phải trả = tiền hàng − giảm giá + ship (nếu khách chịu). Còn thu = khách phải trả − đã thanh toán. Số này chỉ để theo dõi tiền mặt khi giao hàng, **không làm đổi doanh thu hay lợi nhuận**. Đơn *Hoàn thành* coi như đã thu đủ, đơn *Đã huỷ / Trả hàng* không tính vào tiền còn thu.
+
+> **Chi phí vận hành:** vật tư đánh dấu "dùng chung" (băng keo, giấy chống sốc, ghim…) không nằm trong đơn nào. Mỗi lần nhập, cả số tiền (kể cả phí ship nhập) tính vào chi phí vận hành của **tháng nhập**, rồi trừ vào lợi nhuận ở Tổng quan và báo cáo xuất. Điều chỉnh tồn kho chỉ cho biết đã dùng bao nhiêu, không làm đổi số tiền này.
 
 ```
 Giá vốn 1 sản phẩm   = Σ(SL × giá nhập + phí ship nhập) / Σ SL      (trung bình các lần nhập)
@@ -37,6 +41,22 @@ Thay vì nhập giá từng kiểu gói cho từng sản phẩm, app tách thàn
 Nhờ vậy, khi giá hộp tăng bạn chỉ cần nhập phiếu mới. Mọi sản phẩm dùng hộp đó tự cập nhật giá thành. Bảng **"Giá thành theo cách đóng gói"** ở tab Sản phẩm cho thấy ngay giá vốn của mỗi sản phẩm với từng kiểu gói, để đặt giá bán cho hợp lý.
 Ship được tính theo từng đơn (vì phụ thuộc địa chỉ), không cộng vào giá thành sản phẩm.
 
+## Không mất đơn khi đang nhập
+
+- **Bản nháp tự lưu:** form thêm hoặc sửa đơn tự lưu nháp vào trình duyệt sau mỗi thay đổi. Nhấn Esc, tải lại trang hay có bản mới được đăng thì lần mở sau app hỏi "Khôi phục đơn nhập dở?". Sau khi tải lại trang, app tự mở hộp hỏi đó.
+- **Hỏi trước khi đóng:** đơn đã nhập mà bấm Esc, ✕ hoặc Huỷ thì hiện 3 lựa chọn: *Tiếp tục nhập*, *Đóng, giữ bản nháp*, *Bỏ đơn này*. Form chưa đụng tới thì đóng ngay.
+- **Thấy rõ đang lưu:** nút Lưu chuyển thành "Đang lưu…" và khoá lại, thanh đầu trang báo *Đang lưu… → Đã lưu ✓*. Lỗi hiện ngay trong form (kèm lý do và nút **Thử lại**), không tự biến mất, và đơn vẫn được giữ làm bản nháp. Rời trang khi đang lưu thì trình duyệt hỏi lại.
+- Kết nối gián đoạn lúc lưu thì app tự thử lại một lần. Bấm Thử lại không tạo ra đơn thứ hai vì mã nội bộ của đơn được cố định từ lần lưu đầu.
+- Bản nháp chỉ nằm trong trình duyệt đang dùng (không đồng bộ giữa các máy) và tự xoá sau 7 ngày.
+
+## Trang tự cập nhật khi đồng nghiệp thay đổi
+
+Bản online tự nhận thay đổi của người khác, không cần tải lại trang:
+- Dữ liệu cập nhật qua kết nối thời gian thực của nền tảng. Nếu một kết nối bị đứt thì app **tự nối lại** (thử sau 1, 2, 4… tối đa 30 giây).
+- Phòng khi kết nối im lặng, app còn tự hỏi lại máy chủ **mỗi 30 giây** khi trang đang mở, và **ngay khi bạn quay lại tab** hoặc có mạng trở lại. Đang lưu đơn thì bỏ qua để không làm đơn đó biến mất tạm thời.
+- Có đơn mới từ người khác thì hiện thông báo "Có đơn mới: mã đơn".
+- Thanh đầu trang ghi giờ cập nhật gần nhất (⟳ 14:05). Bấm vào đó để làm mới ngay. Khi mất kết nối nó đổi thành "Đang kết nối lại…".
+
 ## Nhập đơn Shopee
 
 Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng ký Shopee Open Platform. Vì vậy app đọc file xuất từ Kênh Người Bán:
@@ -45,11 +65,22 @@ Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng k�
 2. Trong app: **Đơn hàng → ⬆ Nhập file Shopee**.
 3. Lần đầu, app hỏi mỗi sản phẩm Shopee ứng với sản phẩm nào trong kho (hoặc tạo mới). Các lần sau app tự nhớ.
    Mẹo: đặt **SKU** sản phẩm trong app trùng với SKU phân loại trên Shopee là app tự khớp luôn.
-4. Nhập lại file cũ không bị trùng đơn. App chỉ cập nhật trạng thái và phí sàn, còn đóng gói bạn đã chọn thì giữ nguyên.
+4. Nhập lại file cũ không bị trùng đơn. App chỉ cập nhật trạng thái và phí sàn, còn đóng gói bạn đã chọn thì giữ nguyên. Trạng thái **Đã thiết kế / Đã đóng gói** do bạn đặt cũng được giữ khi Shopee vẫn báo đơn đang chờ. Shopee báo đang giao, hoàn thành hay huỷ thì app đổi theo Shopee.
+
+## Link dùng chung (đang chạy)
+
+👉 **https://claude.ai/artifact/S67N4vcEEpb6iSEQSnFGhA**
+
+Bản này chạy trên Claude, dữ liệu lưu online và đồng bộ ngay giữa mọi người.
+Thêm đồng nghiệp: mở link, bấm **Share**, mời bằng email với quyền **Editor** (hoặc **Contributor** nếu cùng team Claude).
+Người chỉ có quyền xem (Viewer) thì xem được nhưng không lưu được thay đổi. Mỗi người cần có tài khoản claude.ai.
+
+Trang chính của bản này là `hani.html` (dùng chung `css/` và `js/` với `index.html`).
+Muốn cập nhật bản online sau khi sửa code, nhờ Claude xuất bản lại `hani.html` vào đúng link trên.
 
 ## Lưu dữ liệu & chia sẻ link cho đồng nghiệp
 
-App có 2 chế độ:
+Ngoài link Claude ở trên, app còn chạy được ở 2 chế độ khi tự host:
 
 - **Chỉ máy này** (mặc định, chưa cấu hình gì): dữ liệu lưu trong trình duyệt. Dùng để thử.
 - **Dùng chung online** (Firebase, miễn phí): dữ liệu lưu trên cloud và đồng bộ realtime. Ai có link và email được cấp quyền đều dùng được, kể cả trên điện thoại.
@@ -86,6 +117,8 @@ Không cần build. App là HTML/CSS/JS thuần (`index.html`, `css/`, `js/`).
 
 ## Font
 
-Brand dùng **CS Mocha Demo** (logo) và **Oilvare Base** (tiêu đề), 2 font này không có trên Google Fonts.
-Nếu có file font, đặt vào thư mục `fonts/` với tên `CSMochaDemo.otf` và `OilvareBase.otf`, app sẽ tự dùng.
-Nếu không có, app dùng Fredoka / Lilita One thay thế. Font nội dung là **Cabin**, đúng theo guideline.
+Brand dùng **CS Mocha Demo** (logo), **Oilvare Base** (tiêu đề) và **Cabin** (nội dung).
+
+- **Tiêu đề: Baloo 2 ExtraBold** (Google Fonts). Oilvare Base, và cả Lilita One dùng thay trước đây, không có dấu tiếng Việt: các chữ như ả, ơ, ậ bị lấy từ font khác nên trông lỗi. Baloo 2 có đủ tiếng Việt, nét tròn dày gần với phong cách brand.
+- **Nội dung: Cabin**, đúng guideline, có đủ tiếng Việt.
+- **Logo "hani"**: CS Mocha Demo nếu đặt file `CSMochaDemo.otf` vào thư mục `fonts/`, nếu không thì dùng Fredoka. Chữ "hani" không có dấu nên không bị lỗi.

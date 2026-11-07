@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels } from '../js/calc.js';
-import { rowsToOrders, parseNumber, mapStatus } from '../js/shopee.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping } from '../js/calc.js';
+import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
   products: [{ id: 'p1', name: 'Móc khoá' }, { id: 'p2', name: 'Khung', baseCost: 50000 }],
@@ -62,4 +62,246 @@ test('đọc file xuất đơn Shopee, gộp nhiều dòng cùng mã đơn', () 
   assert.equal(orders[1].date, '2024-10-05');
   assert.equal(parseNumber('1.250.000'), 1250000);
   assert.equal(mapStatus('Đang giao'), 'shipping');
+});
+
+test('tồn kho theo phân loại (cúp 3 màu) và tổng sản phẩm', () => {
+  const s = {
+    products: [{ id: 'cup', name: 'Cúp', variants: [{ id: 'do' }, { id: 'xanh', adjust: -1 }, { id: 'vang' }] }],
+    packaging: [],
+    imports: [
+      { kind: 'product', itemId: 'cup', variantId: 'do', qty: 10 },
+      { kind: 'product', itemId: 'cup', variantId: 'xanh', qty: 5 },
+      { kind: 'product', itemId: 'cup', variantId: 'vang', qty: 3 },
+    ],
+    orders: [{ status: 'done', items: [{ productId: 'cup', variantId: 'do', qty: 2 }] }],
+  };
+  const st = stockLevels(s);
+  assert.equal(st.variants[variantKey('cup', 'do')], 8);
+  assert.equal(st.variants[variantKey('cup', 'xanh')], 4);
+  assert.equal(st.variants[variantKey('cup', 'vang')], 3);
+  assert.equal(st.products.cup, 15);
+});
+
+test('chia phí ship nhập theo số lượng từng phân loại', () => {
+  assert.deepEqual(splitFee(30000, [10, 5, 5]), [15000, 7500, 7500]);
+  assert.deepEqual(splitFee(10000, [1, 1, 1]), [3333, 3333, 3334]);
+  assert.deepEqual(splitFee(5000, [0, 0]), [0, 0]);
+});
+
+test('trạng thái mới nằm đúng thứ tự công việc và vẫn trừ kho', () => {
+  assert.deepEqual(Object.keys(STATUSES), ['pending', 'designed', 'packed', 'shipping', 'done', 'cancelled', 'returned']);
+  assert.equal(STATUSES.designed, 'Đã thiết kế');
+  assert.equal(STATUSES.packed, 'Đã đóng gói');
+  assert.ok(!INACTIVE_STATUSES.has('designed') && !INACTIVE_STATUSES.has('packed'));
+  const base = { products: [{ id: 'p' }], packaging: [], imports: [{ kind: 'product', itemId: 'p', qty: 10 }] };
+  for (const status of ['designed', 'packed']) {
+    const st = stockLevels({ ...base, orders: [{ status, items: [{ productId: 'p', qty: 3 }] }] });
+    assert.equal(st.products.p, 7, status);
+  }
+});
+
+test('nhập lại file Shopee không làm mất "Đã thiết kế / Đã đóng gói"', () => {
+  assert.equal(mergeShopeeStatus('designed', 'pending'), 'designed');
+  assert.equal(mergeShopeeStatus('packed', 'pending'), 'packed');
+  assert.equal(mergeShopeeStatus('designed', 'shipping'), 'shipping');
+  assert.equal(mergeShopeeStatus('packed', 'cancelled'), 'cancelled');
+  assert.equal(mergeShopeeStatus('pending', 'done'), 'done');
+  assert.equal(mergeShopeeStatus('shipping', 'pending'), 'pending');
+});
+
+test('đếm đơn theo trạng thái: đủ mọi trạng thái, kể cả 0', () => {
+  const none = countByStatus([]);
+  assert.deepEqual(Object.keys(none), Object.keys(STATUSES));
+  assert.ok(Object.values(none).every((n) => n === 0));
+  const c = countByStatus([{ status: 'pending' }, { status: 'pending' }, { status: 'packed' }, { status: 'done' }, { status: 'lạ' }]);
+  assert.equal(c.pending, 2);
+  assert.equal(c.packed, 1);
+  assert.equal(c.done, 1);
+  assert.equal(c.designed, 0);
+  assert.equal(Object.values(c).reduce((a, b) => a + b, 0), 4); // trạng thái lạ không bị đếm
+  assert.deepEqual([...OPEN_STATUSES].sort(), ['designed', 'packed', 'pending', 'shipping']);
+});
+
+test('vật tư dùng chung: nhập 5 hộp = 100.000đ chi phí vận hành, điều chỉnh tồn kho không đổi số tiền', () => {
+  const state = {
+    products: [],
+    packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true }],
+    imports: [{ kind: 'packaging', itemId: 'ghim', date: '2026-11-03', qty: 5, unitCost: 20000, extraFee: 0 }],
+    orders: [],
+  };
+  assert.equal(operatingCosts(state, '2026-11-01', '2026-11-30').total, 100000);
+  assert.equal(stockLevels(state).packaging.ghim, 5);
+  // đếm lại thấy đã dùng 2 hộp
+  const adjusted = { ...state, packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true, adjust: -2 }] };
+  assert.equal(stockLevels(adjusted).packaging.ghim, 3);
+  assert.equal(operatingCosts(adjusted, '2026-11-01', '2026-11-30').total, 100000); // vẫn 100.000đ
+  assert.equal(operatingCosts(adjusted).total, 100000);
+});
+
+test('chi phí vận hành tính theo ngày nhập, gồm phí ship nhập, chỉ vật tư dùng chung', () => {
+  const state = {
+    packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true }, { id: 'bang', name: 'Băng keo', shared: true }, { id: 'hop', name: 'Hộp' }],
+    imports: [
+      { kind: 'packaging', itemId: 'ghim', date: '2026-10-31', qty: 1, unitCost: 20000 },
+      { kind: 'packaging', itemId: 'ghim', date: '2026-11-03', qty: 5, unitCost: 20000, extraFee: 10000 },
+      { kind: 'packaging', itemId: 'bang', date: '2026-11-30', qty: 10, unitCost: 12000 },
+      { kind: 'packaging', itemId: 'hop', date: '2026-11-05', qty: 100, unitCost: 3000 }, // hộp thường: không tính
+      { kind: 'product', itemId: 'ghim', date: '2026-11-05', qty: 9, unitCost: 9999 },    // không phải đóng gói
+    ],
+  };
+  const nov = operatingCosts(state, '2026-11-01', '2026-11-30');
+  assert.equal(nov.total, 110000 + 120000);
+  assert.deepEqual(nov.items.map((r) => [r.name, r.qty, r.amount]), [['Băng keo', 10, 120000], ['Ghim bấm', 5, 110000]]);
+  assert.equal(operatingCosts(state, '2026-10-01', '2026-10-31').total, 20000);
+  assert.equal(operatingCosts(state).total, 20000 + 110000 + 120000);
+});
+
+test('vật tư dùng chung không tính vào đơn hàng và không trừ kho theo đơn', () => {
+  const state = {
+    products: [{ id: 'p', name: 'P', baseCost: 10000 }],
+    packaging: [{ id: 'bang', name: 'Băng keo', shared: true }, { id: 'hop', name: 'Hộp' }],
+    imports: [
+      { kind: 'packaging', itemId: 'bang', date: '2026-11-01', qty: 10, unitCost: 12000 },
+      { kind: 'packaging', itemId: 'hop', date: '2026-11-01', qty: 10, unitCost: 3000 },
+    ],
+    orders: [{ status: 'done', items: [{ productId: 'p', qty: 1, price: 50000, pack1: 'hop', pack2: 'bang' }] }],
+  };
+  const costs = costTable(state);
+  assert.equal(lineCost(costs, state.orders[0].items[0]).packaging, 3000); // chỉ hộp
+  const st = stockLevels(state);
+  assert.equal(st.packaging.hop, 9);
+  assert.equal(st.packaging.bang, 10); // đơn cũ có chọn băng keo cũng không trừ
+});
+
+test('đếm lại tồn kho túi kính: chỉnh số lượng mà không đổi giá nhập hay tiền nhập', () => {
+  const state = {
+    products: [{ id: 'p', name: 'P', baseCost: 10000 }],
+    packaging: [{ id: 'tui', name: 'Túi kính' }],
+    imports: [{ kind: 'packaging', itemId: 'tui', date: '2026-11-01', qty: 500, unitCost: 400 }], // số lượng chỉ ước chừng
+    orders: [{ status: 'done', items: [{ productId: 'p', qty: 30, price: 50000, pack1: 'tui', packEach: true }] }],
+  };
+  const stockNow = stockLevels(state).packaging.tui;
+  assert.equal(stockNow, 470);
+  // đếm thực tế còn 452
+  const adjust = adjustForCount(0, stockNow, 452);
+  assert.equal(adjust, -18);
+  const fixed = { ...state, packaging: [{ id: 'tui', name: 'Túi kính', adjust }] };
+  assert.equal(stockLevels(fixed).packaging.tui, 452);
+  assert.equal(costTable(fixed).packaging.tui, costTable(state).packaging.tui); // giá mỗi cái giữ nguyên
+  assert.equal(lineCost(costTable(fixed), state.orders[0].items[0]).packaging, lineCost(costTable(state), state.orders[0].items[0]).packaging);
+  // đếm lại lần nữa (đang có điều chỉnh -18, đếm được 460)
+  assert.equal(adjustForCount(adjust, 452, 460), -10);
+  assert.equal(stockLevels({ ...state, packaging: [{ id: 'tui', name: 'Túi kính', adjust: -10 }] }).packaging.tui, 460);
+  assert.equal(adjustForCount(undefined, 10, 10), 0);
+});
+
+test('tồn kho: bằng 0 là "đã hết", từ 1 tới mức cảnh báo là "sắp hết"', () => {
+  assert.equal(stockState(0, 5), 'out');
+  assert.equal(stockState(-2, 5), 'out'); // âm (bán lố) cũng là hết
+  assert.equal(stockState(1, 5), 'low');
+  assert.equal(stockState(5, 5), 'low');
+  assert.equal(stockState(6, 5), 'ok');
+  assert.equal(stockState(0, 0), 'out'); // mức cảnh báo 0: vẫn là đã hết, không phải sắp hết
+  assert.equal(stockState(1, 0), 'ok');
+  assert.equal(stockState('abc', 5), 'out');
+  assert.equal(stockState(3, undefined), 'ok');
+});
+
+test('thanh toán: tổng khách phải trả, đã cọc và còn thu khi nhận hàng', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 10000 }], packaging: [], imports: [] });
+  const order = (extra) => ({ status: 'pending', shipFee: 15000, shipPayer: 'customer', discount: 0, items: [{ productId: 'p', qty: 2, price: 400000 }], ...extra });
+  // 800.000 hàng + 15.000 ship khách chịu = 815.000
+  assert.deepEqual(orderPayment(costs, order({ paid: 400000 })), { total: 815000, tracked: true, paid: 400000, remaining: 415000 });
+  // shop chịu ship: ship không thu của khách
+  assert.equal(orderPayment(costs, order({ shipPayer: 'shop', paid: 400000 })).remaining, 400000);
+  // giảm giá trừ vào số phải thu
+  assert.equal(orderPayment(costs, order({ discount: 15000, paid: 0 })).remaining, 800000);
+  // để trống = không theo dõi; 0 = theo dõi, chưa trả gì
+  assert.equal(orderPayment(costs, order({})).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: null })).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: '' })).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: 0 })).tracked, true);
+  assert.equal(orderPayment(costs, order({ paid: '815000' })).remaining, 0);
+  assert.equal(orderPayment(costs, order({ paid: 900000 })).remaining, -85000); // trả dư
+  // tiền cọc không đổi doanh thu hay lợi nhuận
+  assert.equal(orderSummary(costs, order({ paid: 0 })).profit, orderSummary(costs, order({ paid: 815000 })).profit);
+});
+
+test('tổng tiền còn thu: chỉ tính đơn chưa xong có ghi nhận thanh toán', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 1000 }], packaging: [], imports: [] });
+  const o = (status, paid) => ({ status, shipFee: 0, shipPayer: 'customer', items: [{ productId: 'p', qty: 1, price: 100000 }], paid });
+  const r = toCollect(costs, [
+    o('pending', 50000),   // còn 50.000
+    o('packed', 0),        // còn 100.000
+    o('shipping', 100000), // đã đủ
+    o('done', 50000),      // hoàn thành = coi như đã thu đủ
+    o('cancelled', 20000), // đơn huỷ: không thu
+    o('pending', undefined), // không theo dõi
+    o('designed', 130000), // trả dư: không âm
+  ]);
+  assert.deepEqual(r, { amount: 150000, count: 2 });
+  assert.deepEqual(toCollect(costs, []), { amount: 0, count: 0 });
+});
+
+test('phiếu nhập: chỉ phiếu đã nhận mới vào kho, giá vốn và chi phí vận hành', () => {
+  const state = {
+    products: [{ id: 'cup', name: 'Cúp', baseCost: 99000, variants: [{ id: 'do' }, { id: 'xanh' }] }],
+    packaging: [{ id: 'tui', name: 'Túi kính' }, { id: 'ghim', name: 'Ghim', shared: true }],
+    imports: [
+      { kind: 'product', itemId: 'cup', variantId: 'do', qty: 10, unitCost: 30000, date: '2026-11-01' },                              // cũ, không có status = đã nhận
+      { kind: 'product', itemId: 'cup', variantId: 'do', qty: 20, unitCost: 50000, date: '2026-11-05', status: 'ordered' },         // đang về
+      { kind: 'product', itemId: 'cup', variantId: 'xanh', qty: 5, unitCost: 30000, date: '2026-11-05', status: 'ordered' },
+      { kind: 'packaging', itemId: 'tui', qty: 100, unitCost: 400, date: '2026-11-05', status: 'ordered' },
+      { kind: 'packaging', itemId: 'ghim', qty: 5, unitCost: 20000, date: '2026-10-28', status: 'ordered' },
+    ],
+    orders: [],
+  };
+  assert.equal(isReceived(state.imports[0]), true);
+  assert.equal(isReceived(state.imports[1]), false);
+  const st = stockLevels(state);
+  assert.equal(st.products.cup, 10);                   // chỉ 10 cái đã nhận
+  assert.equal(st.variants[variantKey('cup', 'do')], 10);
+  assert.equal(st.variants[variantKey('cup', 'xanh')], 0);
+  assert.equal(st.packaging.tui, 0);
+  assert.equal(st.incoming.products.cup, 25);          // 20 + 5 đang về
+  assert.equal(st.incoming.variants[variantKey('cup', 'do')], 20);
+  assert.equal(st.incoming.packaging.tui, 100);
+  // giá vốn chỉ tính từ hàng đã nhận (30.000), không bị kéo bởi lô đang đặt (50.000)
+  assert.equal(costTable(state).product.cup, 30000);
+  assert.equal(costTable(state).packaging.tui, 0); // chưa nhận lần nào: dùng giá gốc
+  // chi phí vận hành: chưa nhận thì chưa tính
+  assert.equal(operatingCosts(state).total, 0);
+});
+
+test('nhận hàng: tồn kho tăng, chi phí vận hành tính theo ngày nhận', () => {
+  const imp = { kind: 'packaging', itemId: 'ghim', qty: 5, unitCost: 20000, date: '2026-10-28', status: 'ordered' };
+  const base = { products: [], packaging: [{ id: 'ghim', name: 'Ghim', shared: true }], orders: [] };
+  assert.equal(stockLevels({ ...base, imports: [imp] }).packaging.ghim, 0);
+  const got = { ...imp, status: 'received', receivedDate: '2026-11-05' };
+  assert.equal(importDate(got), '2026-11-05');
+  assert.equal(importDate(imp), '2026-10-28');
+  const s2 = { ...base, imports: [got] };
+  assert.equal(stockLevels(s2).packaging.ghim, 5);
+  assert.equal(stockLevels(s2).incoming.packaging.ghim, undefined);
+  assert.equal(operatingCosts(s2, '2026-11-01', '2026-11-30').total, 100000); // tháng nhận hàng
+  assert.equal(operatingCosts(s2, '2026-10-01', '2026-10-31').total, 0);      // không phải tháng đặt
+  // phiếu cũ đã nhận mà không có ngày nhận: tính theo ngày ghi phiếu
+  assert.equal(importDate({ date: '2026-09-01' }), '2026-09-01');
+});
+
+test('chia phí ship chung của kiện: theo số lượng hoặc theo giá trị, tổng luôn khớp', () => {
+  const lines = [{ qty: 10, unitCost: 10000 }, { qty: 5, unitCost: 40000 }];
+  assert.deepEqual(allocateShipping(30000, lines, 'qty'), [20000, 10000]);
+  assert.deepEqual(allocateShipping(30000, lines, 'value'), [10000, 20000]); // 100k vs 200k
+  const odd = allocateShipping(10000, [{ qty: 1, unitCost: 1 }, { qty: 1, unitCost: 1 }, { qty: 1, unitCost: 1 }]);
+  assert.equal(odd.reduce((a, b) => a + b, 0), 10000);
+  assert.deepEqual(allocateShipping(5000, [{ qty: 0, unitCost: 0 }]), [0]);
+});
+
+test('Shopee: "Người mua xác nhận đã nhận được hàng… vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền" là đã nhận (hoàn thành), không phải trả hàng', () => {
+  const text = 'Người mua xác nhận đã nhận được hàng, tuy nhiên Người mua vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền tới ngày 2026-11-19.';
+  assert.equal(mapStatus(text), 'done');
+  assert.equal(mapStatus('Đã nhận hàng'), 'done');
+  assert.equal(mapStatus('Yêu cầu Trả hàng/Hoàn tiền đang xử lý'), 'returned'); // trả hàng thật vẫn nhận ra
+  assert.equal(mapStatus('Đã hủy'), 'cancelled');
 });
