@@ -992,7 +992,7 @@ function groupRows(g) {
     <td class="num">${money(qty ? amount / qty : 0)}</td>
     <td class="num"><b>${money(amount)}</b></td>
     <td>${esc(first.supplier || '')}</td>
-    <td style="white-space:nowrap">${got ? '' : `<button class="btn ghost sm" data-action="receive-group" data-ids="${rows.map((i) => i.id).join(',')}">Đã nhận</button> `}<button class="icon-btn del" data-action="del-import-group" data-ids="${rows.map((i) => i.id).join(',')}" title="Xoá cả nhóm">🗑</button></td>
+    <td style="white-space:nowrap">${got ? '' : `<button class="btn ghost sm" data-action="receive-group" data-ids="${rows.map((i) => i.id).join(',')}">Đã nhận</button> `}<button class="icon-btn" data-action="edit-group" data-ids="${rows.map((i) => i.id).join(',')}" title="Sửa cả nhóm">✎</button><button class="icon-btn del" data-action="del-import-group" data-ids="${rows.map((i) => i.id).join(',')}" title="Xoá cả nhóm">🗑</button></td>
   </tr>`;
   return head + (open ? rows.map((i) => importRow(i, true)).join('') : '');
 }
@@ -1223,6 +1223,98 @@ function openParcelForm() {
         await store.upsertMany('imports', docs);
         m.close();
         toast(st.status === 'received' ? `Đã nhập kho ${docs.length} dòng, phí ship đã chia 📦` : `Đã ghi kiện ${docs.length} dòng. Hàng về thì bấm “Đã nhận hàng”`);
+      };
+    },
+  });
+}
+
+/**
+ * Edit all the slips of one product written together (its variants) in one form, like when importing:
+ * one quantity per variant, shared date/status/price/supplier, and the shipping fee re-split by quantity.
+ */
+function openGroupEdit(ids) {
+  const slips = ids.map((id) => store.get('imports', id)).filter(Boolean);
+  if (!slips.length) return;
+  const first = slips[0];
+  const p = first.kind === 'packaging' ? null : product(first.itemId);
+  const label = (first.kind === 'packaging' ? pack(first.itemId)?.name : p?.name) || '(đã xoá)';
+  // one row per variant of the product (also those not in this order yet), plus unclassified slips if any
+  const rows = (p && hasVariants(p) ? p.variants.map((v) => ({ variantId: v.id, name: v.name, image: v.image })) : []);
+  if (slips.some((i) => !i.variantId) || !rows.length) rows.unshift({ variantId: '', name: rows.length ? 'Chưa phân loại' : 'Tất cả', image: p?.image });
+  for (const r of rows) {
+    r.slips = slips.filter((i) => (i.variantId || '') === r.variantId);
+    r.qty = r.slips.reduce((n, i) => n + num(i.qty), 0);
+  }
+  const costs0 = new Set(slips.map((i) => num(i.unitCost)));
+  const st = { status: first.status || 'received' };
+  const feeNow = slips.reduce((n, i) => n + num(i.extraFee), 0);
+
+  openModal({
+    title: `Sửa cả nhóm · ${esc(label)}`,
+    wide: false,
+    body: `<form id="ge-form" class="form-grid" style="grid-template-columns:1fr 1fr" onsubmit="return false">
+      <label class="field">Ngày đặt hàng<input type="date" name="date" value="${esc(first.date)}" required></label>
+      <label class="field">Nhà cung cấp<input name="supplier" value="${esc(first.supplier || '')}"></label>
+      <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
+        <div class="seg" id="ge-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
+      </div>
+      <label class="field" id="ge-recv" style="grid-column:1/-1">Ngày nhận hàng<input type="date" name="receivedDate" value="${esc(first.receivedDate || today())}"></label>
+      <div class="vqty" style="grid-column:1/-1">
+        <div class="vqty-head"><span>Phân loại</span><span>Đang có</span><span>Số lượng</span></div>
+        ${rows.map((r, i) => `<div class="vqty-row">
+          <span class="item">${p ? thumb(r.image, r.name, 'sm') : ''}<b>${esc(r.name)}</b></span>
+          <span class="muted">${r.variantId ? vStock(first.itemId, r.variantId) : ''}</span>
+          <span class="vqty-in"><input type="number" min="0" step="any" data-gq="${i}" value="${r.qty}" aria-label="Số lượng ${esc(r.name)}"></span>
+        </div>`).join('')}
+      </div>
+      <label class="field">Giá nhập / đơn vị${costs0.size > 1 ? ' (đang khác nhau)' : ''}<input type="number" min="0" step="100" name="unitCost" value="${costs0.size === 1 ? num(first.unitCost) : ''}" placeholder="Giữ giá từng dòng"></label>
+      <label class="field">Phí ship / khác (cả nhóm)<input type="number" min="0" step="1000" name="extraFee" value="${feeNow}"></label>
+      <label class="field" style="grid-column:1/-1">Ghi chú<input name="note" value="${esc(first.note || '')}"></label>
+      <div class="summary" style="grid-column:1/-1" id="ge-sum"></div>
+      <p class="small muted" style="grid-column:1/-1;margin:0">Phí ship được chia lại theo số lượng. Đặt số lượng 0 để bỏ phân loại đó khỏi nhóm.</p>
+    </form>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="ge-save">Lưu</button>`,
+    onMount(m) {
+      const form = $('#ge-form', m);
+      const qtys = () => $$('[data-gq]', m).map((el) => num(el.value));
+      const sync = () => {
+        $$('#ge-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
+        $('#ge-recv', m).hidden = st.status !== 'received';
+        const q = qtys();
+        const total = q.reduce((a, b) => a + b, 0);
+        const goods = form.unitCost.value === ''
+          ? rows.reduce((n, r, i) => n + q[i] * num(r.slips[0] ? r.slips[0].unitCost : first.unitCost), 0)
+          : total * num(form.unitCost.value);
+        const fee = num(form.extraFee.value);
+        $('#ge-sum', m).innerHTML = `<div><span>Tổng số lượng</span><b>${total}</b></div><div><span>Thành tiền</span><b>${money(goods + fee)}</b></div><div><span>Vốn / đơn vị</span><b>${money(total ? (goods + fee) / total : 0)}</b></div>`;
+      };
+      sync();
+      m.addEventListener('input', sync);
+      $('#ge-status', m).onclick = (e) => { if (e.target.dataset.v) { st.status = e.target.dataset.v; sync(); } };
+      $('[data-close2]', m).onclick = () => m.close();
+      $('#ge-save', m).onclick = async () => {
+        if (!form.reportValidity()) return;
+        const q = qtys();
+        if (!q.some((n) => n > 0)) return toast('Cần ít nhất 1 phân loại có số lượng, hoặc xoá cả nhóm');
+        const d = formData(form);
+        const fees = splitFee(num(d.extraFee), q);
+        const common = {
+          date: d.date, supplier: (d.supplier || '').trim(), note: (d.note || '').trim(),
+          status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
+        };
+        const save = [], drop = [];
+        rows.forEach((r, i) => {
+          const keep = r.slips[0];
+          r.slips.slice(1).forEach((x) => drop.push(x.id)); // duplicates of the same variant merge into one
+          if (!(q[i] > 0)) { if (keep) drop.push(keep.id); return; }
+          const unitCost = d.unitCost === '' ? num(keep ? keep.unitCost : first.unitCost) : num(d.unitCost);
+          if (keep) save.push({ ...keep, ...common, unitCost, qty: q[i], extraFee: fees[i] });
+          else save.push({ kind: first.kind, itemId: first.itemId, variantId: r.variantId, batchId: first.batchId, ...common, unitCost, qty: q[i], extraFee: fees[i] });
+        });
+        await store.upsertMany('imports', save);
+        for (const id of drop) await store.remove('imports', id);
+        m.close();
+        toast('Đã cập nhật cả nhóm ✓');
       };
     },
   });
@@ -2096,6 +2188,7 @@ document.addEventListener('click', async (e) => {
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'new-parcel': return openParcelForm();
+    case 'edit-group': return openGroupEdit(btn.dataset.ids.split(','));
     case 'receive-import': return openReceiveDialog([id]);
     case 'receive-group': return openReceiveDialog(btn.dataset.ids.split(','));
     case 'toggle-import-group': ui.imports.open[btn.dataset.key] = !ui.imports.open[btn.dataset.key]; return render();
