@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -193,4 +193,16 @@ test('đếm lại tồn kho túi kính: chỉnh số lượng mà không đổi
   assert.equal(adjustForCount(adjust, 452, 460), -10);
   assert.equal(stockLevels({ ...state, packaging: [{ id: 'tui', name: 'Túi kính', adjust: -10 }] }).packaging.tui, 460);
   assert.equal(adjustForCount(undefined, 10, 10), 0);
+});
+
+test('tồn kho: bằng 0 là "đã hết", từ 1 tới mức cảnh báo là "sắp hết"', () => {
+  assert.equal(stockState(0, 5), 'out');
+  assert.equal(stockState(-2, 5), 'out'); // âm (bán lố) cũng là hết
+  assert.equal(stockState(1, 5), 'low');
+  assert.equal(stockState(5, 5), 'low');
+  assert.equal(stockState(6, 5), 'ok');
+  assert.equal(stockState(0, 0), 'out'); // mức cảnh báo 0: vẫn là đã hết, không phải sắp hết
+  assert.equal(stockState(1, 0), 'ok');
+  assert.equal(stockState('abc', 5), 'out');
+  assert.equal(stockState(3, undefined), 'ok');
 });

@@ -19,6 +19,13 @@ export const STATUSES = {
 // Orders in these statuses don't consume stock and don't count toward revenue/profit.
 export const INACTIVE_STATUSES = new Set(['cancelled', 'returned']);
 
+/** Stock level: 'out' at 0 (or below), 'low' down to the warning level, otherwise 'ok'. */
+export function stockState(n, low) {
+  const x = Number(n) || 0;
+  if (x <= 0) return 'out';
+  return x <= (Number(low) || 0) ? 'low' : 'ok';
+}
+
 /** Orders that still have work left: not yet done, cancelled or returned. */
 export const OPEN_STATUSES = new Set(['pending', 'designed', 'packed', 'shipping']);
 

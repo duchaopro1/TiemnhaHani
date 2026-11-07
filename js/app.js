@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -97,6 +97,11 @@ const itemLabel = (pid, vid, fallback = '') => {
 };
 const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
+/** "Đã hết" when there is none left, "Sắp hết" while at or under the warning level, nothing otherwise. */
+const stockBadge = (n, low) => {
+  const st = stockState(n, low);
+  return st === 'out' ? '<span class="chip out">Đã hết</span>' : st === 'low' ? '<span class="chip warn">Sắp hết</span>' : '';
+};
 /** Images are stored as "asset:<id>" (artifact asset store) or as a data: URL. */
 const imgSrc = (ref) => (!ref ? '' : ref.startsWith('asset:') ? '/_blob/' + ref.slice(6) : ref);
 const thumb = (ref, name, cls = '') =>
@@ -266,7 +271,13 @@ function pageDashboard() {
   const lowP = S.products.flatMap((p) => (hasVariants(p)
     ? p.variants.filter((v) => vStock(p.id, v.id) <= lowOf(p)).map((v) => ({ p, v, n: vStock(p.id, v.id) }))
     : num(stock.products[p.id]) <= lowOf(p) ? [{ p, n: num(stock.products[p.id]) }] : []));
-  const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= num(k.lowStock ?? settings.lowStock));
+  const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= lowOf(k));
+  // Everything at or under its warning level, the ones already out of stock first.
+  const shortRows = [
+    ...lowP.map(({ p, v, n }) => ({ n, low: lowOf(p), kind: '<span class="chip him">Sản phẩm</span>',
+      name: `<span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span>` })),
+    ...lowK.map((k) => ({ n: num(stock.packaging[k.id]), low: lowOf(k), kind: `<span class="chip ${k.shared ? 'friend' : 'backup'}">${k.shared ? 'Vật tư' : 'Đóng gói'}</span>`, name: esc(k.name) })),
+  ].sort((a, b) => (a.n <= 0 ? 0 : 1) - (b.n <= 0 ? 0 : 1));
   const unmapped = S.orders.filter((o) => !INACTIVE_STATUSES.has(o.status) && o.items?.some((l) => !l.productId)).length;
   const byStatus = countByStatus(orders);
   const openNow = [...OPEN_STATUSES].reduce((n, k) => n + byStatus[k], 0);
@@ -332,10 +343,9 @@ function pageDashboard() {
         </tbody></table></div><p class="small muted">*Lãi gộp: giá bán − giá vốn − đóng gói (chưa trừ phí sàn/ship).</p>` : '<div class="empty">Chưa có đơn hàng</div>'}
       </div>
       <div class="card">
-        <h3>Sắp hết hàng</h3>
-        ${lowP.length + lowK.length ? `<div class="table-wrap"><table><thead><tr><th>Mặt hàng</th><th>Loại</th><th class="num">Tồn</th></tr></thead><tbody>
-          ${lowP.map(({ p, v, n }) => `<tr><td><span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span></td><td><span class="chip him">Sản phẩm</span></td><td class="num neg">${n}</td></tr>`).join('')}
-          ${lowK.map((k) => `<tr><td>${esc(k.name)}</td><td><span class="chip backup">Đóng gói</span></td><td class="num neg">${num(stock.packaging[k.id])}</td></tr>`).join('')}
+        <h3>Đã hết &amp; sắp hết</h3>
+        ${shortRows.length ? `<div class="table-wrap"><table><thead><tr><th>Mặt hàng</th><th>Loại</th><th class="num">Tồn</th></tr></thead><tbody>
+          ${shortRows.map((r) => `<tr><td>${r.name}</td><td>${r.kind}</td><td class="num"><b class="neg">${r.n}</b> ${stockBadge(r.n, r.low)}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">Kho vẫn ổn ✨</div>'}
       </div>
       <div class="card">
@@ -1076,7 +1086,19 @@ const TILE_TONES = ['her', 'him', 'friend', 'backup'];
 const toneOf = (p) => TILE_TONES[[...(p.id || p.name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TILE_TONES.length];
 /** Sale price of one variant: its own price, or the product's when not set. */
 const variantPrice = (p, v) => (v && num(v.price) > 0 ? num(v.price) : num(p.salePrice));
-const isLow = (p) => (hasVariants(p) ? p.variants.some((v) => vStock(p.id, v.id) <= lowOf(p)) : num(stock.products[p.id]) <= lowOf(p));
+/** Flag on a product tile: "Đã hết" when nothing is left, "Hết N loại" when only some variants are out, "Sắp hết" when low. */
+function tileFlag(p) {
+  const low = lowOf(p);
+  if (!hasVariants(p)) {
+    const st = stockState(stock.products[p.id], low);
+    return st === 'out' ? '<span class="chip out ptile-flag">Đã hết</span>' : st === 'low' ? '<span class="chip warn ptile-flag">Sắp hết</span>' : '';
+  }
+  const ns = p.variants.map((v) => vStock(p.id, v.id));
+  const out = ns.filter((n) => stockState(n, low) === 'out').length;
+  if (out === ns.length) return '<span class="chip out ptile-flag">Đã hết</span>';
+  if (out) return `<span class="chip out ptile-flag">Hết ${out} loại</span>`;
+  return ns.some((n) => stockState(n, low) === 'low') ? '<span class="chip warn ptile-flag">Sắp hết</span>' : '';
+}
 
 function pageProducts() {
   const q = normalize(ui.products.q);
@@ -1085,7 +1107,7 @@ function pageProducts() {
   const tile = (p) => `<button class="ptile tone-${toneOf(p)}" data-action="open-product" data-id="${p.id}">
       <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
       <span class="ptile-name">${esc(p.name)}</span>
-      ${isLow(p) ? '<span class="chip warn ptile-flag">sắp hết</span>' : ''}
+      ${tileFlag(p)}
     </button>`;
 
   return `
@@ -1139,11 +1161,11 @@ function openProductDetail(id) {
       <div class="vcards">
         ${rows.map((r) => {
           const profit = r.price - fullCost;
-          const low = r.n <= lowOf(p);
-          return `<div class="vcard ${low ? 'low' : ''}">
+          const state = stockState(r.n, lowOf(p));
+          return `<div class="vcard ${state !== 'ok' ? 'low' : ''}">
             ${thumb(r.image, r.name, '')}
             <div class="vcard-name"><b>${esc(r.name)}</b>${r.sku ? `<span class="muted small">${esc(r.sku)}</span>` : ''}</div>
-            <div class="vcard-num"><span>Số lượng</span><b>${r.n}</b>${low ? '<span class="chip warn">sắp hết</span>' : ''}</div>
+            <div class="vcard-num"><span>Số lượng</span><b>${r.n}</b>${stockBadge(r.n, lowOf(p))}</div>
             <div class="vcard-num"><span>Giá bán</span><b>${money(r.price)}</b><span class="small ${signCls(profit)}">lãi ${money(profit)}</span></div>
           </div>`;
         }).join('')}
@@ -1317,7 +1339,7 @@ function pagePackaging() {
           ${parts.map((k) => {
             const st = num(stock.packaging[k.id]);
             const adj = num(k.adjust);
-            return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b>${adj ? `<br><span class="small muted" title="Đã chỉnh tay so với sổ nhập và đơn hàng">đã chỉnh ${adj > 0 ? '+' : ''}${adj}</span>` : ''}</td>
+            return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= lowOf(k) ? 'neg' : ''}"><b>${st}</b> ${stockBadge(st, lowOf(k))}${adj ? `<br><span class="small muted" title="Đã chỉnh tay so với sổ nhập và đơn hàng">đã chỉnh ${adj > 0 ? '+' : ''}${adj}</span>` : ''}</td>
             <td style="white-space:nowrap"><button class="btn ghost sm" data-action="adjust-pack" data-id="${k.id}">Chỉnh tồn</button> <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}">🗑</button></td></tr>`;
           }).join('')}</tbody></table>` : '<div class="empty">Chưa có dụng cụ nào.</div>'}
       </div>
@@ -1336,7 +1358,7 @@ function pagePackaging() {
             const st = num(stock.packaging[k.id]);
             const used = Math.max(0, -num(k.adjust));
             return `<tr><td><b>${esc(k.name)}</b></td><td class="num">${bought(k.id)}</td><td class="num">${used}</td>
-              <td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b></td><td class="num">${money(spent(k.id))}</td>
+              <td class="num ${st <= lowOf(k) ? 'neg' : ''}"><b>${st}</b> ${stockBadge(st, lowOf(k))}</td><td class="num">${money(spent(k.id))}</td>
               <td style="white-space:nowrap"><button class="btn ghost sm" data-action="use-pack" data-id="${k.id}">Ghi đã dùng</button>
                 <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}" title="Xoá">🗑</button></td></tr>`;
           }).join('')}</tbody></table></div>` : '<div class="empty">Chưa có vật tư dùng chung. Bấm “＋ Vật tư dùng chung” để thêm băng keo, giấy chống sốc, ghim bấm…</div>'}

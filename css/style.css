@@ -473,3 +473,6 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .sync-state.saving::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: currentColor; animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .sync-state.saving::before { animation: none; } }
+
+/* out of stock: solid red; "sắp hết" stays the soft one */
+.chip.out { background: var(--danger); color: #fff; }
