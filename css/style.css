@@ -165,7 +165,24 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
 .chip.st-pending, .chip.st-shipping, .chip.st-done, .chip.st-cancelled, .chip.st-returned { border: 1px solid transparent; }
 
 /* order status: one colour per status on the select, the open list and the form */
-.st-cell .st-select { width: auto; min-width: 128px; font-size: 13px; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.st-btn {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 128px;
+  border: 1.5px solid transparent; border-radius: 999px; padding: 6px 12px; cursor: pointer;
+  font: 700 13px var(--font-body); white-space: nowrap;
+}
+.st-btn:hover { filter: brightness(.97); }
+.st-btn:focus-visible, .st-opt:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.st-pop {
+  position: fixed; z-index: 200; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 14px 40px rgba(11, 93, 156, .22);
+}
+.st-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  border: 1.5px solid transparent; border-radius: 999px; padding: 8px 14px; cursor: pointer;
+  font: 700 14px var(--font-body); text-align: left; white-space: nowrap;
+}
+.st-opt:hover { filter: brightness(.95); }
+.st-opt[aria-selected="true"] { border-color: currentColor; }
 .st-pending, .st-shipping, .st-done, .st-cancelled, .st-returned { font-weight: 700; }
 .st-pending { background-color: var(--st-pending); color: var(--st-pending-ink); border-color: var(--st-pending-edge); }
 .st-shipping { background-color: var(--st-shipping); color: var(--st-shipping-ink); border-color: var(--st-shipping-edge); }

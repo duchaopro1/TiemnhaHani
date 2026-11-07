@@ -299,6 +299,55 @@ function pageOrders() {
     </div>`;
 }
 
+/* ---------- status menu ----------
+   The browser's own <select> list ignores option colours on some browsers, so the status column uses
+   a small list of our own, positioned with `fixed` so the scrolling table can't clip it. */
+let stPop = null;
+function closeStatusMenu(refocus = false) {
+  if (!stPop) return;
+  const btn = stPop.btn;
+  stPop.el.remove();
+  btn.setAttribute('aria-expanded', 'false');
+  stPop = null;
+  if (refocus && btn.isConnected) btn.focus();
+}
+function openStatusMenu(btn) {
+  closeStatusMenu();
+  const o = store.get('orders', btn.dataset.stmenu);
+  if (!o) return;
+  const el = document.createElement('div');
+  el.className = 'st-pop';
+  el.setAttribute('role', 'listbox');
+  el.innerHTML = Object.entries(STATUSES).map(([k, v]) =>
+    `<button type="button" role="option" class="st-opt st-${k}" data-status="${k}" aria-selected="${o.status === k}">${esc(v)}${o.status === k ? '<span aria-hidden="true">✓</span>' : ''}</button>`).join('');
+  document.body.append(el);
+  const r = btn.getBoundingClientRect();
+  const h = el.offsetHeight;
+  const up = r.bottom + h + 8 > innerHeight && r.top > h + 8;
+  el.style.minWidth = `${Math.max(r.width, 150)}px`;
+  el.style.left = `${Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8))}px`;
+  el.style.top = `${up ? r.top - h - 6 : r.bottom + 6}px`;
+  btn.setAttribute('aria-expanded', 'true');
+  stPop = { el, btn, orderId: o.id };
+  (el.querySelector('[aria-selected="true"]') || el.firstElementChild).focus();
+}
+async function setOrderStatus(id, status) {
+  const o = store.get('orders', id);
+  if (o && o.status !== status) await store.upsert('orders', { ...o, status });
+}
+document.addEventListener('keydown', (e) => {
+  if (!stPop) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeStatusMenu(true); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const opts = [...stPop.el.children];
+    const i = opts.indexOf(document.activeElement);
+    opts[(i + (e.key === 'ArrowDown' ? 1 : opts.length - 1)) % opts.length].focus();
+  }
+});
+window.addEventListener('resize', () => closeStatusMenu());
+window.addEventListener('scroll', () => closeStatusMenu(), true);
+
 function orderRow(o) {
   const s = orderSummary(costs, o);
   const inactive = INACTIVE_STATUSES.has(o.status);
@@ -317,7 +366,7 @@ function orderRow(o) {
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
     <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span></td>
-    <td class="st-cell"><select data-order-status="${o.id}" class="st-select st-${o.status}" aria-label="Trạng thái đơn ${esc(o.code || '')}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+    <td class="st-cell"><button type="button" class="st-btn st-${o.status}" data-stmenu="${o.id}" aria-haspopup="listbox" aria-expanded="false" aria-label="Trạng thái đơn ${esc(o.code || '')}: ${esc(STATUSES[o.status] || '')}">${esc(STATUSES[o.status] || o.status)}<span aria-hidden="true">▾</span></button></td>
     <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-order" data-id="${o.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-order" data-id="${o.id}" title="Xoá">🗑</button></td>
   </tr>`;
 }
@@ -1373,6 +1422,19 @@ async function loadDemo() {
 
 /* ================= events ================= */
 document.addEventListener('click', async (e) => {
+  const stOpt = e.target.closest('.st-pop [data-status]');
+  if (stOpt) {
+    const { orderId } = stPop;
+    closeStatusMenu(true);
+    await setOrderStatus(orderId, stOpt.dataset.status);
+    return;
+  }
+  const stBtn = e.target.closest('[data-stmenu]');
+  if (stBtn) {
+    if (stPop?.btn === stBtn) closeStatusMenu(); else openStatusMenu(stBtn);
+    return;
+  }
+  if (stPop) closeStatusMenu();
   const tab = e.target.closest('[data-tab]');
   if (tab) { location.hash = tab.dataset.tab; return; }
   const period = e.target.closest('[data-period]');
@@ -1444,11 +1506,6 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
-  if (t.dataset.orderStatus) {
-    t.className = `st-select st-${t.value}`;
-    const o = store.get('orders', t.dataset.orderStatus);
-    await store.upsert('orders', { ...o, status: t.value });
-  }
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
   if (t.id === 'shopee-file' && t.files[0]) { await importShopeeFile(t.files[0]); t.value = ''; }
   if (t.id === 'restore-file' && t.files[0]) {
