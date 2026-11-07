@@ -125,7 +125,7 @@ const ui = {
   period: 'month', // 'month' (the month in dashMonth) or 'all'
   dashMonth: isoLocal(new Date()).slice(0, 7),
   orders: { q: '', platform: '', status: '', month: '' },
-  imports: { q: '', kind: '', status: '' },
+  imports: { q: '', kind: '', status: '', open: {} },
   products: { q: '' },
   export: null, // last choices in the export dialog, kept for the visit
 };
@@ -941,6 +941,62 @@ function itemOf(imp) {
 }
 const importLabel = (imp) => (imp.kind === 'packaging' ? pack(imp.itemId)?.name : itemLabel(imp.itemId, imp.variantId));
 
+const importAmount = (i) => num(i.qty) * num(i.unitCost) + num(i.extraFee);
+
+/** Slips of one product written together (same order/day, status, supplier) show as one row. */
+function rowsOf(list) {
+  const groups = new Map();
+  for (const i of list) {
+    const key = [i.kind, i.itemId, i.batchId || '', i.date, i.status || 'received', i.receivedDate || '', i.supplier || ''].join('|');
+    if (!groups.has(key)) groups.set(key, { key, rows: [] });
+    groups.get(key).rows.push(i);
+  }
+  return [...groups.values()];
+}
+
+function importRow(i, child = false) {
+  const item = itemOf(i);
+  const totalRow = importAmount(i);
+  const got = isReceived(i);
+  const v = i.kind === 'packaging' ? null : variantOf(i.itemId, i.variantId);
+  return `<tr${child ? ' class="sub-row"' : ''}>
+    <td>${child ? '' : `${fmtDate(i.date)}<br>`}${child ? '' : got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : '<span class="chip pay-due">Đang về</span>'}</td>
+    <td>${child ? `<span class="item sub">${thumb(v?.image || item?.image, v?.name, 'sm')}${esc(v?.name || importLabel(i) || '(đã xoá)')}</span>` : `<span class="item">${i.kind === 'packaging' ? '' : thumb(v?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>`}${i.note && !child ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
+    <td>${child ? '' : `<span class="chip ${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span>`}</td>
+    <td class="num">${num(i.qty)}</td>
+    <td class="num">${money(i.unitCost)}</td>
+    <td class="num">${money(i.extraFee)}</td>
+    <td class="num">${money(num(i.qty) ? totalRow / num(i.qty) : 0)}</td>
+    <td class="num"><b>${money(totalRow)}</b></td>
+    <td>${child ? '' : esc(i.supplier || '')}</td>
+    <td style="white-space:nowrap">${got ? '' : `<button class="btn ghost sm" data-action="receive-import" data-id="${i.id}">Đã nhận</button> `}<button class="icon-btn" data-action="edit-import" data-id="${i.id}" title="Sửa phiếu">✎</button><button class="icon-btn del" data-action="del-import" data-id="${i.id}" title="Xoá">🗑</button></td>
+  </tr>`;
+}
+
+/** One summary row (product, number of variants, totals) that opens into one row per variant. */
+function groupRows(g) {
+  const rows = g.rows, first = rows[0], item = itemOf(first);
+  const open = !!ui.imports.open[g.key];
+  const qty = rows.reduce((n, i) => n + num(i.qty), 0);
+  const amount = rows.reduce((n, i) => n + importAmount(i), 0);
+  const fee = rows.reduce((n, i) => n + num(i.extraFee), 0);
+  const costs = new Set(rows.map((i) => num(i.unitCost)));
+  const got = isReceived(first);
+  const head = `<tr class="group-row">
+    <td>${fmtDate(first.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${first.receivedDate ? ' ' + fmtDate(first.receivedDate).slice(0, 5) : ''}</span>` : '<span class="chip pay-due">Đang về</span>'}</td>
+    <td><span class="item">${first.kind === 'packaging' ? '' : thumb(item?.image, item?.name, 'sm')}<span><a href="javascript:void 0" data-action="edit-item" data-kind="${first.kind}" data-id="${first.itemId}">${esc(item?.name || '(đã xoá)')}</a><br><button class="link-btn" data-action="toggle-import-group" data-key="${esc(g.key)}" aria-expanded="${open}">${open ? '▾ Ẩn chi tiết' : '▸ Xem chi tiết'} · ${rows.length} phân loại</button></span></span></td>
+    <td><span class="chip ${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span></td>
+    <td class="num"><b>${qty}</b></td>
+    <td class="num">${costs.size === 1 ? money(first.unitCost) : '—'}</td>
+    <td class="num">${money(fee)}</td>
+    <td class="num">${money(qty ? amount / qty : 0)}</td>
+    <td class="num"><b>${money(amount)}</b></td>
+    <td>${esc(first.supplier || '')}</td>
+    <td style="white-space:nowrap">${got ? '' : `<button class="btn ghost sm" data-action="receive-group" data-ids="${rows.map((i) => i.id).join(',')}">Đã nhận</button> `}<button class="icon-btn del" data-action="del-import-group" data-ids="${rows.map((i) => i.id).join(',')}" title="Xoá cả nhóm">🗑</button></td>
+  </tr>`;
+  return head + (open ? rows.map((i) => importRow(i, true)).join('') : '');
+}
+
 function pageImports() {
   const f = ui.imports;
   const q = normalize(f.q);
@@ -982,7 +1038,12 @@ function pageImports() {
             <div><b>Đặt ngày ${fmtDate(first.date)}</b>${first.supplier ? ` · ${esc(first.supplier)}` : ''}<br><span class="small muted">${rows.length} mặt hàng · ${money(rows.reduce((n, i) => n + amountOf(i), 0))}</span></div>
             <button class="btn sm" data-action="receive-batch" data-batch="${esc(key)}">Đã nhận hàng</button>
           </div>
-          <ul class="inbound-items">${rows.map((i) => `<li><span class="item">${i.kind === 'packaging' ? '' : thumb(variantOf(i.itemId, i.variantId)?.image || itemOf(i)?.image, itemOf(i)?.name, 'sm')}${esc(importLabel(i) || '(đã xoá)')}</span><b>×${num(i.qty)}</b></li>`).join('')}</ul>
+          <ul class="inbound-items">${rowsOf(rows).map((g) => {
+            const f = g.rows[0], it = itemOf(f), q = g.rows.reduce((n, i) => n + num(i.qty), 0);
+            const label = `<span class="item">${f.kind === 'packaging' ? '' : thumb(it?.image, it?.name, 'sm')}${esc(it?.name || '(đã xoá)')}</span><b>×${q}</b>`;
+            if (g.rows.length === 1) return `<li>${f.variantId ? `<span class="item">${thumb(variantOf(f.itemId, f.variantId)?.image || it?.image, it?.name, 'sm')}${esc(importLabel(f))}</span><b>×${q}</b>` : label}</li>`;
+            return `<li class="has-sub"><details><summary>${label}<span class="small muted">${g.rows.length} phân loại</span></summary><ul>${g.rows.map((i) => `<li><span>${esc(variantOf(i.itemId, i.variantId)?.name || importLabel(i))}</span><b>×${num(i.qty)}</b></li>`).join('')}</ul></details></li>`;
+          }).join('')}</ul>
           ${first.note ? `<div class="small muted">${esc(first.note)}</div>` : ''}
         </div>`;
       }).join('')}</div>
@@ -990,23 +1051,7 @@ function pageImports() {
     <div class="card table-wrap">
       ${list.length ? `<table>
         <thead><tr><th>Ngày đặt</th><th>Mặt hàng</th><th>Loại</th><th class="num">SL</th><th class="num">Giá nhập/đv</th><th class="num">Phí ship/khác</th><th class="num">Vốn/đv</th><th class="num">Thành tiền</th><th>Nhà cung cấp</th><th></th></tr></thead>
-        <tbody>${list.map((i) => {
-          const item = itemOf(i);
-          const totalRow = amountOf(i);
-          const got = isReceived(i);
-          return `<tr>
-            <td>${fmtDate(i.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : '<span class="chip pay-due">Đang về</span>'}</td>
-            <td><span class="item">${i.kind === 'packaging' ? '' : thumb(variantOf(i.itemId, i.variantId)?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>${i.note ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
-            <td><span class="chip ${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span></td>
-            <td class="num">${num(i.qty)}</td>
-            <td class="num">${money(i.unitCost)}</td>
-            <td class="num">${money(i.extraFee)}</td>
-            <td class="num">${money(num(i.qty) ? totalRow / num(i.qty) : 0)}</td>
-            <td class="num"><b>${money(totalRow)}</b></td>
-            <td>${esc(i.supplier || '')}</td>
-            <td style="white-space:nowrap">${got ? '' : `<button class="btn ghost sm" data-action="receive-import" data-id="${i.id}">Đã nhận</button> `}<button class="icon-btn" data-action="edit-import" data-id="${i.id}" title="Sửa phiếu">✎</button><button class="icon-btn del" data-action="del-import" data-id="${i.id}" title="Xoá">🗑</button></td>
-          </tr>`;
-        }).join('')}</tbody>
+        <tbody>${rowsOf(list).map((g) => g.rows.length === 1 ? importRow(g.rows[0]) : groupRows(g)).join('')}</tbody>
       </table>` : '<div class="empty">Chưa có phiếu nhập nào.</div>'}
     </div>`;
 }
@@ -1940,6 +1985,14 @@ document.addEventListener('click', async (e) => {
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'receive-import': return openReceiveDialog([id]);
+    case 'receive-group': return openReceiveDialog(btn.dataset.ids.split(','));
+    case 'toggle-import-group': ui.imports.open[btn.dataset.key] = !ui.imports.open[btn.dataset.key]; return render();
+    case 'del-import-group': {
+      const ids = btn.dataset.ids.split(',');
+      if (!(await ask(`Xoá ${ids.length} phiếu nhập của mặt hàng này? Tồn kho và giá vốn sẽ tính lại.`))) return;
+      for (const x of ids) await store.remove('imports', x);
+      return toast('Đã xoá nhóm phiếu nhập');
+    }
     case 'receive-batch': return openReceiveDialog(S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === btn.dataset.batch).map((i) => i.id));
     case 'del-import': return confirmDel('imports', 'Xoá phiếu nhập này? Tồn kho và giá vốn sẽ tính lại.');
     case 'new-product': return openProductForm();

@@ -506,3 +506,12 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .inbound-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .inbound-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .inbound-items li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* grouped import rows */
+.group-row td { background: var(--bg-soft, #f6f9ff); }
+.sub-row td { background: transparent; font-size: 13px; border-top: 0; }
+.sub-row .item.sub { padding-left: 28px; }
+.link-btn { border: 0; background: none; padding: 0; margin-top: 2px; color: var(--blue, #1d5fd0); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+.inbound-items .has-sub details summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+.inbound-items .has-sub details ul { list-style: none; margin: 4px 0 4px 26px; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.inbound-items .has-sub details li { display: flex; justify-content: space-between; }
