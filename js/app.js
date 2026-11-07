@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived, allocateShipping,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -1021,7 +1021,7 @@ function pageImports() {
   return `
     <div class="page-head">
       <div><h1>Nhập hàng</h1><p>Đặt hàng xong thì ghi phiếu <b>Đang đặt</b>. Khi hàng về, bấm <b>Đã nhận hàng</b> thì mới cộng vào kho. Giá vốn = trung bình có trọng số của hàng đã nhận (đã gồm phí ship nhập).</p></div>
-      <div class="actions"><button class="btn pink" data-action="new-import">＋ Phiếu nhập</button></div>
+      <div class="actions"><button class="btn" data-action="new-parcel" title="Một kiện gồm nhiều mặt hàng, chia phí ship chung">📦 Kiện nhiều mặt hàng</button><button class="btn pink" data-action="new-import">＋ Phiếu nhập</button></div>
     </div>
     <div class="toolbar">
       <input type="search" id="import-q" placeholder="Tìm mặt hàng, nhà cung cấp…" value="${esc(f.q)}">
@@ -1112,6 +1112,117 @@ function openReceiveDialog(ids) {
         await store.upsertMany('imports', docs);
         m.close();
         toast(`Đã nhập kho ${received} mặt hàng ✓`);
+      };
+    },
+  });
+}
+
+/**
+ * One parcel with several products/supplies and one shared shipping fee: the fee is split across the
+ * lines (by quantity or by goods value) and saved as one import slip per line, in one order (batch).
+ */
+function openParcelForm() {
+  const blank = () => ({ ref: '', variantId: '', qty: 1, unitCost: 0 });
+  const lines = [blank(), blank()];
+  const st = { status: 'ordered', mode: 'qty' };
+  const refOptions = (sel) => `<option value="">— chọn mặt hàng —</option>
+    <optgroup label="Sản phẩm">${S.products.map((p) => `<option value="product:${esc(p.id)}" ${sel === 'product:' + p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>
+    <optgroup label="Dụng cụ đóng gói">${S.packaging.map((k) => `<option value="packaging:${esc(k.id)}" ${sel === 'packaging:' + k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</optgroup>`;
+  const prodOf = (l) => (l.ref.startsWith('product:') ? product(l.ref.slice(8)) : null);
+
+  openModal({
+    title: 'Kiện nhiều mặt hàng · chia phí ship chung',
+    wide: false,
+    body: `<form id="parcel-form" class="form-grid" style="grid-template-columns:1fr 1fr" onsubmit="return false">
+      <label class="field">Ngày đặt hàng<input type="date" name="date" value="${today()}" required></label>
+      <label class="field">Nhà cung cấp<input name="supplier"></label>
+      <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
+        <div class="seg" id="pc-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
+      </div>
+      <label class="field" id="pc-recv" style="grid-column:1/-1" hidden>Ngày nhận hàng<input type="date" name="receivedDate" value="${today()}"></label>
+      <div id="pc-lines" style="grid-column:1/-1"></div>
+      <button type="button" class="btn ghost sm" id="pc-add" style="justify-self:start">＋ Thêm mặt hàng</button><span></span>
+      <label class="field">Tổng phí ship cả kiện<input type="number" min="0" step="1000" name="fee" value="0"></label>
+      <div class="field"><span>Chia phí ship theo</span><div class="seg" id="pc-mode" style="justify-self:start"><button type="button" data-v="qty">Số lượng</button><button type="button" data-v="value">Giá trị hàng</button></div></div>
+      <label class="field" style="grid-column:1/-1">Ghi chú<input name="note" placeholder="VD: gộp kiện nặng"></label>
+      <div class="summary" style="grid-column:1/-1" id="pc-sum"></div>
+    </form>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="pc-save">Lưu kiện</button>`,
+    onMount(m) {
+      const form = $('#parcel-form', m);
+      const shares = () => allocateShipping(num(form.fee.value), lines, st.mode);
+      const drawLines = () => {
+        $('#pc-lines', m).innerHTML = `<div class="parcel-lines">${lines.map((l, i) => {
+          const p = prodOf(l);
+          return `<div class="parcel-line" data-i="${i}">
+            <select data-f="ref" aria-label="Mặt hàng">${refOptions(l.ref)}</select>
+            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">— phân loại —</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === l.variantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
+            <input type="number" min="0" step="any" data-f="qty" value="${num(l.qty)}" aria-label="Số lượng" placeholder="SL">
+            <input type="number" min="0" step="100" data-f="unitCost" value="${num(l.unitCost)}" aria-label="Giá nhập" placeholder="Giá nhập">
+            <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ dòng">✕</button>
+            <span class="small muted parcel-share" data-share="${i}"></span>
+          </div>`;
+        }).join('')}</div>`;
+      };
+      const sync = () => {
+        $$('#pc-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
+        $$('#pc-mode button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.mode));
+        $('#pc-recv', m).hidden = st.status !== 'received';
+        const sh = shares();
+        let goods = 0, qty = 0;
+        lines.forEach((l, i) => {
+          goods += num(l.qty) * num(l.unitCost);
+          qty += num(l.qty);
+          const el = $(`[data-share="${i}"]`, m);
+          if (el) el.textContent = num(l.qty) ? `Ship ${money(sh[i])} → vốn ${money(num(l.unitCost) + sh[i] / num(l.qty))}/cái` : '';
+        });
+        const fee = num(form.fee.value);
+        $('#pc-sum', m).innerHTML = `<div><span>Tổng số lượng</span><b>${qty}</b></div><div><span>Tiền hàng</span><b>${money(goods)}</b></div><div><span>Phí ship</span><b>${money(fee)}</b></div><div><span>Tổng tiền</span><b>${money(goods + fee)}</b></div>`;
+      };
+      drawLines();
+      sync();
+      m.addEventListener('click', (e) => {
+        const seg = e.target.closest('#pc-status [data-v], #pc-mode [data-v]');
+        if (seg) { st[seg.parentElement.id === 'pc-mode' ? 'mode' : 'status'] = seg.dataset.v; sync(); }
+        if (e.target.id === 'pc-add') { lines.push(blank()); drawLines(); sync(); }
+        const rm = e.target.closest('[data-rm]');
+        if (rm && lines.length > 1) { lines.splice(+rm.dataset.rm, 1); drawLines(); sync(); }
+      });
+      m.addEventListener('input', (e) => {
+        const row = e.target.closest('.parcel-line');
+        if (row) {
+          const l = lines[+row.dataset.i], f = e.target.dataset.f;
+          l[f] = e.target.value;
+          if (f === 'ref') {
+            l.variantId = '';
+            const p = prodOf(l);
+            if (!num(l.unitCost)) l.unitCost = p ? num(costs.product[p.id]) : num(costs.packaging[l.ref.slice(10)]);
+            drawLines();
+          }
+        }
+        sync();
+      });
+      $('[data-close2]', m).onclick = () => m.close();
+      $('#pc-save', m).onclick = async () => {
+        if (!form.reportValidity()) return;
+        if (lines.some((l) => !l.ref)) return toast('Chọn mặt hàng cho mọi dòng (hoặc bỏ dòng trống)');
+        if (lines.some((l) => !(num(l.qty) > 0))) return toast('Số lượng phải lớn hơn 0');
+        if (lines.some((l) => { const p = prodOf(l); return p && hasVariants(p) && !l.variantId; })) return toast('Chọn phân loại cho sản phẩm có phân loại');
+        const d = formData(form);
+        const sh = shares();
+        const batchId = uid();
+        const docs = lines.map((l, i) => {
+          const at = l.ref.indexOf(':');
+          const kind = l.ref.slice(0, at), itemId = l.ref.slice(at + 1);
+          return {
+            kind, itemId, variantId: kind === 'product' ? l.variantId || '' : '', date: d.date, qty: num(l.qty), unitCost: num(l.unitCost),
+            extraFee: sh[i], supplier: (d.supplier || '').trim(), note: (d.note || '').trim(), batchId,
+            status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
+          };
+        });
+        await store.upsertMany('imports', docs);
+        m.close();
+        toast(st.status === 'received' ? `Đã nhập kho ${docs.length} dòng, phí ship đã chia 📦` : `Đã ghi kiện ${docs.length} dòng. Hàng về thì bấm “Đã nhận hàng”`);
       };
     },
   });
@@ -1984,6 +2095,7 @@ document.addEventListener('click', async (e) => {
     case 'del-order': return confirmDel('orders', 'Xoá đơn hàng này?');
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
+    case 'new-parcel': return openParcelForm();
     case 'receive-import': return openReceiveDialog([id]);
     case 'receive-group': return openReceiveDialog(btn.dataset.ids.split(','));
     case 'toggle-import-group': ui.imports.open[btn.dataset.key] = !ui.imports.open[btn.dataset.key]; return render();

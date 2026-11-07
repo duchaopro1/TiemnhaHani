@@ -515,3 +515,10 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .inbound-items .has-sub details summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
 .inbound-items .has-sub details ul { list-style: none; margin: 4px 0 4px 26px; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
 .inbound-items .has-sub details li { display: flex; justify-content: space-between; }
+
+/* parcel with several items */
+.parcel-lines { display: grid; gap: 8px; }
+.parcel-line { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 70px 100px auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--line, #dfe6f2); border-radius: 12px; }
+.parcel-line .parcel-share { grid-column: 1 / -1; }
+.parcel-line select, .parcel-line input { min-width: 0; }
+@media (max-width: 600px) { .parcel-line { grid-template-columns: 1fr 1fr; } }

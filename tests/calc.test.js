@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -287,4 +287,13 @@ test('nhận hàng: tồn kho tăng, chi phí vận hành tính theo ngày nhậ
   assert.equal(operatingCosts(s2, '2026-10-01', '2026-10-31').total, 0);      // không phải tháng đặt
   // phiếu cũ đã nhận mà không có ngày nhận: tính theo ngày ghi phiếu
   assert.equal(importDate({ date: '2026-09-01' }), '2026-09-01');
+});
+
+test('chia phí ship chung của kiện: theo số lượng hoặc theo giá trị, tổng luôn khớp', () => {
+  const lines = [{ qty: 10, unitCost: 10000 }, { qty: 5, unitCost: 40000 }];
+  assert.deepEqual(allocateShipping(30000, lines, 'qty'), [20000, 10000]);
+  assert.deepEqual(allocateShipping(30000, lines, 'value'), [10000, 20000]); // 100k vs 200k
+  const odd = allocateShipping(10000, [{ qty: 1, unitCost: 1 }, { qty: 1, unitCost: 1 }, { qty: 1, unitCost: 1 }]);
+  assert.equal(odd.reduce((a, b) => a + b, 0), 10000);
+  assert.deepEqual(allocateShipping(5000, [{ qty: 0, unitCost: 0 }]), [0]);
 });

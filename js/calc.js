@@ -272,3 +272,12 @@ export function aggregate(costs, orders) {
   }
   return total;
 }
+
+/**
+ * Share a parcel's shipping fee across its lines. `mode` 'qty' splits by number of pieces,
+ * 'value' by goods value (qty x unit price). Shares are whole dong and always sum to the fee.
+ */
+export function allocateShipping(fee, lines, mode = 'qty') {
+  const weights = lines.map((l) => (mode === 'value' ? num(l.qty) * num(l.unitCost) : num(l.qty)));
+  return splitFee(fee, weights);
+}
