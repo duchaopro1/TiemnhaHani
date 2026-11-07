@@ -77,6 +77,7 @@ const num = (v) => (Number.isFinite(+v) ? +v : 0);
 export function costTable(state) {
   const table = { product: {}, packaging: {} };
   for (const imp of state.imports || []) {
+    if (!isReceived(imp)) continue; // goods still on their way don't set the cost yet
     const kind = imp.kind === 'packaging' ? 'packaging' : 'product';
     const row = (table[kind][imp.itemId] ||= { qty: 0, total: 0 });
     row.qty += num(imp.qty);
@@ -135,6 +136,14 @@ export function orderSummary(costs, order) {
   return { gross, discount, revenue, product, packaging, fee, ship, cost, profit: revenue - cost };
 }
 
+/**
+ * An import slip is either ordered (goods on their way) or received. Only received slips count as
+ * stock, cost and operating cost. Slips written before this status existed have none: they are received.
+ */
+export const isReceived = (imp) => imp.status !== 'ordered';
+/** The date a slip counts for money: when the goods arrived, else when it was written. */
+export const importDate = (imp) => (isReceived(imp) && imp.receivedDate) || imp.date;
+
 /** Key of one product variant (e.g. one colour of a trophy) in stock tables. */
 export const variantKey = (productId, variantId) => `${productId}:${variantId}`;
 
@@ -145,6 +154,7 @@ export const variantKey = (productId, variantId) => `${productId}:${variantId}`;
  */
 export function stockLevels(state) {
   const products = {}, packaging = {}, variants = {};
+  const incoming = { products: {}, packaging: {}, variants: {} }; // ordered, not yet received
   const addVariant = (pid, vid, n) => {
     if (!vid) return;
     const k = variantKey(pid, vid);
@@ -160,6 +170,18 @@ export function stockLevels(state) {
   const sharedIds = new Set((state.packaging || []).filter((k) => k.shared).map((k) => k.id));
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
+    if (!isReceived(imp)) {
+      const n = num(imp.qty);
+      if (imp.kind === 'packaging') incoming.packaging[imp.itemId] = num(incoming.packaging[imp.itemId]) + n;
+      else {
+        incoming.products[imp.itemId] = num(incoming.products[imp.itemId]) + n;
+        if (imp.variantId) {
+          const k = variantKey(imp.itemId, imp.variantId);
+          incoming.variants[k] = num(incoming.variants[k]) + n;
+        }
+      }
+      continue;
+    }
     if (imp.kind === 'packaging') {
       packaging[imp.itemId] = num(packaging[imp.itemId]) + num(imp.qty);
     } else {
@@ -179,7 +201,7 @@ export function stockLevels(state) {
       }
     }
   }
-  return { products, packaging, variants };
+  return { products, packaging, variants, incoming };
 }
 
 /**
@@ -192,7 +214,9 @@ export function operatingCosts(state, from = '0000', to = '9999') {
   const rows = {};
   let total = 0;
   for (const imp of state.imports || []) {
-    if (imp.kind !== 'packaging' || !shared.has(imp.itemId) || imp.date < from || imp.date > to) continue;
+    if (imp.kind !== 'packaging' || !shared.has(imp.itemId) || !isReceived(imp)) continue;
+    const when = importDate(imp);
+    if (when < from || when > to) continue;
     const amount = num(imp.qty) * num(imp.unitCost) + num(imp.extraFee);
     const row = (rows[imp.itemId] ||= { id: imp.itemId, name: shared.get(imp.itemId).name, qty: 0, amount: 0 });
     row.qty += num(imp.qty);
