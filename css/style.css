@@ -460,3 +460,16 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 /* packaging page: names stay on one line, the parts card gets two columns on wide screens */
 .pk-parts td:first-child { white-space: nowrap; }
 @media (min-width: 1100px) { .pk-parts { grid-column: span 2; } }
+
+/* order form: save state and errors */
+.modal-foot { flex-wrap: wrap; align-items: center; }
+.form-error { flex: 1 1 240px; margin-right: auto; color: var(--danger); font-size: 13px; font-weight: 600; line-height: 1.35; }
+.sync-state {
+  border: 0; border-radius: 999px; padding: 3px 10px; font: 700 12px var(--font-body); cursor: pointer; white-space: nowrap;
+}
+.sync-state.saving { background: var(--st-pending); color: var(--st-pending-ink); }
+.sync-state.done { background: var(--st-done); color: var(--st-done-ink); }
+.sync-state.error { background: var(--st-cancelled); color: var(--st-cancelled-ink); }
+.sync-state.saving::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: currentColor; animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .sync-state.saving::before { animation: none; } }

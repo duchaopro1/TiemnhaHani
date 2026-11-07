@@ -4,6 +4,8 @@ import {
   costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
+import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
+import { describeError } from './errors.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -38,6 +40,28 @@ function ask(message, okLabel = 'Xoá') {
     $('[value=yes]', d).textContent = okLabel;
     d.addEventListener('click', (e) => { if (e.target.value) d.close(e.target.value); });
     d.addEventListener('close', () => { resolve(d.returnValue === 'yes'); d.remove(); });
+    document.body.append(d);
+    d.showModal();
+  });
+}
+
+/** In-page dialog with several buttons; resolves to the chosen value, or null when dismissed (Esc). */
+function choose(message, choices) {
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog');
+    d.className = 'confirm';
+    d.innerHTML = '<div class="modal-body"><p></p></div><div class="modal-foot" style="flex-wrap:wrap"></div>';
+    $('p', d).textContent = message;
+    for (const c of choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = c.cls || 'btn ghost';
+      b.value = c.value;
+      b.textContent = c.label;
+      $('.modal-foot', d).append(b);
+    }
+    d.addEventListener('click', (e) => { if (e.target.value) d.close(e.target.value); });
+    d.addEventListener('close', () => { resolve(d.returnValue || null); d.remove(); });
     document.body.append(d);
     d.showModal();
   });
@@ -117,8 +141,10 @@ function render() {
       <span class="sync" title="${MODES[store.mode].title}">
         <i class="dot ${MODES[store.mode].dot}"></i>${esc(MODES[store.mode].label())}
       </span>
+      <button type="button" class="sync-state" id="sync-state" data-action="sync-info" hidden></button>
     </header>
     <main>${pages[tab]()}</main>`;
+  updateSyncBadge({ pending: store.pending, error: store.lastError });
   if (focused && $('#' + focused)) {
     const el = $('#' + focused);
     el.focus();
@@ -126,16 +152,48 @@ function render() {
   }
 }
 
+/* ================= save status ================= */
+let syncTimer = null;
+let wasPending = false;
+let doneUntil = 0; // "Đã lưu ✓" stays for a moment, even though the header is redrawn right after a save
+function updateSyncBadge({ pending, error }) {
+  const el = $('#sync-state');
+  clearTimeout(syncTimer);
+  let state = 'idle';
+  if (pending > 0) {
+    wasPending = true;
+    state = 'saving';
+  } else if (error) {
+    wasPending = false;
+    state = 'error';
+  } else {
+    if (wasPending) { wasPending = false; doneUntil = Date.now() + 2500; }
+    if (Date.now() < doneUntil) state = 'done';
+  }
+  if (state === 'done') syncTimer = setTimeout(() => updateSyncBadge({ pending: store.pending, error: store.lastError }), doneUntil - Date.now() + 30);
+  if (!el) return;
+  if (state === 'idle') { el.hidden = true; return; }
+  const text = { saving: 'Đang lưu…', error: 'Chưa lưu được', done: 'Đã lưu ✓' }[state];
+  Object.assign(el, { hidden: false, className: `sync-state ${state}`, textContent: text });
+  el.title = state === 'error' ? describeError(error).text : '';
+}
+// Leaving while a save is still on its way would lose it: ask the browser to confirm.
+window.addEventListener('beforeunload', (e) => {
+  if (store?.pending > 0) { e.preventDefault(); e.returnValue = ''; }
+});
+
 /* ================= modal ================= */
 const modal = $('#modal');
-function openModal({ title, body, foot = '', onMount, wide = true }) {
+function openModal({ title, body, foot = '', onMount, wide = true, beforeClose }) {
   modal.style.width = wide ? '' : 'min(560px, calc(100vw - 32px))';
   modal.innerHTML = `
     <div class="modal-head"><h2>${title}</h2><button class="icon-btn" data-close>✕</button></div>
     <div class="modal-body">${body}</div>
     ${foot ? `<div class="modal-foot">${foot}</div>` : ''}`;
   modal.showModal();
-  $('[data-close]', modal).onclick = () => modal.close();
+  modal.requestClose = async () => { if (!beforeClose || await beforeClose()) modal.close(); };
+  modal.oncancel = (e) => { e.preventDefault(); modal.requestClose(); }; // Esc
+  $('[data-close]', modal).onclick = () => modal.requestClose();
   onMount?.(modal);
 }
 const options = (list, selected, empty) =>
@@ -405,12 +463,42 @@ function blankLine() {
   return { productId: '', variantId: '', qty: 1, price: 0, pack1: '', pack2: '', pack3: '', packEach: false };
 }
 
-function openOrderForm(existing) {
-  const o = existing ? structuredClone(existing) : {
+/**
+ * Opens the order form. A draft left by an earlier, unfinished form (closed on purpose, Esc, a reload or
+ * a new version of the page) is offered back first, so a half-typed order is never lost.
+ */
+async function openOrderForm(existing) {
+  const key = existing?.id || 'new';
+  const draft = getDraft(key);
+  let restored = null;
+  if (draft) {
+    const lines = (draft.order.items || []).filter((l) => l.productId || l.productName).length;
+    const when = new Date(draft.savedAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+    const who = draft.order.customer ? `, khách ${draft.order.customer}` : '';
+    const stale = existing && draft.baseUpdatedAt && draft.baseUpdatedAt !== existing.updatedAt;
+    const choice = await choose(
+      `Có ${existing ? 'bản sửa đơn' : 'đơn'} nhập dở lúc ${when}${who}, ${lines} sản phẩm.${stale ? ' Đơn này đã được sửa ở nơi khác kể từ đó.' : ''} Khôi phục để nhập tiếp?`,
+      [{ label: 'Khôi phục', value: 'restore', cls: 'btn' }, { label: existing ? 'Bỏ bản nháp' : 'Bỏ, nhập đơn mới', value: 'drop', cls: 'btn ghost' }],
+    );
+    if (choice === 'restore') restored = draft.order;
+    else if (choice === 'drop') deleteDraft(key);
+    else return;
+  }
+  openOrderFormNow(existing, restored);
+}
+
+function openOrderFormNow(existing, restored) {
+  const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
     shipFee: 0, shipPayer: 'customer', discount: 0, platformFee: 0, items: [blankLine()],
   };
+  if (!base.items?.length) base.items = [blankLine()];
+  const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
   if (!o.items?.length) o.items = [blankLine()];
+  const key = existing?.id || 'new';
+  const baseJson = stable(normalizeOrder(base)); // what "untouched" looks like
+  // Shared between the close guard below and the form code inside onMount.
+  const ctl = { saving: false, timer: null, snap: null, flush: () => {} };
 
   const lineHtml = (l, i) => `
     <div class="line" data-line="${i}">
@@ -471,9 +559,42 @@ function openOrderForm(existing) {
   openModal({
     title: existing ? 'Sửa đơn hàng' : 'Thêm đơn hàng',
     body,
-    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="save-order">Lưu đơn</button>`,
+    foot: `<span class="form-error" id="order-error" role="alert" hidden></span><button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="save-order">Lưu đơn</button>`,
+    // Esc, ✕ and Huỷ all land here: never throw away an order that has been typed into.
+    async beforeClose() {
+      if (ctl.saving) { toast('Đang lưu đơn, chờ xong rồi đóng nhé'); return false; }
+      ctl.flush();
+      if (!ctl.snap || stable(ctl.snap()) === baseJson) { deleteDraft(key); return true; }
+      const choice = await choose('Đơn này chưa được lưu. Bạn muốn làm gì?', [
+        { label: 'Tiếp tục nhập', value: 'stay', cls: 'btn' },
+        { label: 'Đóng, giữ bản nháp', value: 'keep', cls: 'btn ghost' },
+        { label: 'Bỏ đơn này', value: 'drop', cls: 'btn danger' },
+      ]);
+      if (choice === 'keep') { markDraftClosed(key); toast('Đã giữ bản nháp. Bấm “＋ Thêm đơn” để nhập tiếp.'); return true; }
+      if (choice === 'drop') { deleteDraft(key); return true; }
+      return false;
+    },
     onMount(m) {
       const form = $('#order-form', m);
+      // ---- draft autosave: after every change, and right before the page goes away ----
+      const writeDraft = () => {
+        ctl.timer = null;
+        if (!m.open) return;
+        const now = ctl.snap();
+        if (stable(now) === baseJson) deleteDraft(key);
+        else putDraft(key, { order: now, baseUpdatedAt: existing?.updatedAt || 0, open: true });
+      };
+      const touchDraft = () => { clearTimeout(ctl.timer); ctl.timer = setTimeout(writeDraft, 300); };
+      ctl.flush = () => { if (ctl.timer !== null) { clearTimeout(ctl.timer); writeDraft(); } };
+      const onHide = () => { if (document.visibilityState !== 'visible' || document.hidden) ctl.flush(); };
+      window.addEventListener('pagehide', ctl.flush);
+      document.addEventListener('visibilitychange', onHide);
+      m.addEventListener('close', () => {
+        clearTimeout(ctl.timer);
+        ctl.timer = null;
+        window.removeEventListener('pagehide', ctl.flush);
+        document.removeEventListener('visibilitychange', onHide);
+      }, { once: true });
       const drawLines = () => {
         $('#lines', m).innerHTML = o.items.map(lineHtml).join('');
         o.items.forEach((_, i) => drawMeta(i));
@@ -500,6 +621,7 @@ function openOrderForm(existing) {
           <div><span>Đóng gói</span><b>${money(s.packaging)}</b></div>
           <div><span>Ship shop chịu + phí sàn + giảm giá</span><b>${money(s.ship + s.fee + s.discount)}</b></div>
           <div class="profit ${s.profit < 0 ? 'neg' : ''}"><span>Lợi nhuận</span><b>${money(s.profit)}</b></div>`;
+        touchDraft();
       };
       const readHeader = () => {
         const d = formData(form);
@@ -573,20 +695,48 @@ function openOrderForm(existing) {
         if (e.target.name === 'status') e.target.className = `st-select st-${e.target.value}`;
         if (!e.target.closest('#lines')) drawSummary();
       });
-      $('[data-close2]', m).onclick = () => m.close();
-      $('#save-order', m).onclick = async () => {
+      $('[data-close2]', m).onclick = () => m.requestClose();
+
+      const saveBtn = $('#save-order', m);
+      const errEl = $('#order-error', m);
+      saveBtn.onclick = async () => {
+        if (ctl.saving) return;
         if (!form.reportValidity()) return;
         Object.assign(o, readHeader());
-        o.items = o.items.filter((l) => l.productId || l.productName).map(({ preset, ...l }) => l);
-        if (!o.items.length) return toast('Chọn ít nhất 1 sản phẩm');
-        const noVariant = o.items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
+        const items = o.items.filter((l) => l.productId || l.productName).map(({ preset, ...l }) => l);
+        if (!items.length) return toast('Chọn ít nhất 1 sản phẩm');
+        const noVariant = items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
         if (noVariant && !existing) return notify(`Chọn phân loại (màu, size…) cho "${product(noVariant.productId).name}"`);
-        if (!o.code) o.code = `${o.platform.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-6)}`;
-        await store.upsert('orders', o);
-        m.close();
-        toast('Đã lưu đơn ✨');
+        if (!o.code) {
+          o.code = `${o.platform.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+          form.elements.code.value = o.code;
+        }
+        o.id ||= uid(); // fixed before the first try, so "Thử lại" can never create a second copy
+        errEl.hidden = true;
+        ctl.saving = true;
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Đang lưu…';
+        ctl.flush();
+        writeDraft(); // the draft holds the final state while the server answers
+        try {
+          await store.upsert('orders', { ...o, items });
+          clearTimeout(ctl.timer);
+          deleteDraft(key);
+          ctl.saving = false;
+          m.close();
+          toast('Đã lưu đơn ✨');
+        } catch (err) {
+          errEl.textContent = `⚠ Chưa lưu được đơn: ${describeError(err).text}. Đơn vẫn nằm trong form và đã được giữ làm bản nháp.`;
+          errEl.hidden = false;
+          saveBtn.textContent = 'Thử lại';
+        } finally {
+          ctl.saving = false;
+          saveBtn.disabled = false;
+        }
       };
+      ctl.snap = () => { Object.assign(o, readHeader()); return normalizeOrder(o); };
       drawLines();
+      if (restored) writeDraft(); // a restored draft is "on screen" again
     },
   });
 }
@@ -1579,6 +1729,7 @@ document.addEventListener('click', async (e) => {
   const id = btn.dataset.id;
   const confirmDel = async (coll, msg) => { if (await ask(msg)) await store.remove(coll, id); };
   switch (btn.dataset.action) {
+    case 'sync-info': return notify(store.lastError ? 'Chưa lưu được: ' + describeError(store.lastError).text : 'Mọi thay đổi đã được lưu.');
     case 'new-order': return openOrderForm();
     case 'edit-order': return openOrderForm(store.get('orders', id));
     case 'del-order': return confirmDel('orders', 'Xoá đơn hàng này?');
@@ -1654,16 +1805,14 @@ function renderLogin(message = '') {
 
 function onStoreError(err) {
   if (err.code === 'permission-denied') return renderLogin(`Email ${store.user?.email} chưa được cấp quyền. Nhờ chủ shop thêm email vào firestore.rules.`);
-  if (err.code === 'invalid_argument' || err.code === 'not_granted') return notify('Không lưu được: bạn đang chỉ có quyền xem. Nhờ chủ shop chia sẻ quyền Editor.');
-  if (err.code === 'quota_exceeded') return notify('Kho dữ liệu đã đầy. Hãy xuất sao lưu rồi xoá bớt đơn cũ.');
-  if (err.code === 'revoked') return notify('Quyền truy cập trang đã thay đổi. Tải lại trang để tiếp tục.');
-  notify('Lỗi lưu dữ liệu: ' + (err.message || err.code));
+  notify('Chưa lưu được: ' + describeError(err).text);
 }
 
 async function boot() {
   $('#app').innerHTML = '<div class="login"><div class="logo big">hani</div></div>';
   await initStore();
   store.onError = onStoreError;
+  store.onStatus(updateSyncBadge);
   let renderQueued = false;
   store.onChange(() => {
     if (renderQueued) return;
@@ -1676,6 +1825,17 @@ async function boot() {
     await store.init();
     render();
   }
+  store.whenReady().then(resumeDraft);
+}
+
+/** After a reload (or a new version of the page) with an order form open: offer that order back. */
+async function resumeDraft() {
+  if (firebaseEnabled && !store.user) return;
+  const keys = openDraftKeys();
+  if (!keys.length) return;
+  keys.forEach((k) => markDraftClosed(k)); // ask once, not on every later reload
+  const existing = keys[0] === 'new' ? undefined : store.get('orders', keys[0]);
+  if (keys[0] === 'new' || existing) openOrderForm(existing);
 }
 
 window.addEventListener('unhandledrejection', (e) => { if (e.reason?.code) e.preventDefault(); });

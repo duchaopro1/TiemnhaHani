@@ -14,6 +14,11 @@ class BaseStore {
   constructor() {
     this.data = Object.fromEntries(COLLECTIONS.map((c) => [c, new Map()]));
     this.listeners = new Set();
+    this.pending = 0; // writes sent and not yet confirmed
+    this.lastError = null;
+    this.statusListeners = new Set();
+    this.loaded = new Set();
+    this.readyWaiters = [];
   }
   get state() {
     return Object.fromEntries(COLLECTIONS.map((c) => [c, [...this.data[c].values()]]));
@@ -28,6 +33,32 @@ class BaseStore {
   emit() {
     for (const cb of this.listeners) cb();
   }
+  /** Called when the number of unconfirmed writes or the last save error changes. */
+  onStatus(cb) {
+    this.statusListeners.add(cb);
+    return () => this.statusListeners.delete(cb);
+  }
+  emitStatus() {
+    for (const cb of this.statusListeners) cb({ pending: this.pending, error: this.lastError });
+  }
+  /** Follow a write: counts as pending until it resolves; remembers a failure until the next success. */
+  track(promise) {
+    this.pending += 1;
+    this.emitStatus();
+    return promise.then(
+      (v) => { this.pending -= 1; this.lastError = null; this.emitStatus(); return v; },
+      (e) => { this.pending -= 1; this.lastError = e; this.emitStatus(); throw e; },
+    );
+  }
+  markLoaded(coll) {
+    this.loaded.add(coll);
+    if (this.loaded.size >= COLLECTIONS.length) this.readyWaiters.splice(0).forEach((resolve) => resolve());
+  }
+  /** Resolves once every collection has delivered its first data (or after `timeout` ms). */
+  whenReady(timeout = 6000) {
+    if (this.loaded.size >= COLLECTIONS.length) return Promise.resolve();
+    return new Promise((resolve) => { this.readyWaiters.push(resolve); setTimeout(resolve, timeout); });
+  }
 }
 
 class LocalStore extends BaseStore {
@@ -38,6 +69,7 @@ class LocalStore extends BaseStore {
       raw = { ...raw, ...JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}') };
     } catch { /* corrupted or blocked storage: start empty */ }
     for (const c of COLLECTIONS) for (const doc of raw[c] || []) this.data[c].set(doc.id, doc);
+    COLLECTIONS.forEach((c) => this.markLoaded(c));
     this.emit();
   }
   persist() {
@@ -104,6 +136,7 @@ class FirebaseStore extends BaseStore {
         this.col(c),
         (snap) => {
           this.data[c] = new Map(snap.docs.map((d) => [d.id, { ...d.data(), id: d.id }]));
+          this.markLoaded(c);
           this.emit();
         },
         (err) => this.onError?.(err),
@@ -125,7 +158,7 @@ class FirebaseStore extends BaseStore {
     doc.id ||= uid();
     doc.updatedAt = Date.now();
     doc.updatedBy = this.user?.email || '';
-    await this.fs.setDoc(this.fs.doc(this.col(coll), doc.id), this.clean(doc));
+    await this.track(this.fs.setDoc(this.fs.doc(this.col(coll), doc.id), this.clean(doc)));
     return doc;
   }
   async upsertMany(coll, docs) {
@@ -138,11 +171,11 @@ class FirebaseStore extends BaseStore {
         doc.updatedBy = this.user?.email || '';
         batch.set(this.fs.doc(this.col(coll), doc.id), this.clean(doc));
       }
-      await batch.commit();
+      await this.track(batch.commit());
     }
   }
   async remove(coll, id) {
-    await this.fs.deleteDoc(this.fs.doc(this.col(coll), id));
+    await this.track(this.fs.deleteDoc(this.fs.doc(this.col(coll), id)));
   }
 }
 
@@ -159,20 +192,35 @@ class ArtifactStore extends BaseStore {
       this.db.collection(c).onSnapshot(
         (snap) => {
           this.data[c] = new Map(snap.docs.map((d) => [d.id, { ...d.data(), id: d.id }]));
+          this.markLoaded(c);
           this.emit();
         },
         (err) => this.onError?.(err),
       );
     }
   }
+  /** Run a platform call; a dropped connection (`unavailable`) is retried once after a short pause. */
+  async send(fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err?.code !== 'unavailable') throw err;
+      await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 500));
+      return fn();
+    }
+  }
   async write(coll, doc) {
     doc.id ||= uid();
     doc.updatedAt = Date.now();
     const body = JSON.parse(JSON.stringify(doc));
+    const before = this.data[coll].get(doc.id);
     this.data[coll].set(doc.id, body); // show it right away; the snapshot confirms it
     try {
-      await this.db.collection(coll).doc(doc.id).set(body);
+      await this.track(this.send(() => this.db.collection(coll).doc(doc.id).set(body)));
     } catch (err) {
+      // The server did not take it: don't leave an order on screen that was never saved.
+      if (before) this.data[coll].set(doc.id, before); else this.data[coll].delete(doc.id);
+      this.emit();
       this.onError?.(err);
       throw err;
     }
@@ -191,11 +239,14 @@ class ArtifactStore extends BaseStore {
     this.emit();
   }
   async remove(coll, id) {
+    const before = this.data[coll].get(id);
     this.data[coll].delete(id);
     this.emit();
     try {
-      await this.db.collection(coll).doc(id).delete();
+      await this.track(this.send(() => this.db.collection(coll).doc(id).delete()));
     } catch (err) {
+      if (before) this.data[coll].set(id, before);
+      this.emit();
       this.onError?.(err);
       throw err;
     }

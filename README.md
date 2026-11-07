@@ -39,6 +39,14 @@ Thay vì nhập giá từng kiểu gói cho từng sản phẩm, app tách thàn
 Nhờ vậy, khi giá hộp tăng bạn chỉ cần nhập phiếu mới. Mọi sản phẩm dùng hộp đó tự cập nhật giá thành. Bảng **"Giá thành theo cách đóng gói"** ở tab Sản phẩm cho thấy ngay giá vốn của mỗi sản phẩm với từng kiểu gói, để đặt giá bán cho hợp lý.
 Ship được tính theo từng đơn (vì phụ thuộc địa chỉ), không cộng vào giá thành sản phẩm.
 
+## Không mất đơn khi đang nhập
+
+- **Bản nháp tự lưu:** form thêm hoặc sửa đơn tự lưu nháp vào trình duyệt sau mỗi thay đổi. Nhấn Esc, tải lại trang hay có bản mới được đăng thì lần mở sau app hỏi "Khôi phục đơn nhập dở?". Sau khi tải lại trang, app tự mở hộp hỏi đó.
+- **Hỏi trước khi đóng:** đơn đã nhập mà bấm Esc, ✕ hoặc Huỷ thì hiện 3 lựa chọn: *Tiếp tục nhập*, *Đóng, giữ bản nháp*, *Bỏ đơn này*. Form chưa đụng tới thì đóng ngay.
+- **Thấy rõ đang lưu:** nút Lưu chuyển thành "Đang lưu…" và khoá lại, thanh đầu trang báo *Đang lưu… → Đã lưu ✓*. Lỗi hiện ngay trong form (kèm lý do và nút **Thử lại**), không tự biến mất, và đơn vẫn được giữ làm bản nháp. Rời trang khi đang lưu thì trình duyệt hỏi lại.
+- Kết nối gián đoạn lúc lưu thì app tự thử lại một lần. Bấm Thử lại không tạo ra đơn thứ hai vì mã nội bộ của đơn được cố định từ lần lưu đầu.
+- Bản nháp chỉ nằm trong trình duyệt đang dùng (không đồng bộ giữa các máy) và tự xoá sau 7 ngày.
+
 ## Nhập đơn Shopee
 
 Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng ký Shopee Open Platform. Vì vậy app đọc file xuất từ Kênh Người Bán:
