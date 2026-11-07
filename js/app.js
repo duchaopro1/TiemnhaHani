@@ -474,7 +474,7 @@ function orderRow(o) {
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
-    <td class="small"><div class="items">${items}</div></td>
+    <td class="small"><div class="items">${items}</div>${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
     <td class="num">${money(s.revenue)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
