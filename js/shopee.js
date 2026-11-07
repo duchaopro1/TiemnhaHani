@@ -35,6 +35,9 @@ export function mapStatus(text) {
   const s = normalize(text);
   if (!s) return 'pending';
   if (s.includes('huy') || s.includes('cancel')) return 'cancelled';
+  // "Người mua xác nhận đã nhận được hàng, tuy nhiên Người mua vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền tới ngày …"
+  // The buyer has the goods: the order is done. The return words are only a deadline, not a return.
+  if (s.includes('xac nhan da nhan') || s.includes('da nhan duoc hang') || s.includes('da nhan hang')) return 'done';
   if (s.includes('tra hang') || s.includes('hoan tien') || s.includes('return') || s.includes('refund')) return 'returned';
   if (s.includes('hoan thanh') || s.includes('completed') || s.includes('da giao') || s.includes('delivered')) return 'done';
   if (s.includes('dang giao') || s.includes('shipping') || s.includes('van chuyen')) return 'shipping';

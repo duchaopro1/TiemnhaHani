@@ -297,3 +297,11 @@ test('chia phí ship chung của kiện: theo số lượng hoặc theo giá tr�
   assert.equal(odd.reduce((a, b) => a + b, 0), 10000);
   assert.deepEqual(allocateShipping(5000, [{ qty: 0, unitCost: 0 }]), [0]);
 });
+
+test('Shopee: "Người mua xác nhận đã nhận được hàng… vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền" là đã nhận (hoàn thành), không phải trả hàng', () => {
+  const text = 'Người mua xác nhận đã nhận được hàng, tuy nhiên Người mua vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền tới ngày 2026-11-19.';
+  assert.equal(mapStatus(text), 'done');
+  assert.equal(mapStatus('Đã nhận hàng'), 'done');
+  assert.equal(mapStatus('Yêu cầu Trả hàng/Hoàn tiền đang xử lý'), 'returned'); // trả hàng thật vẫn nhận ra
+  assert.equal(mapStatus('Đã hủy'), 'cancelled');
+});
