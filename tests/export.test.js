@@ -72,3 +72,19 @@ test('cột "Có thiệp" và số đơn có thiệp trong báo cáo', () => {
   assert.deepEqual(sheets.summary.find((r) => r[0] === 'Số đơn có thiệp'), ['Số đơn có thiệp', 1]);
   assert.equal(sheets.orders[0].length, sheets.orders.at(-1).length);
 });
+
+test('báo cáo có chi phí vận hành thì trừ vào lợi nhuận, không có thì giữ nguyên', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 1000 }], packaging: [], imports: [] });
+  const orders = [{ platform: 'instagram', code: 'A', date: '2026-11-02', status: 'done', items: [{ productId: 'p', qty: 1, price: 5000 }] }];
+  const range = exportRange({ mode: 'month', month: '2026-11' });
+  const names = { item: () => 'P', pack: () => '' };
+  const row = (sheets, label) => sheets.summary.find((r) => r[0] === label);
+  const plain = buildSheets({ orders, costs, range, names });
+  assert.equal(row(plain, 'Lợi nhuận')[1], 4000);
+  assert.equal(row(plain, 'Chi phí vận hành (vật tư dùng chung mua trong kỳ)'), undefined);
+  const withOp = buildSheets({ orders, costs, range, names, operating: { total: 1500 } });
+  assert.equal(row(withOp, 'Chi phí vận hành (vật tư dùng chung mua trong kỳ)')[1], 1500);
+  assert.equal(row(withOp, 'Tổng chi phí')[1], 1000 + 1500);
+  assert.equal(row(withOp, 'Lợi nhuận')[1], 2500);
+  assert.equal(withOp.total.profit, 4000); // số liệu từng đơn không đổi
+});

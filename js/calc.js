@@ -47,6 +47,9 @@ export function costTable(state) {
     row.qty += num(imp.qty);
     row.total += num(imp.qty) * num(imp.unitCost) + num(imp.extraFee);
   }
+  // Shared supplies (tape, bubble wrap, staples) are an operating cost, never part of an order.
+  const shared = {};
+  for (const k of state.packaging || []) if (k.shared) shared[k.id] = true;
   const avg = (kind, list) => {
     const out = {};
     for (const item of list || []) {
@@ -55,7 +58,7 @@ export function costTable(state) {
     }
     return out;
   };
-  return { product: avg('product', state.products), packaging: avg('packaging', state.packaging) };
+  return { product: avg('product', state.products), packaging: avg('packaging', state.packaging), shared };
 }
 
 /** Number of packaging units a line uses: once per line, or once per product unit. */
@@ -69,7 +72,7 @@ export function lineCost(costs, line) {
   const product = qty * num(costs.product[line.productId]);
   let packaging = 0;
   for (const slot of PACK_SLOTS) {
-    if (line[slot]) packaging += num(costs.packaging[line[slot]]) * packUnits(line);
+    if (line[slot] && !costs.shared?.[line[slot]]) packaging += num(costs.packaging[line[slot]]) * packUnits(line);
   }
   const revenue = qty * num(line.price);
   return { revenue, product, packaging, total: product + packaging, profit: revenue - product - packaging };
@@ -119,6 +122,7 @@ export function stockLevels(state) {
       products[p.id] += num(v.adjust);
     }
   }
+  const sharedIds = new Set((state.packaging || []).filter((k) => k.shared).map((k) => k.id));
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
     if (imp.kind === 'packaging') {
@@ -136,11 +140,31 @@ export function stockLevels(state) {
         addVariant(line.productId, line.variantId, -num(line.qty));
       }
       for (const slot of PACK_SLOTS) {
-        if (line[slot]) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
+        if (line[slot] && !sharedIds.has(line[slot])) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
       }
     }
   }
   return { products, packaging, variants };
+}
+
+/**
+ * Operating cost of the period: everything bought of the shared supplies (packaging items marked
+ * `shared`) with an import date inside [from, to]. Stock adjustments never change it: the money
+ * was spent when the supplies were bought; adjusting only tells how much of them is used up.
+ */
+export function operatingCosts(state, from = '0000', to = '9999') {
+  const shared = new Map((state.packaging || []).filter((k) => k.shared).map((k) => [k.id, k]));
+  const rows = {};
+  let total = 0;
+  for (const imp of state.imports || []) {
+    if (imp.kind !== 'packaging' || !shared.has(imp.itemId) || imp.date < from || imp.date > to) continue;
+    const amount = num(imp.qty) * num(imp.unitCost) + num(imp.extraFee);
+    const row = (rows[imp.itemId] ||= { id: imp.itemId, name: shared.get(imp.itemId).name, qty: 0, amount: 0 });
+    row.qty += num(imp.qty);
+    row.amount += amount;
+    total += amount;
+  }
+  return { total, items: Object.values(rows).sort((a, b) => b.amount - a.amount) };
 }
 
 /** Split a batch fee across rows in proportion to their quantity (shares sum to the fee). */

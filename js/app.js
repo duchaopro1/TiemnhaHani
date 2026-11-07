@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
@@ -79,7 +79,9 @@ const thumb = (ref, name, cls = '') =>
   ref
     ? `<img class="thumb ${cls}" src="${esc(imgSrc(ref))}" alt="" loading="lazy">`
     : `<span class="thumb ph ${cls}" aria-hidden="true">${esc((name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
-const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] ? num(costs.packaging[preset[k]]) : 0), 0);
+const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] && !costs.shared[preset[k]] ? num(costs.packaging[preset[k]]) : 0), 0);
+/** Packaging that can go into an order: everything except shared supplies (tape, staples…). */
+const orderPackaging = () => S.packaging.filter((k) => !k.shared);
 
 /* ================= routing ================= */
 const TABS = {
@@ -196,7 +198,10 @@ function pageDashboard() {
   const [from, to, periodLabel] = periodRange();
   const orders = S.orders.filter((o) => o.date >= from && o.date <= to);
   const agg = aggregate(costs, orders);
-  const margin = agg.revenue ? (agg.profit / agg.revenue) * 100 : 0;
+  const op = operatingCosts(S, from, to);
+  const profit = agg.profit - op.total;
+  const totalCost = agg.cost + op.total;
+  const margin = agg.revenue ? (profit / agg.revenue) * 100 : 0;
   const maxRev = Math.max(1, ...Object.values(agg.byPlatform).map((p) => p.revenue));
   const top = Object.entries(agg.byProduct).sort((a, b) => b[1].profit - a[1].profit).slice(0, 8);
   // Products with variants are checked colour by colour, others by their total.
@@ -215,7 +220,7 @@ function pageDashboard() {
 
   return `
     <div class="page-head">
-      <div><h1>Tổng quan</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · doanh thu & lợi nhuận đã trừ giá vốn, đóng gói, phí sàn và ship shop chịu.</p></div>
+      <div><h1>Tổng quan</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · doanh thu & lợi nhuận đã trừ giá vốn, đóng gói, phí sàn, ship shop chịu và chi phí vận hành.</p></div>
       <div class="actions period-bar">
         <button class="period-btn ${isMonth(cur) ? 'on' : ''}" data-period="this">Tháng này</button>
         <div class="month-nav ${pickedOther ? 'on' : ''}" title="Chọn các tháng trước">
@@ -228,8 +233,8 @@ function pageDashboard() {
     </div>
     <div class="grid kpi">
       <div class="card kpi-card him"><div class="label">Doanh thu</div><div class="value">${money(agg.revenue)}</div></div>
-      <div class="card kpi-card her"><div class="label">Tổng chi phí</div><div class="value">${money(agg.cost)}</div></div>
-      <div class="card kpi-card backup"><div class="label">Lợi nhuận</div><div class="value ${signCls(agg.profit)}">${money(agg.profit)}</div></div>
+      <div class="card kpi-card her"><div class="label">Tổng chi phí</div><div class="value">${money(totalCost)}</div>${op.total ? `<div class="sub">gồm vận hành ${money(op.total)}</div>` : ''}</div>
+      <div class="card kpi-card backup"><div class="label">Lợi nhuận</div><div class="value ${signCls(profit)}">${money(profit)}</div>${op.total ? `<div class="sub">đã trừ chi phí vận hành</div>` : ''}</div>
       <div class="card kpi-card friend"><div class="label">Số đơn · Biên lãi</div><div class="value">${agg.orders} · ${margin.toFixed(1)}%</div></div>
     </div>
     <section class="card stboard" style="margin-top:16px" aria-labelledby="stboard-title">
@@ -274,6 +279,14 @@ function pageDashboard() {
           ${lowP.map(({ p, v, n }) => `<tr><td><span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}${esc(itemLabel(p.id, v?.id))}</span></td><td><span class="chip him">Sản phẩm</span></td><td class="num neg">${n}</td></tr>`).join('')}
           ${lowK.map((k) => `<tr><td>${esc(k.name)}</td><td><span class="chip backup">Đóng gói</span></td><td class="num neg">${num(stock.packaging[k.id])}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">Kho vẫn ổn ✨</div>'}
+      </div>
+      <div class="card">
+        <h3>Chi phí vận hành</h3>
+        ${op.items.length ? `<div class="table-wrap"><table><thead><tr><th>Vật tư dùng chung</th><th class="num">SL nhập</th><th class="num">Tiền nhập</th></tr></thead><tbody>
+          ${op.items.map((r) => `<tr><td>${esc(r.name)}</td><td class="num">${r.qty}</td><td class="num">${money(r.amount)}</td></tr>`).join('')}
+          <tr><td><b>Tổng</b></td><td></td><td class="num"><b>${money(op.total)}</b></td></tr>
+        </tbody></table></div><p class="small muted">Tính theo tiền nhập trong thời gian đang xem. Điều chỉnh tồn kho không làm đổi số tiền này.</p>`
+        : '<div class="empty">Chưa nhập vật tư dùng chung (băng keo, giấy chống sốc, ghim…) trong thời gian này.</div>'}
       </div>
     </div>`;
 }
@@ -415,7 +428,7 @@ function openOrderForm(existing) {
       <label class="field">Bộ đóng gói nhanh
         <select data-f="preset">${options(S.presets, '', '— tự chọn —')}</select>
       </label>
-      ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(S.packaging, l[k], '— không —')}</select></label>`).join('')}
+      ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(orderPackaging(), l[k], '— không —')}</select></label>`).join('')}
       <button class="icon-btn del" data-remove-line="${i}" title="Xoá dòng" style="margin-bottom:6px">✕</button>
       <div class="meta"></div>
     </div>`;
@@ -732,7 +745,7 @@ function pageImports() {
           return `<tr>
             <td>${fmtDate(i.date)}</td>
             <td><span class="item">${i.kind === 'packaging' ? '' : thumb(variantOf(i.itemId, i.variantId)?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>${i.note ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
-            <td><span class="chip ${i.kind === 'packaging' ? 'backup' : 'him'}">${i.kind === 'packaging' ? 'Đóng gói' : 'Sản phẩm'}</span></td>
+            <td><span class="chip ${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span></td>
             <td class="num">${num(i.qty)}</td>
             <td class="num">${money(i.unitCost)}</td>
             <td class="num">${money(i.extraFee)}</td>
@@ -1137,16 +1150,20 @@ function openProductForm(existing) {
 
 /* ================= PACKAGING ================= */
 function pagePackaging() {
+  const parts = S.packaging.filter((k) => !k.shared);
+  const supplies = S.packaging.filter((k) => k.shared);
+  const spent = (id) => S.imports.filter((x) => x.kind === 'packaging' && x.itemId === id).reduce((n, x) => n + num(x.qty) * num(x.unitCost) + num(x.extraFee), 0);
+  const bought = (id) => S.imports.filter((x) => x.kind === 'packaging' && x.itemId === id).reduce((n, x) => n + num(x.qty), 0);
   return `
     <div class="page-head">
-      <div><h1>Đóng gói</h1><p>Dụng cụ đóng gói (hộp, túi, giấy, ruy băng…) và các “bộ đóng gói” dùng nhanh khi tạo đơn.</p></div>
-      <div class="actions"><button class="btn ghost" data-action="new-pack">＋ Dụng cụ</button><button class="btn pink" data-action="new-preset">＋ Bộ đóng gói</button></div>
+      <div><h1>Đóng gói</h1><p>Dụng cụ đóng gói chọn trong đơn (hộp, túi, ruy băng…), bộ đóng gói dùng nhanh, và vật tư dùng chung không chọn trong đơn (băng keo, giấy chống sốc, ghim…).</p></div>
+      <div class="actions"><button class="btn ghost" data-action="new-pack">＋ Dụng cụ</button><button class="btn ghost" data-action="new-shared">＋ Vật tư dùng chung</button><button class="btn pink" data-action="new-preset">＋ Bộ đóng gói</button></div>
     </div>
     <div class="grid two">
       <div class="card table-wrap">
         <h3>Dụng cụ đóng gói</h3>
-        ${S.packaging.length ? `<table><thead><tr><th>Tên</th><th class="num">Giá TB / cái</th><th class="num">Tồn</th><th></th></tr></thead><tbody>
-          ${S.packaging.map((k) => {
+        ${parts.length ? `<table><thead><tr><th>Tên</th><th class="num">Giá TB / cái</th><th class="num">Tồn</th><th></th></tr></thead><tbody>
+          ${parts.map((k) => {
             const st = num(stock.packaging[k.id]);
             return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b></td>
             <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}">🗑</button></td></tr>`;
@@ -1155,23 +1172,70 @@ function pagePackaging() {
       <div class="card table-wrap">
         <h3>Bộ đóng gói</h3>
         ${S.presets.length ? `<table><thead><tr><th>Tên bộ</th><th>Gồm</th><th class="num">Chi phí</th><th></th></tr></thead><tbody>
-          ${S.presets.map((pr) => `<tr><td><b>${esc(pr.name)}</b></td><td class="small">${PACK_SLOTS.map((k) => pack(pr[k])?.name).filter(Boolean).map(esc).join(' + ') || '—'}</td><td class="num">${money(presetCost(pr))}</td>
+          ${S.presets.map((pr) => `<tr><td><b>${esc(pr.name)}</b></td><td class="small">${PACK_SLOTS.map((k) => pack(pr[k])).filter((x) => x && !x.shared).map((x) => esc(x.name)).join(' + ') || '—'}</td><td class="num">${money(presetCost(pr))}</td>
             <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-preset" data-id="${pr.id}">✎</button><button class="icon-btn del" data-action="del-preset" data-id="${pr.id}">🗑</button></td></tr>`).join('')}
         </tbody></table>` : '<div class="empty">Tạo bộ đóng gói (VD: “Hộp quà cao cấp” = hộp + giấy lót + ruy băng) để chọn nhanh khi lên đơn.</div>'}
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <h3>Vật tư dùng chung</h3>
+        <p class="small muted" style="margin-top:-6px">Tiền nhập tính hết vào <b>chi phí vận hành</b>. Không chọn trong đơn. Bấm <b>Ghi đã dùng</b> (hoặc sửa ô điều chỉnh tồn kho) để biết đã xài bao nhiêu, số tiền chi phí không đổi.</p>
+        ${supplies.length ? `<div class="table-wrap"><table><thead><tr><th>Vật tư</th><th class="num">Đã nhập</th><th class="num">Đã dùng</th><th class="num">Còn</th><th class="num">Tiền đã nhập</th><th></th></tr></thead><tbody>
+          ${supplies.map((k) => {
+            const st = num(stock.packaging[k.id]);
+            const used = Math.max(0, -num(k.adjust));
+            return `<tr><td><b>${esc(k.name)}</b></td><td class="num">${bought(k.id)}</td><td class="num">${used}</td>
+              <td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b></td><td class="num">${money(spent(k.id))}</td>
+              <td style="white-space:nowrap"><button class="btn ghost sm" data-action="use-pack" data-id="${k.id}">Ghi đã dùng</button>
+                <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}" title="Xoá">🗑</button></td></tr>`;
+          }).join('')}</tbody></table></div>` : '<div class="empty">Chưa có vật tư dùng chung. Bấm “＋ Vật tư dùng chung” để thêm băng keo, giấy chống sốc, ghim bấm…</div>'}
       </div>
     </div>`;
 }
 
-function openPackForm(existing) {
-  const k = existing ? { ...existing } : { name: '', baseCost: 0, lowStock: '', adjust: 0 };
+/** Quick "used some" entry: lowers the stock adjustment, never touches any money figure. */
+function openUseDialog(k) {
   openModal({
-    title: existing ? 'Sửa dụng cụ đóng gói' : 'Thêm dụng cụ đóng gói',
+    title: `Ghi đã dùng: ${esc(k.name)}`,
+    wide: false,
+    body: `<form id="use-form" class="form-grid" style="grid-template-columns:1fr">
+      <label class="field">Đã dùng thêm bao nhiêu?<input type="number" id="use-n" min="0" step="any" value="1" required></label>
+      <div class="summary" id="use-sum"></div>
+      <p class="small muted">Số tiền chi phí vận hành giữ nguyên, vì tiền đã chi lúc nhập hàng.</p>
+    </form>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="use-save">Lưu</button>`,
+    onMount(m) {
+      const stockNow = num(stock.packaging[k.id]);
+      const usedNow = Math.max(0, -num(k.adjust));
+      const sync = () => {
+        const n = num($('#use-n', m).value);
+        $('#use-sum', m).innerHTML = `<div><span>Tồn kho</span><b>${stockNow} → ${stockNow - n}</b></div><div><span>Đã dùng</span><b>${usedNow} → ${usedNow + n}</b></div>`;
+      };
+      $('#use-n', m).addEventListener('input', sync);
+      sync();
+      $('[data-close2]', m).onclick = () => m.close();
+      $('#use-save', m).onclick = async () => {
+        const n = num($('#use-n', m).value);
+        if (!(n > 0)) return toast('Nhập số lượng đã dùng');
+        await store.upsert('packaging', { ...k, adjust: num(k.adjust) - n });
+        m.close();
+        toast(`Đã ghi dùng ${n} ${k.name}`);
+      };
+    },
+  });
+}
+
+function openPackForm(existing, init = {}) {
+  const k = existing ? { ...existing } : { name: '', baseCost: 0, lowStock: '', adjust: 0, shared: false, ...init };
+  openModal({
+    title: existing ? (k.shared ? 'Sửa vật tư dùng chung' : 'Sửa dụng cụ đóng gói') : (k.shared ? 'Thêm vật tư dùng chung' : 'Thêm dụng cụ đóng gói'),
     wide: false,
     body: `<form id="pack-form" class="form-grid" style="grid-template-columns:1fr 1fr">
       <label class="field" style="grid-column:1/-1">Tên<input name="name" value="${esc(k.name)}" required placeholder="VD: Hộp carton 10x10"></label>
       <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(k.baseCost)}"></label>
       <label class="field">Cảnh báo khi tồn ≤<input type="number" min="0" name="lowStock" value="${esc(k.lowStock ?? '')}" placeholder="${settings.lowStock}"></label>
-      <label class="field">Điều chỉnh tồn kho (±)<input type="number" name="adjust" value="${num(k.adjust)}"></label>
+      <label class="field">Điều chỉnh tồn kho (±)<input type="number" step="any" name="adjust" value="${num(k.adjust)}" title="Số âm = đã dùng hoặc hao, số dương = đếm thấy thêm"></label>
+      <label class="check sharedcheck" style="grid-column:1/-1"><input type="checkbox" name="shared" ${k.shared ? 'checked' : ''}> <span><b>Vật tư dùng chung</b> (băng keo, giấy chống sốc, ghim…): tiền nhập tính vào chi phí vận hành, không chọn trong đơn hàng.</span></label>
+      <p class="small muted" style="grid-column:1/-1;margin:0">Điều chỉnh tồn kho: số <b>âm</b> = đã dùng hoặc hao, số <b>dương</b> = đếm thấy thêm. Việc này không làm đổi số tiền chi phí.</p>
     </form>
     ${existing ? `<p class="small">Giá TB: <b>${money(costs.packaging[k.id])}</b> · Tồn: <b>${num(stock.packaging[k.id])}</b></p>` : ''}`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="k-save">Lưu</button>`,
@@ -1181,7 +1245,7 @@ function openPackForm(existing) {
       $('#k-save', m).onclick = async () => {
         if (!form.reportValidity()) return;
         const d = formData(form);
-        await store.upsert('packaging', { ...k, name: d.name.trim(), baseCost: num(d.baseCost), lowStock: d.lowStock === '' ? null : num(d.lowStock), adjust: num(d.adjust) });
+        await store.upsert('packaging', { ...k, name: d.name.trim(), baseCost: num(d.baseCost), lowStock: d.lowStock === '' ? null : num(d.lowStock), adjust: num(d.adjust), shared: d.shared === 'on' });
         m.close();
       };
     },
@@ -1195,7 +1259,7 @@ function openPresetForm(existing) {
     wide: false,
     body: `<form id="preset-form" class="form-grid" style="grid-template-columns:1fr">
       <label class="field">Tên bộ<input name="name" value="${esc(pr.name)}" required placeholder="VD: Gói quà for her"></label>
-      ${PACK_SLOTS.map((s, i) => `<label class="field">Dụng cụ ${i + 1}<select name="${s}">${options(S.packaging, pr[s], '— không —')}</select></label>`).join('')}
+      ${PACK_SLOTS.map((s, i) => `<label class="field">Dụng cụ ${i + 1}<select name="${s}">${options(orderPackaging(), pr[s], '— không —')}</select></label>`).join('')}
       <div class="summary"><div><span>Chi phí bộ</span><b id="pr-cost"></b></div></div>
     </form>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="pr-save">Lưu</button>`,
@@ -1367,7 +1431,8 @@ function openExportDialog() {
       $('#ex-go', m).onclick = async () => {
         const { range, orders } = selection();
         if (!range || !orders.length) return;
-        const sheets = buildSheets({ orders, costs, range, names });
+        const allPlatforms = Object.keys(PLATFORMS).every((k) => st.platforms.includes(k));
+        const sheets = buildSheets({ orders, costs, range, names, operating: allPlatforms ? operatingCosts(S, range.from, range.to) : null });
         const name = `hani-don-hang_${range.slug}`;
         $('#ex-go', m).disabled = true;
         try {
@@ -1416,7 +1481,10 @@ async function loadDemo() {
   const p1 = { id: uid(), name: 'Móc khoá mica in ảnh', sku: 'MK-01', category: 'her', salePrice: 45000, defaultPreset: presets[0].id };
   const p2 = { id: uid(), name: 'Khung ảnh gỗ 13x18', sku: 'KH-13', category: 'him', salePrice: 120000, defaultPreset: presets[1].id };
   const p3 = { id: uid(), name: 'Set quà anni', sku: 'SET-AN', category: 'friend', salePrice: 259000, defaultPreset: presets[1].id };
-  await store.upsertMany('packaging', [box, paper, ribbon, bag, card]);
+  const tape = { ...k('Băng keo trong', 12000), shared: true };
+  const wrap = { ...k('Giấy chống sốc', 150000), shared: true };
+  const staples = { ...k('Ghim bấm (hộp)', 8000), shared: true, adjust: -2 };
+  await store.upsertMany('packaging', [box, paper, ribbon, bag, card, tape, wrap, staples]);
   await store.upsertMany('presets', presets);
   const cup = { id: uid(), name: 'Cúp pha lê mini', sku: 'CUP-01', category: 'friend', salePrice: 89000, defaultPreset: presets[1].id,
     variants: [{ id: uid(), name: 'Đỏ', sku: 'CUP-01-DO' }, { id: uid(), name: 'Xanh', sku: 'CUP-01-XANH' }, { id: uid(), name: 'Vàng', sku: 'CUP-01-VANG', price: 99000 }] };
@@ -1428,6 +1496,9 @@ async function loadDemo() {
     { kind: 'product', itemId: p3.id, date: d, qty: 20, unitCost: 140000, extraFee: 0, supplier: '' },
     ...cup.variants.map((v, i) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty: [12, 8, 4][i], unitCost: 32000, extraFee: [12000, 8000, 4000][i], supplier: 'Xưởng pha lê C' })),
     ...[box, paper, ribbon, bag, card].map((x) => ({ kind: 'packaging', itemId: x.id, date: d, qty: 200, unitCost: x.baseCost, extraFee: 0 })),
+    { kind: 'packaging', itemId: tape.id, date: d, qty: 2, unitCost: 12000, extraFee: 0, supplier: 'Tạp hoá' },
+    { kind: 'packaging', itemId: wrap.id, date: d, qty: 1, unitCost: 60000, extraFee: 15000, supplier: 'Shopee' },
+    { kind: 'packaging', itemId: staples.id, date: d, qty: 5, unitCost: 8000, extraFee: 0, supplier: 'Tạp hoá' },
   ]);
   await store.upsertMany('orders', [
     { platform: 'instagram', code: 'IG-0001', date: d, customer: '@linh.ng', status: 'done', shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
@@ -1494,7 +1565,9 @@ document.addEventListener('click', async (e) => {
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
     case 'new-pack': return openPackForm();
-    case 'del-pack': return confirmDel('packaging', 'Xoá dụng cụ này? (Các đơn cũ dùng dụng cụ này sẽ mất chi phí đóng gói tương ứng)');
+    case 'new-shared': return openPackForm(undefined, { shared: true });
+    case 'use-pack': return openUseDialog(pack(id));
+    case 'del-pack': return confirmDel('packaging', pack(id)?.shared ? 'Xoá vật tư này? Tiền nhập của nó sẽ không còn nằm trong chi phí vận hành.' : 'Xoá dụng cụ này? (Các đơn cũ dùng dụng cụ này sẽ mất chi phí đóng gói tương ứng)');
     case 'new-preset': return openPresetForm();
     case 'edit-preset': return openPresetForm(store.get('presets', id));
     case 'del-preset': return confirmDel('presets', 'Xoá bộ đóng gói này?');

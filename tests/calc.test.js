@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -120,4 +120,55 @@ test('đếm đơn theo trạng thái: đủ mọi trạng thái, kể cả 0', 
   assert.equal(c.designed, 0);
   assert.equal(Object.values(c).reduce((a, b) => a + b, 0), 4); // trạng thái lạ không bị đếm
   assert.deepEqual([...OPEN_STATUSES].sort(), ['designed', 'packed', 'pending', 'shipping']);
+});
+
+test('vật tư dùng chung: nhập 5 hộp = 100.000đ chi phí vận hành, điều chỉnh tồn kho không đổi số tiền', () => {
+  const state = {
+    products: [],
+    packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true }],
+    imports: [{ kind: 'packaging', itemId: 'ghim', date: '2026-11-03', qty: 5, unitCost: 20000, extraFee: 0 }],
+    orders: [],
+  };
+  assert.equal(operatingCosts(state, '2026-11-01', '2026-11-30').total, 100000);
+  assert.equal(stockLevels(state).packaging.ghim, 5);
+  // đếm lại thấy đã dùng 2 hộp
+  const adjusted = { ...state, packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true, adjust: -2 }] };
+  assert.equal(stockLevels(adjusted).packaging.ghim, 3);
+  assert.equal(operatingCosts(adjusted, '2026-11-01', '2026-11-30').total, 100000); // vẫn 100.000đ
+  assert.equal(operatingCosts(adjusted).total, 100000);
+});
+
+test('chi phí vận hành tính theo ngày nhập, gồm phí ship nhập, chỉ vật tư dùng chung', () => {
+  const state = {
+    packaging: [{ id: 'ghim', name: 'Ghim bấm', shared: true }, { id: 'bang', name: 'Băng keo', shared: true }, { id: 'hop', name: 'Hộp' }],
+    imports: [
+      { kind: 'packaging', itemId: 'ghim', date: '2026-10-31', qty: 1, unitCost: 20000 },
+      { kind: 'packaging', itemId: 'ghim', date: '2026-11-03', qty: 5, unitCost: 20000, extraFee: 10000 },
+      { kind: 'packaging', itemId: 'bang', date: '2026-11-30', qty: 10, unitCost: 12000 },
+      { kind: 'packaging', itemId: 'hop', date: '2026-11-05', qty: 100, unitCost: 3000 }, // hộp thường: không tính
+      { kind: 'product', itemId: 'ghim', date: '2026-11-05', qty: 9, unitCost: 9999 },    // không phải đóng gói
+    ],
+  };
+  const nov = operatingCosts(state, '2026-11-01', '2026-11-30');
+  assert.equal(nov.total, 110000 + 120000);
+  assert.deepEqual(nov.items.map((r) => [r.name, r.qty, r.amount]), [['Băng keo', 10, 120000], ['Ghim bấm', 5, 110000]]);
+  assert.equal(operatingCosts(state, '2026-10-01', '2026-10-31').total, 20000);
+  assert.equal(operatingCosts(state).total, 20000 + 110000 + 120000);
+});
+
+test('vật tư dùng chung không tính vào đơn hàng và không trừ kho theo đơn', () => {
+  const state = {
+    products: [{ id: 'p', name: 'P', baseCost: 10000 }],
+    packaging: [{ id: 'bang', name: 'Băng keo', shared: true }, { id: 'hop', name: 'Hộp' }],
+    imports: [
+      { kind: 'packaging', itemId: 'bang', date: '2026-11-01', qty: 10, unitCost: 12000 },
+      { kind: 'packaging', itemId: 'hop', date: '2026-11-01', qty: 10, unitCost: 3000 },
+    ],
+    orders: [{ status: 'done', items: [{ productId: 'p', qty: 1, price: 50000, pack1: 'hop', pack2: 'bang' }] }],
+  };
+  const costs = costTable(state);
+  assert.equal(lineCost(costs, state.orders[0].items[0]).packaging, 3000); // chỉ hộp
+  const st = stockLevels(state);
+  assert.equal(st.packaging.hop, 9);
+  assert.equal(st.packaging.bang, 10); // đơn cũ có chọn băng keo cũng không trừ
 });

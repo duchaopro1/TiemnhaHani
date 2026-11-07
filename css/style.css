@@ -450,3 +450,9 @@ dialog.confirm p { margin: 0; font-size: 15px; }
   .kpi-card .value { font-size: 19px; }
   .stcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* operating cost */
+.kpi-card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.sharedcheck { align-items: flex-start; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; font-size: 13px; }
+.sharedcheck input { margin-top: 3px; }
+.sharedcheck:has(input:checked) { border-color: var(--friend-2); background: var(--friend); }

@@ -58,7 +58,7 @@ export function ordersInRange(orders, range, { platforms, includeInactive = fals
  * `names.item(productId, variantId, fallback)` and `names.pack(id)` resolve display names.
  * Cancelled/returned orders are listed but count 0 in the totals.
  */
-export function buildSheets({ orders, costs, range, names }) {
+export function buildSheets({ orders, costs, range, names, operating = null }) {
   const orderRows = [[
     'Ngày', 'Nền tảng', 'Mã đơn', 'Khách hàng', 'Trạng thái', 'Có thiệp', 'Sản phẩm', 'Số lượng',
     'Tiền hàng', 'Giảm giá', 'Doanh thu', 'Giá vốn SP', 'Đóng gói', 'Phí sàn',
@@ -110,6 +110,9 @@ export function buildSheets({ orders, costs, range, names }) {
     total.product, total.packaging, total.fee, '', '', total.ship, total.cost, total.profit, '',
   ]);
 
+  // With `operating` (shared supplies bought in the period) the report's cost and profit include it,
+  // matching the dashboard; per-order figures stay as they are.
+  const op = operating ? operating.total : 0;
   const summaryRows = [
     ['Báo cáo đơn hàng Hani'],
     ['Thời gian', range.label],
@@ -125,9 +128,10 @@ export function buildSheets({ orders, costs, range, names }) {
     ['Chi phí đóng gói', total.packaging],
     ['Phí sàn', total.fee],
     ['Ship shop chịu', total.ship],
-    ['Tổng chi phí', total.cost],
-    ['Lợi nhuận', total.profit],
-    ['Biên lợi nhuận', total.revenue ? Math.round((total.profit / total.revenue) * 1000) / 10 + '%' : '0%'],
+    ...(operating ? [['Chi phí vận hành (vật tư dùng chung mua trong kỳ)', op]] : []),
+    ['Tổng chi phí', total.cost + op],
+    ['Lợi nhuận', total.profit - op],
+    ['Biên lợi nhuận', total.revenue ? Math.round(((total.profit - op) / total.revenue) * 1000) / 10 + '%' : '0%'],
     [],
     ['Theo nền tảng', 'Số đơn', 'Doanh thu', 'Lợi nhuận'],
     ...Object.keys(PLATFORMS).map((k) => [PLATFORMS[k].label, byPlatform[k]?.orders || 0, byPlatform[k]?.revenue || 0, byPlatform[k]?.profit || 0]),
