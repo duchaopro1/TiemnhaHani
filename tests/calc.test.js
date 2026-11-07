@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey } from '../js/calc.js';
-import { rowsToOrders, parseNumber, mapStatus } from '../js/shopee.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES } from '../js/calc.js';
+import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
   products: [{ id: 'p1', name: 'Móc khoá' }, { id: 'p2', name: 'Khung', baseCost: 50000 }],
@@ -86,4 +86,25 @@ test('chia phí ship nhập theo số lượng từng phân loại', () => {
   assert.deepEqual(splitFee(30000, [10, 5, 5]), [15000, 7500, 7500]);
   assert.deepEqual(splitFee(10000, [1, 1, 1]), [3333, 3333, 3334]);
   assert.deepEqual(splitFee(5000, [0, 0]), [0, 0]);
+});
+
+test('trạng thái mới nằm đúng thứ tự công việc và vẫn trừ kho', () => {
+  assert.deepEqual(Object.keys(STATUSES), ['pending', 'designed', 'packed', 'shipping', 'done', 'cancelled', 'returned']);
+  assert.equal(STATUSES.designed, 'Đã thiết kế');
+  assert.equal(STATUSES.packed, 'Đã đóng gói');
+  assert.ok(!INACTIVE_STATUSES.has('designed') && !INACTIVE_STATUSES.has('packed'));
+  const base = { products: [{ id: 'p' }], packaging: [], imports: [{ kind: 'product', itemId: 'p', qty: 10 }] };
+  for (const status of ['designed', 'packed']) {
+    const st = stockLevels({ ...base, orders: [{ status, items: [{ productId: 'p', qty: 3 }] }] });
+    assert.equal(st.products.p, 7, status);
+  }
+});
+
+test('nhập lại file Shopee không làm mất "Đã thiết kế / Đã đóng gói"', () => {
+  assert.equal(mergeShopeeStatus('designed', 'pending'), 'designed');
+  assert.equal(mergeShopeeStatus('packed', 'pending'), 'packed');
+  assert.equal(mergeShopeeStatus('designed', 'shipping'), 'shipping');
+  assert.equal(mergeShopeeStatus('packed', 'cancelled'), 'cancelled');
+  assert.equal(mergeShopeeStatus('pending', 'done'), 'done');
+  assert.equal(mergeShopeeStatus('shipping', 'pending'), 'pending');
 });

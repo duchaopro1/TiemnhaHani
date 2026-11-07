@@ -48,9 +48,27 @@ test('lọc đơn theo khoảng, nền tảng, bỏ đơn huỷ; bảng tổng k
   // B: 180.000 - 60.000 vốn - 5.000 hộp - 20.000 ship shop chịu = 95.000; C huỷ → 0
   assert.equal(sheets.total.orders, 1);
   assert.equal(sheets.total.profit, 95000);
-  assert.equal(sheets.orders.at(-1)[17], 95000);
-  assert.equal(sheets.orders[2][17], 0); // đơn huỷ vẫn liệt kê nhưng không tính
+  assert.equal(sheets.orders.at(-1)[18], 95000);
+  assert.equal(sheets.orders[2][18], 0); // đơn huỷ vẫn liệt kê nhưng không tính
   assert.equal(sheets.lines[1][5], 'Đỏ');
   assert.equal(sheets.lines[1][10], 'Hộp');
   assert.ok(toCsv([['a,b', 'c"d']]).endsWith('"a,b","c""d"'));
+});
+
+test('cột "Có thiệp" và số đơn có thiệp trong báo cáo', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 1000 }], packaging: [], imports: [] });
+  const mk = (code, card, status = 'done') => ({ platform: 'instagram', code, date: '2026-11-02', status, card, items: [{ productId: 'p', qty: 1, price: 5000 }] });
+  const orders = [mk('A', true, 'designed'), mk('B', false, 'packed'), mk('C', true, 'cancelled')];
+  const range = exportRange({ mode: 'month', month: '2026-11' });
+  const names = { item: () => 'P', pack: () => '' };
+  const sheets = buildSheets({ orders, costs, range, names });
+  const col = sheets.orders[0].indexOf('Có thiệp');
+  assert.equal(col, 5);
+  assert.deepEqual([1, 2, 3].map((i) => sheets.orders[i][col]), ['Có', '', 'Có']);
+  assert.equal(sheets.orders[1][4], 'Đã thiết kế');
+  assert.equal(sheets.orders[2][4], 'Đã đóng gói');
+  assert.equal(sheets.total.cards, 1); // the cancelled order doesn't count
+  assert.equal(sheets.orders.at(-1)[col], '1 thiệp');
+  assert.deepEqual(sheets.summary.find((r) => r[0] === 'Số đơn có thiệp'), ['Số đơn có thiệp', 1]);
+  assert.equal(sheets.orders[0].length, sheets.orders.at(-1).length);
 });

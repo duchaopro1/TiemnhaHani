@@ -3,7 +3,7 @@ import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
   costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee,
 } from './calc.js';
-import { rowsToOrders, listingKey, normalize } from './shopee.js';
+import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -360,7 +360,7 @@ function orderRow(o) {
   return `<tr class="${inactive ? 'inactive' : ''}">
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
-    <td><b>${esc(o.code || '—')}</b><br><span class="muted small">${esc(o.customer || '')}</span></td>
+    <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div></td>
     <td class="num">${money(s.revenue)}</td>
     <td class="num">${money(s.cost)}</td>
@@ -377,7 +377,7 @@ function blankLine() {
 
 function openOrderForm(existing) {
   const o = existing ? structuredClone(existing) : {
-    platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '',
+    platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
     shipFee: 0, shipPayer: 'customer', discount: 0, platformFee: 0, items: [blankLine()],
   };
   if (!o.items?.length) o.items = [blankLine()];
@@ -415,6 +415,9 @@ function openOrderForm(existing) {
         <label class="field">Trạng thái
           <select name="status" class="st-select st-${o.status}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
+        <div class="field"><span>Thiệp</span>
+          <label class="check cardcheck"><input type="checkbox" name="card" ${o.card ? 'checked' : ''}> Có thiệp cần thiết kế</label>
+        </div>
       </div>
       <h3 style="margin:18px 0 8px">Sản phẩm & đóng gói</h3>
       <div id="lines"></div>
@@ -471,7 +474,7 @@ function openOrderForm(existing) {
       const readHeader = () => {
         const d = formData(form);
         return {
-          platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note,
+          platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
           shipFee: num(d.shipFee), discount: num(d.discount), platformFee: num(d.platformFee),
           shipPayer: $('#ship-payer .on', m).dataset.v,
         };
@@ -665,7 +668,7 @@ async function commitShopee(parsed) {
         return { ...l, productId: l.productId || m.productId, variantId: l.variantId || (l.productId && l.productId !== m.productId ? '' : m.variantId) };
       };
       const items = old.items?.length ? old.items.map(fill) : o.items;
-      return { ...old, status: o.status, platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, items };
+      return { ...old, status: mergeShopeeStatus(old.status, o.status), platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, items };
     }
     added++;
     o.items = o.items.map((l) => {
@@ -1380,7 +1383,7 @@ async function toXlsx(sheets) {
     XLSX.utils.book_append_sheet(wb, ws, title);
   };
   add(sheets.summary, 'Tổng hợp', [30, 28, 14, 14]);
-  add(sheets.orders, 'Đơn hàng', [11, 10, 16, 18, 12, 40, 9, 12, 10, 12, 12, 10, 10, 10, 11, 12, 12, 12, 24]);
+  add(sheets.orders, 'Đơn hàng', [11, 10, 16, 18, 13, 9, 40, 9, 12, 10, 12, 12, 10, 10, 10, 11, 12, 12, 12, 24]);
   add(sheets.lines, 'Chi tiết sản phẩm', [11, 10, 16, 12, 28, 14, 9, 12, 12, 12, 30, 10, 12, 12]);
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   return new Blob([out], { type: XLSX_TYPE });
@@ -1414,7 +1417,7 @@ async function loadDemo() {
       items: [{ productId: p1.id, qty: 2, price: 45000, pack1: bag.id, pack2: card.id, pack3: '', packEach: true }] },
     { platform: 'threads', code: 'TH-0001', date: d, customer: '@minh', status: 'shipping', shipFee: 25000, shipPayer: 'shop', discount: 10000, platformFee: 0,
       items: [{ productId: p3.id, qty: 1, price: 259000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
-    { platform: 'instagram', code: 'IG-0002', date: d, customer: '@thu.ha', status: 'pending', shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
+    { platform: 'instagram', code: 'IG-0002', date: d, customer: '@thu.ha', status: 'designed', card: true, shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
       items: [{ productId: cup.id, variantId: cup.variants[2].id, qty: 2, price: 89000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
   ]);
   toast('Đã nạp dữ liệu mẫu');

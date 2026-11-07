@@ -60,7 +60,7 @@ export function ordersInRange(orders, range, { platforms, includeInactive = fals
  */
 export function buildSheets({ orders, costs, range, names }) {
   const orderRows = [[
-    'Ngày', 'Nền tảng', 'Mã đơn', 'Khách hàng', 'Trạng thái', 'Sản phẩm', 'Số lượng',
+    'Ngày', 'Nền tảng', 'Mã đơn', 'Khách hàng', 'Trạng thái', 'Có thiệp', 'Sản phẩm', 'Số lượng',
     'Tiền hàng', 'Giảm giá', 'Doanh thu', 'Giá vốn SP', 'Đóng gói', 'Phí sàn',
     'Phí ship', 'Ai trả ship', 'Ship shop chịu', 'Tổng chi phí', 'Lợi nhuận', 'Ghi chú',
   ]];
@@ -68,7 +68,7 @@ export function buildSheets({ orders, costs, range, names }) {
     'Ngày', 'Nền tảng', 'Mã đơn', 'Trạng thái', 'Sản phẩm', 'Phân loại', 'Số lượng', 'Giá bán / cái',
     'Thành tiền', 'Giá vốn SP', 'Dụng cụ đóng gói', 'Đóng gói riêng từng cái', 'Chi phí đóng gói', 'Lãi gộp dòng',
   ]];
-  const total = { orders: 0, qty: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, fee: 0, ship: 0, cost: 0, profit: 0 };
+  const total = { orders: 0, cards: 0, qty: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, fee: 0, ship: 0, cost: 0, profit: 0 };
   const byPlatform = {};
 
   for (const o of orders) {
@@ -77,7 +77,7 @@ export function buildSheets({ orders, costs, range, names }) {
     const qty = (o.items || []).reduce((n, l) => n + (+l.qty || 0), 0);
     const z = (v) => (active ? v : 0);
     orderRows.push([
-      vnDate(o.date), PLATFORMS[o.platform]?.label || o.platform, o.code || '', o.customer || '', STATUSES[o.status] || o.status,
+      vnDate(o.date), PLATFORMS[o.platform]?.label || o.platform, o.code || '', o.customer || '', STATUSES[o.status] || o.status, o.card ? 'Có' : '',
       (o.items || []).map((l) => `${names.item(l.productId, l.variantId, l.productName || '?')} x${l.qty}`).join('; '), qty,
       z(s.gross), z(s.discount), z(s.revenue), z(s.product), z(s.packaging), z(s.fee),
       +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', z(s.ship), z(s.cost), z(s.profit), o.note || '',
@@ -96,6 +96,7 @@ export function buildSheets({ orders, costs, range, names }) {
     }
     if (!active) continue;
     total.orders += 1;
+    if (o.card) total.cards += 1;
     total.qty += qty;
     for (const k of ['gross', 'discount', 'revenue', 'product', 'packaging', 'fee', 'ship', 'cost', 'profit']) total[k] += s[k];
     const pf = (byPlatform[o.platform] ||= { orders: 0, revenue: 0, profit: 0 });
@@ -105,7 +106,7 @@ export function buildSheets({ orders, costs, range, names }) {
   }
 
   orderRows.push([
-    'TỔNG', '', `${total.orders} đơn`, '', '', '', total.qty, total.gross, total.discount, total.revenue,
+    'TỔNG', '', `${total.orders} đơn`, '', '', total.cards ? `${total.cards} thiệp` : '', '', total.qty, total.gross, total.discount, total.revenue,
     total.product, total.packaging, total.fee, '', '', total.ship, total.cost, total.profit, '',
   ]);
 
@@ -116,6 +117,7 @@ export function buildSheets({ orders, costs, range, names }) {
     [],
     ['Số đơn (không tính huỷ/trả)', total.orders],
     ['Số sản phẩm bán ra', total.qty],
+    ['Số đơn có thiệp', total.cards],
     ['Tiền hàng', total.gross],
     ['Giảm giá / voucher', total.discount],
     ['Doanh thu', total.revenue],

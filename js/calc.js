@@ -8,6 +8,8 @@ export const PLATFORMS = {
 
 export const STATUSES = {
   pending: 'Chờ xử lý',
+  designed: 'Đã thiết kế',
+  packed: 'Đã đóng gói',
   shipping: 'Đang giao',
   done: 'Hoàn thành',
   cancelled: 'Đã huỷ',

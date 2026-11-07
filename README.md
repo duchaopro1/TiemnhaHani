@@ -8,7 +8,7 @@ Giao diện theo Brand Guidelines của Hani (xanh `#1479C4`, bảng màu for he
 | Tab | Làm gì |
 |---|---|
 | **Tổng quan** | Doanh thu, chi phí, lợi nhuận, biên lãi theo tháng; so sánh 3 nền tảng; top sản phẩm lãi nhất; cảnh báo sắp hết hàng |
-| **Đơn hàng** | Thêm đơn bằng tay (Threads/Instagram) · nhập file Excel đơn hàng Shopee · mỗi dòng gồm **Sản phẩm, Số lượng, Dụng cụ đóng gói 1/2/3** · phí ship **Khách chịu / Shop chịu** · tính lãi ngay khi nhập |
+| **Đơn hàng** | Thêm đơn bằng tay (Threads/Instagram) · nhập file Excel đơn hàng Shopee · mỗi dòng gồm **Sản phẩm, Số lượng, Dụng cụ đóng gói 1/2/3** · phí ship **Khách chịu / Shop chịu** · tick **Có thiệp** khi khách nhờ thiết kế thiệp · trạng thái đi theo công việc: Chờ xử lý → **Đã thiết kế** → **Đã đóng gói** → Đang giao → Hoàn thành (hoặc Đã huỷ / Trả hàng), mỗi trạng thái một màu · tính lãi ngay khi nhập |
 | **Nhập hàng** | Phiếu nhập sản phẩm & dụng cụ đóng gói, có phí ship nhập · nhập **số lượng từng phân loại** trong một phiếu (VD: cúp đỏ 5, xanh 3, vàng 2; phí ship chia theo số lượng) · **sửa / xoá phiếu đã nhập** (tồn kho và giá vốn tự tính lại) · bấm tên mặt hàng để sửa thông tin mặt hàng |
 | **Sản phẩm** | Mỗi sản phẩm là một **ô vuông có ảnh và tên**; bấm vào để xem các **phân loại** (màu, size…) với **số lượng tồn** và **giá bán riêng** từng phân loại · sửa, nhập hàng, xoá ngay từ đó · **bảng giá thành theo từng cách đóng gói** |
 | **Đóng gói** | Dụng cụ đóng gói (hộp, giấy, ruy băng, thiệp…) và **Bộ đóng gói** dùng nhanh |
@@ -45,7 +45,7 @@ Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng k�
 2. Trong app: **Đơn hàng → ⬆ Nhập file Shopee**.
 3. Lần đầu, app hỏi mỗi sản phẩm Shopee ứng với sản phẩm nào trong kho (hoặc tạo mới). Các lần sau app tự nhớ.
    Mẹo: đặt **SKU** sản phẩm trong app trùng với SKU phân loại trên Shopee là app tự khớp luôn.
-4. Nhập lại file cũ không bị trùng đơn. App chỉ cập nhật trạng thái và phí sàn, còn đóng gói bạn đã chọn thì giữ nguyên.
+4. Nhập lại file cũ không bị trùng đơn. App chỉ cập nhật trạng thái và phí sàn, còn đóng gói bạn đã chọn thì giữ nguyên. Trạng thái **Đã thiết kế / Đã đóng gói** do bạn đặt cũng được giữ khi Shopee vẫn báo đơn đang chờ. Shopee báo đang giao, hoàn thành hay huỷ thì app đổi theo Shopee.
 
 ## Link dùng chung (đang chạy)
 

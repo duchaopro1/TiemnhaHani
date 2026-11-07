@@ -41,6 +41,15 @@ export function mapStatus(text) {
   return 'pending';
 }
 
+/**
+ * Status to keep when a Shopee file is imported again over an existing order.
+ * Shopee knows nothing about "Đã thiết kế" / "Đã đóng gói", so while Shopee still says the order
+ * is waiting, the shop's own progress stays; anything further (shipping, done, cancelled…) wins.
+ */
+export function mergeShopeeStatus(current, fromShopee) {
+  return (current === 'designed' || current === 'packed') && fromShopee === 'pending' ? current : fromShopee;
+}
+
 export function parseNumber(v) {
   if (typeof v === 'number') return v;
   const s = String(v ?? '').replace(/[^\d,.-]/g, '');
