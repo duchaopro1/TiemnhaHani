@@ -287,7 +287,7 @@ function pageOrders() {
     <div class="toolbar">
       <input type="search" id="order-q" placeholder="Tìm mã đơn, khách, sản phẩm…" value="${esc(f.q)}">
       <select id="order-platform"><option value="">Mọi nền tảng</option>${Object.entries(PLATFORMS).map(([k, v]) => `<option value="${k}" ${f.platform === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
-      <select id="order-status"><option value="">Mọi trạng thái</option>${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${f.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <select id="order-status" class="st-select ${f.status ? 'st-' + f.status : ''}"><option value="">Mọi trạng thái</option>${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${f.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <input type="month" id="order-month" value="${esc(f.month)}">
       <span class="muted small" style="margin-left:auto">${list.length} đơn · DT ${money(agg.revenue)} · Lãi <b class="${signCls(agg.profit)}">${money(agg.profit)}</b></span>
     </div>
@@ -308,7 +308,7 @@ function orderRow(o) {
     const v = variantOf(l.productId, l.variantId);
     return `<span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}<span>${esc(itemLabel(l.productId, l.variantId))} <span class="muted">×${l.qty}</span>${hasVariants(p) && !v ? ' <span class="chip warn">chưa chọn phân loại</span>' : ''}</span></span>`;
   }).join('');
-  return `<tr style="${inactive ? 'opacity:.55' : ''}">
+  return `<tr class="${inactive ? 'inactive' : ''}">
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b><br><span class="muted small">${esc(o.customer || '')}</span></td>
@@ -317,7 +317,7 @@ function orderRow(o) {
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
     <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span></td>
-    <td><select data-order-status="${o.id}" class="small" style="width:auto">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+    <td class="st-cell"><select data-order-status="${o.id}" class="st-select st-${o.status}" aria-label="Trạng thái đơn ${esc(o.code || '')}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
     <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-order" data-id="${o.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-order" data-id="${o.id}" title="Xoá">🗑</button></td>
   </tr>`;
 }
@@ -364,7 +364,7 @@ function openOrderForm(existing) {
         <label class="field">Ngày<input type="date" name="date" value="${esc(o.date)}" required></label>
         <label class="field">Khách hàng<input name="customer" value="${esc(o.customer)}" placeholder="Tên / @username"></label>
         <label class="field">Trạng thái
-          <select name="status">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          <select name="status" class="st-select st-${o.status}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
       </div>
       <h3 style="margin:18px 0 8px">Sản phẩm & đóng gói</h3>
@@ -487,7 +487,10 @@ function openOrderForm(existing) {
         drawSummary();
       };
       form.addEventListener('input', (e) => { if (!e.target.closest('#lines')) drawSummary(); });
-      form.addEventListener('change', (e) => { if (!e.target.closest('#lines')) drawSummary(); });
+      form.addEventListener('change', (e) => {
+        if (e.target.name === 'status') e.target.className = `st-select st-${e.target.value}`;
+        if (!e.target.closest('#lines')) drawSummary();
+      });
       $('[data-close2]', m).onclick = () => m.close();
       $('#save-order', m).onclick = async () => {
         if (!form.reportValidity()) return;
@@ -1442,6 +1445,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.dataset.orderStatus) {
+    t.className = `st-select st-${t.value}`;
     const o = store.get('orders', t.dataset.orderStatus);
     await store.upsert('orders', { ...o, status: t.value });
   }

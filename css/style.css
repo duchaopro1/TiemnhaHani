@@ -26,6 +26,13 @@
   --danger: #d6455d;
   --ok: #3c9a5f;
 
+  /* order status: background / text / edge */
+  --st-pending: #fdecc0;   --st-pending-ink: #8a6408;   --st-pending-edge: #f0d58a;
+  --st-shipping: #cfe6fb;  --st-shipping-ink: #0b5d9c;  --st-shipping-edge: #9fcdf5;
+  --st-done: #d4ecc8;      --st-done-ink: #3b7a2a;      --st-done-edge: #aed79a;
+  --st-cancelled: #fbd5dc; --st-cancelled-ink: #b0314d; --st-cancelled-edge: #f2a9b8;
+  --st-returned: #e6d3f0;  --st-returned-ink: #7a3f99;  --st-returned-edge: #cfa9e3;
+
   --font-logo: 'CS Mocha', 'Fredoka', 'Baloo 2', system-ui, sans-serif;
   --font-title: 'Baloo 2', 'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --title-weight: 800;
@@ -155,10 +162,24 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
 .chip.him { background: var(--him); color: var(--him-ink); }
 .chip.friend { background: var(--friend); color: var(--friend-ink); }
 .chip.backup { background: var(--backup); color: var(--backup-ink); }
-.chip.st-pending { background: var(--friend); color: var(--friend-ink); }
-.chip.st-shipping { background: var(--him); color: var(--him-ink); }
-.chip.st-done { background: var(--backup); color: var(--backup-ink); }
-.chip.st-cancelled, .chip.st-returned { background: #f3f3f3; color: #888; }
+.chip.st-pending, .chip.st-shipping, .chip.st-done, .chip.st-cancelled, .chip.st-returned { border: 1px solid transparent; }
+
+/* order status: one colour per status on the select, the open list and the form */
+.st-cell .st-select { width: auto; min-width: 128px; font-size: 13px; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.st-pending, .st-shipping, .st-done, .st-cancelled, .st-returned { font-weight: 700; }
+.st-pending { background-color: var(--st-pending); color: var(--st-pending-ink); border-color: var(--st-pending-edge); }
+.st-shipping { background-color: var(--st-shipping); color: var(--st-shipping-ink); border-color: var(--st-shipping-edge); }
+.st-done { background-color: var(--st-done); color: var(--st-done-ink); border-color: var(--st-done-edge); }
+.st-cancelled { background-color: var(--st-cancelled); color: var(--st-cancelled-ink); border-color: var(--st-cancelled-edge); }
+.st-returned { background-color: var(--st-returned); color: var(--st-returned-ink); border-color: var(--st-returned-edge); }
+.st-select option { font-weight: 700; }
+.st-select option[value="pending"] { background-color: var(--st-pending); color: var(--st-pending-ink); }
+.st-select option[value="shipping"] { background-color: var(--st-shipping); color: var(--st-shipping-ink); }
+.st-select option[value="done"] { background-color: var(--st-done); color: var(--st-done-ink); }
+.st-select option[value="cancelled"] { background-color: var(--st-cancelled); color: var(--st-cancelled-ink); }
+.st-select option[value="returned"] { background-color: var(--st-returned); color: var(--st-returned-ink); }
+.st-select option[value=""] { background-color: var(--card); color: var(--ink); }
+tr.inactive td:not(.st-cell) { opacity: .55; }
 .chip.warn { background: #fde2e6; color: var(--danger); }
 
 /* ---------- Forms ---------- */
