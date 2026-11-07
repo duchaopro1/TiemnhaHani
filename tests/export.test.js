@@ -88,3 +88,29 @@ test('báo cáo có chi phí vận hành thì trừ vào lợi nhuận, không c
   assert.equal(row(withOp, 'Lợi nhuận')[1], 2500);
   assert.equal(withOp.total.profit, 4000); // số liệu từng đơn không đổi
 });
+
+test('báo cáo có cột tiền cọc / còn thu và tổng của chúng', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 1000 }], packaging: [], imports: [] });
+  const mk = (code, status, paid) => ({ platform: 'instagram', code, date: '2026-11-02', status, shipFee: 15000, shipPayer: 'customer', paid, items: [{ productId: 'p', qty: 1, price: 100000 }] });
+  const orders = [mk('A', 'pending', 50000), mk('B', 'done', 50000), mk('C', 'packed', undefined), mk('D', 'cancelled', 30000)];
+  const range = exportRange({ mode: 'month', month: '2026-11' });
+  const sheets = buildSheets({ orders, costs, range, names: { item: () => 'P', pack: () => '' } });
+  const head = sheets.orders[0];
+  const paidCol = head.indexOf('Đã thanh toán (cọc)');
+  const leftCol = head.indexOf('Còn thu khi nhận hàng');
+  assert.equal(leftCol, paidCol + 1);
+  assert.equal(head.at(-1), 'Ghi chú');
+  assert.equal(sheets.orders[1][paidCol], 50000);
+  assert.equal(sheets.orders[1][leftCol], 65000); // 115.000 phải trả - 50.000 cọc
+  assert.equal(sheets.orders[2][paidCol], 50000);
+  assert.equal(sheets.orders[2][leftCol], 0); // hoàn thành = đã thu đủ
+  assert.equal(sheets.orders[3][paidCol], ''); // không theo dõi
+  assert.equal(sheets.orders[3][leftCol], '');
+  assert.equal(sheets.orders[4][leftCol], 0); // đơn huỷ: không thu
+  assert.equal(sheets.total.paid, 100000); // đơn huỷ không tính
+  assert.equal(sheets.total.remaining, 65000);
+  const row = (label) => sheets.summary.find((r) => r[0] === label)[1];
+  assert.equal(row('Còn phải thu khi nhận hàng (đơn chưa xong)'), 65000);
+  assert.equal(row('Khách đã thanh toán trước (đơn có ghi nhận)'), 100000);
+  assert.equal(sheets.orders.at(-1).length, head.length);
+});

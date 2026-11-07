@@ -19,6 +19,34 @@ export const STATUSES = {
 // Orders in these statuses don't consume stock and don't count toward revenue/profit.
 export const INACTIVE_STATUSES = new Set(['cancelled', 'returned']);
 
+/**
+ * What the customer has to pay for an order and how much of it is still to collect.
+ * total     = goods after discount + shipping when the customer pays it
+ * tracked   = the shop wrote down a payment (`paid` is a number, 0 included); blank means "not tracked"
+ * remaining = total − paid (negative = paid too much). Deposits never change revenue or profit.
+ */
+export function orderPayment(costs, order) {
+  const s = orderSummary(costs, order);
+  const total = s.revenue + (order.shipPayer === 'shop' ? 0 : num(order.shipFee));
+  const tracked = order.paid !== undefined && order.paid !== null && order.paid !== '' && Number.isFinite(+order.paid);
+  const paid = tracked ? num(order.paid) : 0;
+  return { total, tracked, paid, remaining: tracked ? total - paid : 0 };
+}
+
+/**
+ * Money still to collect at delivery for the orders that are not finished yet. A finished order
+ * counts as collected; cancelled or returned ones have nothing to collect.
+ */
+export function toCollect(costs, orders) {
+  let amount = 0, count = 0;
+  for (const o of orders) {
+    if (!OPEN_STATUSES.has(o.status)) continue;
+    const p = orderPayment(costs, o);
+    if (p.tracked && p.remaining > 0) { amount += p.remaining; count += 1; }
+  }
+  return { amount, count };
+}
+
 /** Stock level: 'out' at 0 (or below), 'low' down to the warning level, otherwise 'ok'. */
 export function stockState(n, low) {
   const x = Number(n) || 0;

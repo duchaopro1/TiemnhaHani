@@ -486,3 +486,13 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 /* order note under the products of an order */
 .order-note { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: var(--friend); color: var(--ink); font-size: 12px; line-height: 1.4; white-space: pre-line; overflow-wrap: anywhere; max-width: 360px; }
 .order-note b { color: var(--friend-ink); }
+
+/* payment under an order's revenue, and in the order form */
+.pay, .pay-paid { margin-top: 3px; text-align: right; }
+.pay-paid { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.chip.pay-due { background: var(--st-pending); color: var(--st-pending-ink); white-space: nowrap; }
+.chip.pay-ok { background: var(--st-done); color: var(--st-done-ink); white-space: nowrap; }
+.summary .due { background: var(--st-pending); }
+.summary .due.paid { background: var(--st-done); }
+.summary .due.over { background: var(--st-returned); }
+.due-amt { color: var(--st-pending-ink); }

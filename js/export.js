@@ -1,5 +1,5 @@
 // Order export: pick a date range, then build spreadsheet rows (no DOM — testable in Node).
-import { PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, orderSummary, lineCost } from './calc.js';
+import { PLATFORMS, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, PACK_SLOTS, orderSummary, lineCost, orderPayment } from './calc.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 /** YYYY-MM-DD in the viewer's own time zone (toISOString would shift to UTC). */
@@ -62,13 +62,13 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
   const orderRows = [[
     'Ngày', 'Nền tảng', 'Mã đơn', 'Khách hàng', 'Trạng thái', 'Có thiệp', 'Sản phẩm', 'Số lượng',
     'Tiền hàng', 'Giảm giá', 'Doanh thu', 'Giá vốn SP', 'Đóng gói', 'Phí sàn',
-    'Phí ship', 'Ai trả ship', 'Ship shop chịu', 'Tổng chi phí', 'Lợi nhuận', 'Ghi chú',
+    'Phí ship', 'Ai trả ship', 'Ship shop chịu', 'Tổng chi phí', 'Lợi nhuận', 'Đã thanh toán (cọc)', 'Còn thu khi nhận hàng', 'Ghi chú',
   ]];
   const lineRows = [[
     'Ngày', 'Nền tảng', 'Mã đơn', 'Trạng thái', 'Sản phẩm', 'Phân loại', 'Số lượng', 'Giá bán / cái',
     'Thành tiền', 'Giá vốn SP', 'Dụng cụ đóng gói', 'Đóng gói riêng từng cái', 'Chi phí đóng gói', 'Lãi gộp dòng',
   ]];
-  const total = { orders: 0, cards: 0, qty: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, fee: 0, ship: 0, cost: 0, profit: 0 };
+  const total = { orders: 0, cards: 0, paid: 0, remaining: 0, qty: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, fee: 0, ship: 0, cost: 0, profit: 0 };
   const byPlatform = {};
 
   for (const o of orders) {
@@ -76,11 +76,15 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
     const s = orderSummary(costs, o);
     const qty = (o.items || []).reduce((n, l) => n + (+l.qty || 0), 0);
     const z = (v) => (active ? v : 0);
+    // Deposits: blank when the shop didn't track payment. Only unfinished orders still have money to collect.
+    const pay = orderPayment(costs, o);
+    const toCollectNow = pay.tracked && OPEN_STATUSES.has(o.status) ? Math.max(0, pay.remaining) : 0;
     orderRows.push([
       vnDate(o.date), PLATFORMS[o.platform]?.label || o.platform, o.code || '', o.customer || '', STATUSES[o.status] || o.status, o.card ? 'Có' : '',
       (o.items || []).map((l) => `${names.item(l.productId, l.variantId, l.productName || '?')} x${l.qty}`).join('; '), qty,
       z(s.gross), z(s.discount), z(s.revenue), z(s.product), z(s.packaging), z(s.fee),
-      +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', z(s.ship), z(s.cost), z(s.profit), o.note || '',
+      +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', z(s.ship), z(s.cost), z(s.profit),
+      pay.tracked ? pay.paid : '', pay.tracked ? toCollectNow : '', o.note || '',
     ]);
     for (const l of o.items || []) {
       const c = lineCost(costs, l);
@@ -96,6 +100,8 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
     }
     if (!active) continue;
     total.orders += 1;
+    if (pay.tracked) total.paid += pay.paid;
+    total.remaining += toCollectNow;
     if (o.card) total.cards += 1;
     total.qty += qty;
     for (const k of ['gross', 'discount', 'revenue', 'product', 'packaging', 'fee', 'ship', 'cost', 'profit']) total[k] += s[k];
@@ -107,7 +113,7 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
 
   orderRows.push([
     'TỔNG', '', `${total.orders} đơn`, '', '', total.cards ? `${total.cards} thiệp` : '', '', total.qty, total.gross, total.discount, total.revenue,
-    total.product, total.packaging, total.fee, '', '', total.ship, total.cost, total.profit, '',
+    total.product, total.packaging, total.fee, '', '', total.ship, total.cost, total.profit, total.paid, total.remaining, '',
   ]);
 
   // With `operating` (shared supplies bought in the period) the report's cost and profit include it,
@@ -132,6 +138,8 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
     ['Tổng chi phí', total.cost + op],
     ['Lợi nhuận', total.profit - op],
     ['Biên lợi nhuận', total.revenue ? Math.round(((total.profit - op) / total.revenue) * 1000) / 10 + '%' : '0%'],
+    ['Khách đã thanh toán trước (đơn có ghi nhận)', total.paid],
+    ['Còn phải thu khi nhận hàng (đơn chưa xong)', total.remaining],
     [],
     ['Theo nền tảng', 'Số đơn', 'Doanh thu', 'Lợi nhuận'],
     ...Object.keys(PLATFORMS).map((k) => [PLATFORMS[k].label, byPlatform[k]?.orders || 0, byPlatform[k]?.revenue || 0, byPlatform[k]?.profit || 0]),

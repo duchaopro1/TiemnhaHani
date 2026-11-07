@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -205,4 +205,40 @@ test('tồn kho: bằng 0 là "đã hết", từ 1 tới mức cảnh báo là "
   assert.equal(stockState(1, 0), 'ok');
   assert.equal(stockState('abc', 5), 'out');
   assert.equal(stockState(3, undefined), 'ok');
+});
+
+test('thanh toán: tổng khách phải trả, đã cọc và còn thu khi nhận hàng', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 10000 }], packaging: [], imports: [] });
+  const order = (extra) => ({ status: 'pending', shipFee: 15000, shipPayer: 'customer', discount: 0, items: [{ productId: 'p', qty: 2, price: 400000 }], ...extra });
+  // 800.000 hàng + 15.000 ship khách chịu = 815.000
+  assert.deepEqual(orderPayment(costs, order({ paid: 400000 })), { total: 815000, tracked: true, paid: 400000, remaining: 415000 });
+  // shop chịu ship: ship không thu của khách
+  assert.equal(orderPayment(costs, order({ shipPayer: 'shop', paid: 400000 })).remaining, 400000);
+  // giảm giá trừ vào số phải thu
+  assert.equal(orderPayment(costs, order({ discount: 15000, paid: 0 })).remaining, 800000);
+  // để trống = không theo dõi; 0 = theo dõi, chưa trả gì
+  assert.equal(orderPayment(costs, order({})).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: null })).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: '' })).tracked, false);
+  assert.equal(orderPayment(costs, order({ paid: 0 })).tracked, true);
+  assert.equal(orderPayment(costs, order({ paid: '815000' })).remaining, 0);
+  assert.equal(orderPayment(costs, order({ paid: 900000 })).remaining, -85000); // trả dư
+  // tiền cọc không đổi doanh thu hay lợi nhuận
+  assert.equal(orderSummary(costs, order({ paid: 0 })).profit, orderSummary(costs, order({ paid: 815000 })).profit);
+});
+
+test('tổng tiền còn thu: chỉ tính đơn chưa xong có ghi nhận thanh toán', () => {
+  const costs = costTable({ products: [{ id: 'p', name: 'P', baseCost: 1000 }], packaging: [], imports: [] });
+  const o = (status, paid) => ({ status, shipFee: 0, shipPayer: 'customer', items: [{ productId: 'p', qty: 1, price: 100000 }], paid });
+  const r = toCollect(costs, [
+    o('pending', 50000),   // còn 50.000
+    o('packed', 0),        // còn 100.000
+    o('shipping', 100000), // đã đủ
+    o('done', 50000),      // hoàn thành = coi như đã thu đủ
+    o('cancelled', 20000), // đơn huỷ: không thu
+    o('pending', undefined), // không theo dõi
+    o('designed', 130000), // trả dư: không âm
+  ]);
+  assert.deepEqual(r, { amount: 150000, count: 2 });
+  assert.deepEqual(toCollect(costs, []), { amount: 0, count: 0 });
 });

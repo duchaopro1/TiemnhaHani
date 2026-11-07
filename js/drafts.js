@@ -27,6 +27,7 @@ export function normalizeOrder(o) {
     shipPayer: o.shipPayer === 'shop' ? 'shop' : 'customer',
     discount: num(o.discount),
     platformFee: num(o.platformFee),
+    paid: o.paid === undefined || o.paid === null || o.paid === '' ? null : num(o.paid), // blank = not tracked
     items: (o.items || []).map(({ preset, ...l }) => ({
       ...l,
       productId: str(l.productId),

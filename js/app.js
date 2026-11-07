@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -295,6 +295,7 @@ function pageDashboard() {
   ].sort((a, b) => (a.n <= 0 ? 0 : 1) - (b.n <= 0 ? 0 : 1));
   const unmapped = S.orders.filter((o) => !INACTIVE_STATUSES.has(o.status) && o.items?.some((l) => !l.productId)).length;
   const byStatus = countByStatus(orders);
+  const due = toCollect(costs, orders);
   const openNow = [...OPEN_STATUSES].reduce((n, k) => n + byStatus[k], 0);
   const openElsewhere = ui.period === 'all' ? 0 : S.orders.filter((o) => OPEN_STATUSES.has(o.status) && !(o.date >= from && o.date <= to)).length;
   const goMonth = ui.period === 'month' ? ui.dashMonth : '';
@@ -324,7 +325,7 @@ function pageDashboard() {
     <section class="card stboard" style="margin-top:16px" aria-labelledby="stboard-title">
       <div class="stboard-head">
         <h3 id="stboard-title">Trạng thái đơn hàng</h3>
-        <span class="muted small">${orders.length} đơn · <b>${openNow}</b> đơn chưa xong</span>
+        <span class="muted small">${orders.length} đơn · <b>${openNow}</b> đơn chưa xong${due.count ? ` · còn thu khi nhận hàng <b class="due-amt">${money(due.amount)}</b> (${due.count} đơn)` : ''}</span>
       </div>
       <div class="stbar" role="img" aria-label="Tỉ lệ đơn theo trạng thái">${orders.length
         ? Object.keys(STATUSES).filter((k) => byStatus[k]).map((k) => `<i style="width:${(byStatus[k] / orders.length) * 100}%;background:var(--st-${k}-edge)" title="${esc(STATUSES[k])}: ${byStatus[k]}"></i>`).join('')
@@ -461,6 +462,20 @@ document.addEventListener('keydown', (e) => {
 window.addEventListener('resize', () => closeStatusMenu());
 window.addEventListener('scroll', () => closeStatusMenu(), true);
 
+/** Under the revenue of an order: what the customer paid up front and what is left to collect. */
+function payInfo(o) {
+  const p = orderPayment(costs, o);
+  if (!p.tracked) return '';
+  if (INACTIVE_STATUSES.has(o.status)) return p.paid > 0 ? `<div class="pay-paid">Đã cọc ${money(p.paid)}</div>` : '';
+  const ship = o.shipPayer !== 'shop' && num(o.shipFee) > 0 ? ` (gồm ship ${money(o.shipFee)})` : '';
+  const title = esc(`Khách phải trả ${money(p.total)}${ship} · đã thanh toán ${money(p.paid)}`);
+  if (o.status === 'done') return `<div class="pay"><span class="chip pay-ok" title="${title}">Đã thu đủ</span></div>`;
+  const paidLine = `<div class="pay-paid">${p.paid > 0 ? 'Đã cọc ' + money(p.paid) : 'Chưa cọc'}</div>`;
+  if (p.remaining > 0) return `${paidLine}<div class="pay"><span class="chip pay-due" title="${title}">Còn thu ${money(p.remaining)}</span></div>`;
+  if (p.remaining < 0) return `<div class="pay"><span class="chip pay-ok" title="${title}">Đã trả đủ</span> <span class="small muted">dư ${money(-p.remaining)}</span></div>`;
+  return `<div class="pay"><span class="chip pay-ok" title="${title}">Đã trả đủ</span></div>`;
+}
+
 function orderRow(o) {
   const s = orderSummary(costs, o);
   const inactive = INACTIVE_STATUSES.has(o.status);
@@ -475,7 +490,7 @@ function orderRow(o) {
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div>${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
-    <td class="num">${money(s.revenue)}</td>
+    <td class="num">${money(s.revenue)}${payInfo(o)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
     <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span></td>
@@ -515,7 +530,7 @@ async function openOrderForm(existing) {
 function openOrderFormNow(existing, restored) {
   const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
-    shipFee: 0, shipPayer: 'customer', discount: 0, platformFee: 0, items: [blankLine()],
+    shipFee: 0, shipPayer: 'customer', discount: 0, platformFee: 0, paid: null, items: [blankLine()],
   };
   if (!base.items?.length) base.items = [blankLine()];
   const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
@@ -577,6 +592,21 @@ function openOrderFormNow(existing, restored) {
         <label class="field">Giảm giá / voucher shop<input type="number" min="0" step="1000" name="discount" value="${num(o.discount)}"></label>
         <label class="field">Phí sàn (Shopee…)<input type="number" min="0" step="100" name="platformFee" value="${num(o.platformFee)}"></label>
       </div>
+      <h3 style="margin:18px 0 8px">Thanh toán của khách</h3>
+      <div class="form-grid">
+        <label class="field">Khách đã thanh toán / cọc
+          <input type="number" min="0" step="1000" name="paid" value="${o.paid === null || o.paid === undefined || o.paid === '' ? '' : num(o.paid)}" placeholder="Để trống = không theo dõi">
+        </label>
+        <div class="field"><span>Nhập nhanh</span>
+          <div class="chips" id="pay-quick">
+            <button type="button" class="chip-btn" data-pay="0">Chưa trả, thu khi nhận</button>
+            <button type="button" class="chip-btn" data-pay="50">Cọc 50%</button>
+            <button type="button" class="chip-btn" data-pay="100">Đã trả đủ</button>
+            <button type="button" class="chip-btn" data-pay="clear">Không theo dõi</button>
+          </div>
+        </div>
+      </div>
+      <div id="pay-box"></div>
       <label class="field" style="margin-top:12px">Ghi chú<textarea name="note" rows="2">${esc(o.note)}</textarea></label>
       <div class="summary" id="order-summary"></div>
     </form>`;
@@ -646,6 +676,14 @@ function openOrderFormNow(existing, restored) {
           <div><span>Đóng gói</span><b>${money(s.packaging)}</b></div>
           <div><span>Ship shop chịu + phí sàn + giảm giá</span><b>${money(s.ship + s.fee + s.discount)}</b></div>
           <div class="profit ${s.profit < 0 ? 'neg' : ''}"><span>Lợi nhuận</span><b>${money(s.profit)}</b></div>`;
+        const pay = orderPayment(costs, o);
+        $('#pay-box', m).innerHTML = pay.tracked
+          ? `<div class="summary">
+              <div><span>Khách phải trả (hàng − giảm giá${o.shipPayer === 'shop' ? '' : ' + ship'})</span><b>${money(pay.total)}</b></div>
+              <div><span>Đã thanh toán</span><b>${money(pay.paid)}</b></div>
+              <div class="due ${pay.remaining < 0 ? 'over' : pay.remaining === 0 ? 'paid' : ''}"><span>${pay.remaining < 0 ? 'Khách trả dư' : pay.remaining === 0 ? 'Đã trả đủ' : 'Còn lại, thu khi nhận hàng'}</span><b>${money(Math.abs(pay.remaining))}</b></div>
+            </div>`
+          : '<p class="small muted" style="margin:6px 0 0">Chưa ghi nhận thanh toán. Nhập số tiền khách đã trả (nhập 0 nếu thu hết khi nhận hàng).</p>';
         touchDraft();
       };
       const readHeader = () => {
@@ -653,6 +691,7 @@ function openOrderFormNow(existing, restored) {
         return {
           platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
           shipFee: num(d.shipFee), discount: num(d.discount), platformFee: num(d.platformFee),
+          paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
           shipPayer: $('#ship-payer .on', m).dataset.v,
         };
       };
@@ -710,6 +749,15 @@ function openOrderFormNow(existing, restored) {
         drawLines();
       });
       $('#add-line', m).onclick = () => { o.items.push(blankLine()); drawLines(); };
+      $('#pay-quick', m).onclick = (e) => {
+        const v = e.target.dataset.pay;
+        if (v === undefined) return;
+        Object.assign(o, readHeader());
+        const { total } = orderPayment(costs, o);
+        const half = total / 2;
+        form.elements.paid.value = v === 'clear' ? '' : v === '0' ? '0' : v === '100' ? String(Math.round(total)) : String(half >= 500 ? Math.round(half / 1000) * 1000 : Math.round(half));
+        drawSummary();
+      };
       $('#ship-payer', m).onclick = (e) => {
         if (!e.target.dataset.v) return;
         $$('#ship-payer button', m).forEach((b) => b.classList.toggle('on', b === e.target));
@@ -1678,7 +1726,7 @@ async function toXlsx(sheets) {
     XLSX.utils.book_append_sheet(wb, ws, title);
   };
   add(sheets.summary, 'Tổng hợp', [30, 28, 14, 14]);
-  add(sheets.orders, 'Đơn hàng', [11, 10, 16, 18, 13, 9, 40, 9, 12, 10, 12, 12, 10, 10, 10, 11, 12, 12, 12, 24]);
+  add(sheets.orders, 'Đơn hàng', [11, 10, 16, 18, 13, 9, 40, 9, 12, 10, 12, 12, 10, 10, 10, 11, 12, 12, 12, 14, 14, 24]);
   add(sheets.lines, 'Chi tiết sản phẩm', [11, 10, 16, 12, 28, 14, 9, 12, 12, 12, 30, 10, 12, 12]);
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   return new Blob([out], { type: XLSX_TYPE });

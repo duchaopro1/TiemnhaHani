@@ -91,3 +91,16 @@ test('mô tả lỗi lưu bằng tiếng Việt dễ hiểu', () => {
   assert.equal(describeError({ code: 'local', message: 'Hết chỗ' }).text, 'Hết chỗ');
   assert.ok(describeError(undefined).text.length > 0);
 });
+
+test('tiền cọc: để trống khác 0, và sửa tiền cọc thì form được coi là đã sửa', () => {
+  const base = blank();
+  assert.equal(normalizeOrder(base).paid, null);
+  assert.equal(isDirty(base, { ...base, paid: '' }), false);
+  assert.equal(isDirty(base, { ...base, paid: null }), false);
+  assert.equal(isDirty(base, { ...base, paid: 0 }), true); // 0 = đã chọn "chưa trả gì"
+  assert.equal(isDirty(base, { ...base, paid: 400000 }), true);
+  assert.equal(normalizeOrder({ paid: '250000' }).paid, 250000);
+  const st = memory();
+  putDraft('new', { order: normalizeOrder({ ...base, paid: 400000 }) }, st, 1000);
+  assert.equal(getDraft('new', st, 2000).order.paid, 400000);
+});
