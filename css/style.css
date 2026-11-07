@@ -476,3 +476,9 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 
 /* out of stock: solid red; "sắp hết" stays the soft one */
 .chip.out { background: var(--danger); color: #fff; }
+
+/* freshness of the shared data */
+.live-btn { border: 0; background: transparent; color: var(--muted); font: 600 12px var(--font-body); cursor: pointer; border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
+.live-btn:hover { background: var(--blue-soft); color: var(--blue); }
+.live-btn.warn { background: var(--st-pending); color: var(--st-pending-ink); }
+.live-btn.busy { color: var(--blue); }

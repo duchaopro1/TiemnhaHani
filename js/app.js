@@ -147,9 +147,11 @@ function render() {
         <i class="dot ${MODES[store.mode].dot}"></i>${esc(MODES[store.mode].label())}
       </span>
       <button type="button" class="sync-state" id="sync-state" data-action="sync-info" hidden></button>
+      <button type="button" class="live-btn" id="live-btn" data-action="refresh-now" hidden></button>
     </header>
     <main>${pages[tab]()}</main>`;
   updateSyncBadge({ pending: store.pending, error: store.lastError });
+  updateLiveBadge(store.liveInfo());
   if (focused && $('#' + focused)) {
     const el = $('#' + focused);
     el.focus();
@@ -181,6 +183,19 @@ function updateSyncBadge({ pending, error }) {
   const text = { saving: 'Đang lưu…', error: 'Chưa lưu được', done: 'Đã lưu ✓' }[state];
   Object.assign(el, { hidden: false, className: `sync-state ${state}`, textContent: text });
   el.title = state === 'error' ? describeError(error).text : '';
+}
+/** "⟳ 14:05" = data last arrived at 14:05; click to refresh now. Only for the shared (online) version. */
+function updateLiveBadge({ lastSync, connected, refreshing }) {
+  const el = $('#live-btn');
+  if (!el) return;
+  if (store.mode !== 'artifact' || !lastSync) { el.hidden = true; return; }
+  const at = new Date(lastSync).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const [text, cls, title] = refreshing
+    ? ['Đang làm mới…', 'live-btn busy', 'Đang lấy dữ liệu mới nhất']
+    : !connected
+      ? ['Đang kết nối lại…', 'live-btn warn', 'Kết nối bị gián đoạn, app đang nối lại. Bấm để làm mới ngay.']
+      : [`⟳ ${at}`, 'live-btn', `Dữ liệu cập nhật lần cuối lúc ${at}. Trang tự cập nhật khi có thay đổi. Bấm để làm mới ngay.`];
+  Object.assign(el, { hidden: false, className: cls, textContent: text, title });
 }
 // Leaving while a save is still on its way would lose it: ask the browser to confirm.
 window.addEventListener('beforeunload', (e) => {
@@ -1751,6 +1766,10 @@ document.addEventListener('click', async (e) => {
   const id = btn.dataset.id;
   const confirmDel = async (coll, msg) => { if (await ask(msg)) await store.remove(coll, id); };
   switch (btn.dataset.action) {
+    case 'refresh-now': {
+      const ok = await store.refresh?.({ manual: true });
+      return toast(ok ? 'Đã làm mới dữ liệu' : store.pending > 0 ? 'Đang lưu, thử làm mới lại sau ít giây' : 'Chưa làm mới được, thử lại sau');
+    }
     case 'sync-info': return notify(store.lastError ? 'Chưa lưu được: ' + describeError(store.lastError).text : 'Mọi thay đổi đã được lưu.');
     case 'new-order': return openOrderForm();
     case 'edit-order': return openOrderForm(store.get('orders', id));
@@ -1835,6 +1854,14 @@ async function boot() {
   await initStore();
   store.onError = onStoreError;
   store.onStatus(updateSyncBadge);
+  store.onLive(updateLiveBadge);
+  // Someone else added an order: say so, so a live page doesn't look frozen.
+  store.onRemote = (coll, docs) => {
+    if (coll !== 'orders') return;
+    const codes = docs.map((o) => o.code).filter(Boolean);
+    toast(docs.length === 1 ? `Có đơn mới${codes[0] ? ': ' + codes[0] : ''}` : `Có ${docs.length} đơn mới`, 4500);
+  };
+  store.onLiveError = () => notify('Quyền truy cập trang đã thay đổi. Hãy tải lại trang để tiếp tục.');
   let renderQueued = false;
   store.onChange(() => {
     if (renderQueued) return;

@@ -47,6 +47,14 @@ Ship được tính theo từng đơn (vì phụ thuộc địa chỉ), không c
 - Kết nối gián đoạn lúc lưu thì app tự thử lại một lần. Bấm Thử lại không tạo ra đơn thứ hai vì mã nội bộ của đơn được cố định từ lần lưu đầu.
 - Bản nháp chỉ nằm trong trình duyệt đang dùng (không đồng bộ giữa các máy) và tự xoá sau 7 ngày.
 
+## Trang tự cập nhật khi đồng nghiệp thay đổi
+
+Bản online tự nhận thay đổi của người khác, không cần tải lại trang:
+- Dữ liệu cập nhật qua kết nối thời gian thực của nền tảng. Nếu một kết nối bị đứt thì app **tự nối lại** (thử sau 1, 2, 4… tối đa 30 giây).
+- Phòng khi kết nối im lặng, app còn tự hỏi lại máy chủ **mỗi 30 giây** khi trang đang mở, và **ngay khi bạn quay lại tab** hoặc có mạng trở lại. Đang lưu đơn thì bỏ qua để không làm đơn đó biến mất tạm thời.
+- Có đơn mới từ người khác thì hiện thông báo "Có đơn mới: mã đơn".
+- Thanh đầu trang ghi giờ cập nhật gần nhất (⟳ 14:05). Bấm vào đó để làm mới ngay. Khi mất kết nối nó đổi thành "Đang kết nối lại…".
+
 ## Nhập đơn Shopee
 
 Shopee không cho shop nhỏ kết nối API trực tiếp nếu chưa đăng ký Shopee Open Platform. Vì vậy app đọc file xuất từ Kênh Người Bán:
