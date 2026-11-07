@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
@@ -1160,13 +1160,15 @@ function pagePackaging() {
       <div class="actions"><button class="btn ghost" data-action="new-pack">＋ Dụng cụ</button><button class="btn ghost" data-action="new-shared">＋ Vật tư dùng chung</button><button class="btn pink" data-action="new-preset">＋ Bộ đóng gói</button></div>
     </div>
     <div class="grid two">
-      <div class="card table-wrap">
+      <div class="card table-wrap pk-parts">
         <h3>Dụng cụ đóng gói</h3>
+        <p class="small muted" style="margin-top:-6px">Nhập số lượng ước chừng cũng được. Bấm <b>Chỉnh tồn</b> để sửa lại cho khớp thực tế. Giá nhập và tiền nhập hàng không đổi.</p>
         ${parts.length ? `<table><thead><tr><th>Tên</th><th class="num">Giá TB / cái</th><th class="num">Tồn</th><th></th></tr></thead><tbody>
           ${parts.map((k) => {
             const st = num(stock.packaging[k.id]);
-            return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b></td>
-            <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}">🗑</button></td></tr>`;
+            const adj = num(k.adjust);
+            return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= num(k.lowStock ?? settings.lowStock) ? 'neg' : ''}"><b>${st}</b>${adj ? `<br><span class="small muted" title="Đã chỉnh tay so với sổ nhập và đơn hàng">đã chỉnh ${adj > 0 ? '+' : ''}${adj}</span>` : ''}</td>
+            <td style="white-space:nowrap"><button class="btn ghost sm" data-action="adjust-pack" data-id="${k.id}">Chỉnh tồn</button> <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}">🗑</button></td></tr>`;
           }).join('')}</tbody></table>` : '<div class="empty">Chưa có dụng cụ nào.</div>'}
       </div>
       <div class="card table-wrap">
@@ -1192,33 +1194,57 @@ function pagePackaging() {
     </div>`;
 }
 
-/** Quick "used some" entry: lowers the stock adjustment, never touches any money figure. */
-function openUseDialog(k) {
+/**
+ * Fix the stock of a packaging item (tape, glass bags…): count what is really left, or note what was
+ * used up. Only the stock adjustment changes; import slips, prices and operating cost never do, so an
+ * estimated quantity on a slip can be corrected here without touching any money figure.
+ */
+function openStockDialog(k, mode = 'count') {
+  const stockNow = num(stock.packaging[k.id]);
+  const usedNow = Math.max(0, -num(k.adjust));
+  const st = { mode, n: mode === 'count' ? stockNow : 1 };
   openModal({
-    title: `Ghi đã dùng: ${esc(k.name)}`,
+    title: `Chỉnh tồn kho: ${esc(k.name)}`,
     wide: false,
-    body: `<form id="use-form" class="form-grid" style="grid-template-columns:1fr">
-      <label class="field">Đã dùng thêm bao nhiêu?<input type="number" id="use-n" min="0" step="any" value="1" required></label>
-      <div class="summary" id="use-sum"></div>
-      <p class="small muted">Số tiền chi phí vận hành giữ nguyên, vì tiền đã chi lúc nhập hàng.</p>
+    body: `<form id="stock-form" class="form-grid" style="grid-template-columns:1fr" onsubmit="return false">
+      <div class="seg" id="st-mode" style="justify-self:start">
+        <button type="button" data-v="count">Đếm lại số còn</button>
+        <button type="button" data-v="used">Ghi đã dùng / hao</button>
+      </div>
+      <label class="field"><span id="st-label"></span><input type="number" id="st-n" min="0" step="any" required></label>
+      <div class="summary" id="st-sum"></div>
+      <p class="small muted">Chỉ sửa số lượng tồn kho. Giá nhập, giá trung bình mỗi cái và tiền nhập hàng giữ nguyên.</p>
     </form>`,
-    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="use-save">Lưu</button>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="st-save">Lưu</button>`,
     onMount(m) {
-      const stockNow = num(stock.packaging[k.id]);
-      const usedNow = Math.max(0, -num(k.adjust));
-      const sync = () => {
-        const n = num($('#use-n', m).value);
-        $('#use-sum', m).innerHTML = `<div><span>Tồn kho</span><b>${stockNow} → ${stockNow - n}</b></div><div><span>Đã dùng</span><b>${usedNow} → ${usedNow + n}</b></div>`;
+      const result = () => (st.mode === 'count' ? num(st.n) : stockNow - num(st.n));
+      const draw = () => {
+        $$('#st-mode button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.mode));
+        $('#st-label', m).textContent = st.mode === 'count' ? 'Số còn thực tế (đếm được)' : 'Đã dùng / hao thêm bao nhiêu?';
+        const diff = result() - stockNow;
+        $('#st-sum', m).innerHTML = `<div><span>Tồn kho</span><b>${stockNow} → ${result()}</b></div>`
+          + `<div><span>Chênh lệch</span><b class="${signCls(diff)}">${diff > 0 ? '+' : ''}${diff}</b></div>`
+          + (k.shared ? `<div><span>Đã dùng</span><b>${usedNow} → ${Math.max(0, usedNow - diff)}</b></div>` : '');
       };
-      $('#use-n', m).addEventListener('input', sync);
-      sync();
+      $('#st-n', m).value = st.n;
+      $('#st-n', m).addEventListener('input', (e) => { st.n = e.target.value; draw(); });
+      $('#st-mode', m).onclick = (e) => {
+        const v = e.target.dataset.v;
+        if (!v || v === st.mode) return;
+        st.mode = v;
+        st.n = v === 'count' ? stockNow : 1;
+        $('#st-n', m).value = st.n;
+        draw();
+      };
+      draw();
       $('[data-close2]', m).onclick = () => m.close();
-      $('#use-save', m).onclick = async () => {
-        const n = num($('#use-n', m).value);
-        if (!(n > 0)) return toast('Nhập số lượng đã dùng');
-        await store.upsert('packaging', { ...k, adjust: num(k.adjust) - n });
+      $('#st-save', m).onclick = async () => {
+        if (!$('#stock-form', m).reportValidity()) return;
+        const diff = result() - stockNow;
+        if (!diff) return toast('Số lượng không đổi');
+        await store.upsert('packaging', { ...k, adjust: adjustForCount(k.adjust, stockNow, result()) });
         m.close();
-        toast(`Đã ghi dùng ${n} ${k.name}`);
+        toast(`Tồn ${esc(k.name)}: ${stockNow} → ${result()}`);
       };
     },
   });
@@ -1566,7 +1592,8 @@ document.addEventListener('click', async (e) => {
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
     case 'new-pack': return openPackForm();
     case 'new-shared': return openPackForm(undefined, { shared: true });
-    case 'use-pack': return openUseDialog(pack(id));
+    case 'use-pack': return openStockDialog(pack(id), 'used');
+    case 'adjust-pack': return openStockDialog(pack(id), 'count');
     case 'del-pack': return confirmDel('packaging', pack(id)?.shared ? 'Xoá vật tư này? Tiền nhập của nó sẽ không còn nằm trong chi phí vận hành.' : 'Xoá dụng cụ này? (Các đơn cũ dùng dụng cụ này sẽ mất chi phí đóng gói tương ứng)');
     case 'new-preset': return openPresetForm();
     case 'edit-preset': return openPresetForm(store.get('presets', id));

@@ -167,6 +167,14 @@ export function operatingCosts(state, from = '0000', to = '9999') {
   return { total, items: Object.values(rows).sort((a, b) => b.amount - a.amount) };
 }
 
+/**
+ * New stock adjustment so the book stock matches a physical count.
+ * Only the adjustment changes: import slips, unit costs and operating costs are untouched.
+ */
+export function adjustForCount(currentAdjust, stockNow, counted) {
+  return (Number(currentAdjust) || 0) + (Number(counted) || 0) - (Number(stockNow) || 0);
+}
+
 /** Split a batch fee across rows in proportion to their quantity (shares sum to the fee). */
 export function splitFee(fee, qtys) {
   const total = qtys.reduce((s, q) => s + num(q), 0);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -171,4 +171,26 @@ test('vật tư dùng chung không tính vào đơn hàng và không trừ kho t
   const st = stockLevels(state);
   assert.equal(st.packaging.hop, 9);
   assert.equal(st.packaging.bang, 10); // đơn cũ có chọn băng keo cũng không trừ
+});
+
+test('đếm lại tồn kho túi kính: chỉnh số lượng mà không đổi giá nhập hay tiền nhập', () => {
+  const state = {
+    products: [{ id: 'p', name: 'P', baseCost: 10000 }],
+    packaging: [{ id: 'tui', name: 'Túi kính' }],
+    imports: [{ kind: 'packaging', itemId: 'tui', date: '2026-11-01', qty: 500, unitCost: 400 }], // số lượng chỉ ước chừng
+    orders: [{ status: 'done', items: [{ productId: 'p', qty: 30, price: 50000, pack1: 'tui', packEach: true }] }],
+  };
+  const stockNow = stockLevels(state).packaging.tui;
+  assert.equal(stockNow, 470);
+  // đếm thực tế còn 452
+  const adjust = adjustForCount(0, stockNow, 452);
+  assert.equal(adjust, -18);
+  const fixed = { ...state, packaging: [{ id: 'tui', name: 'Túi kính', adjust }] };
+  assert.equal(stockLevels(fixed).packaging.tui, 452);
+  assert.equal(costTable(fixed).packaging.tui, costTable(state).packaging.tui); // giá mỗi cái giữ nguyên
+  assert.equal(lineCost(costTable(fixed), state.orders[0].items[0]).packaging, lineCost(costTable(state), state.orders[0].items[0]).packaging);
+  // đếm lại lần nữa (đang có điều chỉnh -18, đếm được 460)
+  assert.equal(adjustForCount(adjust, 452, 460), -10);
+  assert.equal(stockLevels({ ...state, packaging: [{ id: 'tui', name: 'Túi kính', adjust: -10 }] }).packaging.tui, 460);
+  assert.equal(adjustForCount(undefined, 10, 10), 0);
 });

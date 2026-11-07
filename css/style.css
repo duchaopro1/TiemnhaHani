@@ -456,3 +456,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .sharedcheck { align-items: flex-start; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; font-size: 13px; }
 .sharedcheck input { margin-top: 3px; }
 .sharedcheck:has(input:checked) { border-color: var(--friend-2); background: var(--friend); }
+
+/* packaging page: names stay on one line, the parts card gets two columns on wide screens */
+.pk-parts td:first-child { white-space: nowrap; }
+@media (min-width: 1100px) { .pk-parts { grid-column: span 2; } }
