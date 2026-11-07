@@ -19,6 +19,16 @@ export const STATUSES = {
 // Orders in these statuses don't consume stock and don't count toward revenue/profit.
 export const INACTIVE_STATUSES = new Set(['cancelled', 'returned']);
 
+/** Orders that still have work left: not yet done, cancelled or returned. */
+export const OPEN_STATUSES = new Set(['pending', 'designed', 'packed', 'shipping']);
+
+/** How many orders are in each status; every status is present, even at 0. */
+export function countByStatus(orders) {
+  const counts = Object.fromEntries(Object.keys(STATUSES).map((k) => [k, 0]));
+  for (const o of orders) if (o.status in counts) counts[o.status] += 1;
+  return counts;
+}
+
 export const PACK_SLOTS = ['pack1', 'pack2', 'pack3'];
 
 const num = (v) => (Number.isFinite(+v) ? +v : 0);

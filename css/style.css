@@ -423,3 +423,30 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 
 .cardcheck { padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; min-height: 38px; }
 .cardcheck:has(input:checked) { border-color: var(--her-2); background: var(--her); color: var(--her-ink); font-weight: 600; }
+
+/* order status board */
+.stboard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.stboard-head h3 { margin: 0; }
+.stbar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--blue-soft); margin-bottom: 14px; }
+.stbar i { display: block; height: 100%; min-width: 4px; }
+.stcards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); }
+.stcard {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 12px 14px; border-radius: 14px;
+  border: 1.5px solid; text-decoration: none; transition: transform .12s ease, box-shadow .12s ease;
+}
+.stcard:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(20, 121, 196, .14); }
+.stcard:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.stcard-label { font-size: 13px; font-weight: 700; }
+.stcard-count { font: var(--title-weight) 34px/1.1 var(--font-title); font-variant-numeric: tabular-nums; }
+.stcard-pct { font-size: 12px; opacity: .75; font-variant-numeric: tabular-nums; }
+.stcard.zero { background-color: var(--card); border-color: var(--line); color: var(--muted); }
+.stcard.zero .stcard-count { opacity: .6; }
+.stboard-note { margin: 12px 0 0; }
+@media (prefers-reduced-motion: reduce) { .stcard { transition: none; } .stcard:hover { transform: none; } }
+
+@media (max-width: 640px) {
+  .grid.kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi-card { padding: 12px; }
+  .kpi-card .value { font-size: 19px; }
+  .stcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

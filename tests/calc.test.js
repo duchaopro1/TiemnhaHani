@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -107,4 +107,17 @@ test('nhập lại file Shopee không làm mất "Đã thiết kế / Đã đón
   assert.equal(mergeShopeeStatus('packed', 'cancelled'), 'cancelled');
   assert.equal(mergeShopeeStatus('pending', 'done'), 'done');
   assert.equal(mergeShopeeStatus('shipping', 'pending'), 'pending');
+});
+
+test('đếm đơn theo trạng thái: đủ mọi trạng thái, kể cả 0', () => {
+  const none = countByStatus([]);
+  assert.deepEqual(Object.keys(none), Object.keys(STATUSES));
+  assert.ok(Object.values(none).every((n) => n === 0));
+  const c = countByStatus([{ status: 'pending' }, { status: 'pending' }, { status: 'packed' }, { status: 'done' }, { status: 'lạ' }]);
+  assert.equal(c.pending, 2);
+  assert.equal(c.packed, 1);
+  assert.equal(c.done, 1);
+  assert.equal(c.designed, 0);
+  assert.equal(Object.values(c).reduce((a, b) => a + b, 0), 4); // trạng thái lạ không bị đếm
+  assert.deepEqual([...OPEN_STATUSES].sort(), ['designed', 'packed', 'pending', 'shipping']);
 });

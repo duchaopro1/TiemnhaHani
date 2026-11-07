@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
@@ -205,7 +205,10 @@ function pageDashboard() {
     : num(stock.products[p.id]) <= lowOf(p) ? [{ p, n: num(stock.products[p.id]) }] : []));
   const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= num(k.lowStock ?? settings.lowStock));
   const unmapped = S.orders.filter((o) => !INACTIVE_STATUSES.has(o.status) && o.items?.some((l) => !l.productId)).length;
-  const pendingCount = S.orders.filter((o) => o.status === 'pending').length;
+  const byStatus = countByStatus(orders);
+  const openNow = [...OPEN_STATUSES].reduce((n, k) => n + byStatus[k], 0);
+  const openElsewhere = ui.period === 'all' ? 0 : S.orders.filter((o) => OPEN_STATUSES.has(o.status) && !(o.date >= from && o.date <= to)).length;
+  const goMonth = ui.period === 'month' ? ui.dashMonth : '';
   const cur = thisMonth();
   const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
   const pickedOther = ui.period === 'month' && !isMonth(cur);
@@ -229,10 +232,24 @@ function pageDashboard() {
       <div class="card kpi-card backup"><div class="label">Lợi nhuận</div><div class="value ${signCls(agg.profit)}">${money(agg.profit)}</div></div>
       <div class="card kpi-card friend"><div class="label">Số đơn · Biên lãi</div><div class="value">${agg.orders} · ${margin.toFixed(1)}%</div></div>
     </div>
-    ${unmapped || pendingCount ? `<div class="card" style="margin-top:16px">
-      ${pendingCount ? `<div>📦 Có <b>${pendingCount}</b> đơn đang chờ xử lý. <a href="#orders" data-goto-status="pending">Xem</a></div>` : ''}
-      ${unmapped ? `<div>⚠️ Có <b>${unmapped}</b> đơn có sản phẩm chưa gắn với kho (giá vốn = 0). Mở đơn để chọn sản phẩm.</div>` : ''}
-    </div>` : ''}
+    <section class="card stboard" style="margin-top:16px" aria-labelledby="stboard-title">
+      <div class="stboard-head">
+        <h3 id="stboard-title">Trạng thái đơn hàng</h3>
+        <span class="muted small">${orders.length} đơn · <b>${openNow}</b> đơn chưa xong</span>
+      </div>
+      <div class="stbar" role="img" aria-label="Tỉ lệ đơn theo trạng thái">${orders.length
+        ? Object.keys(STATUSES).filter((k) => byStatus[k]).map((k) => `<i style="width:${(byStatus[k] / orders.length) * 100}%;background:var(--st-${k}-edge)" title="${esc(STATUSES[k])}: ${byStatus[k]}"></i>`).join('')
+        : ''}</div>
+      <div class="stcards">
+        ${Object.entries(STATUSES).map(([k, label]) => `<a class="stcard st-${k} ${byStatus[k] ? '' : 'zero'}" href="#orders" data-goto-status="${k}" data-goto-month="${esc(goMonth)}" title="Xem các đơn ${esc(label.toLowerCase())}">
+          <span class="stcard-label">${esc(label)}</span>
+          <b class="stcard-count">${byStatus[k]}</b>
+          <span class="stcard-pct">${orders.length ? Math.round((byStatus[k] / orders.length) * 100) : 0}%</span>
+        </a>`).join('')}
+      </div>
+      ${openElsewhere ? `<p class="small muted stboard-note">Còn <b>${openElsewhere}</b> đơn chưa xong ở thời gian khác. <a href="#dashboard" data-period="all">Xem tất cả</a></p>` : ''}
+    </section>
+    ${unmapped ? `<div class="card" style="margin-top:16px">⚠️ Có <b>${unmapped}</b> đơn có sản phẩm chưa gắn với kho (giá vốn = 0). Mở đơn để chọn sản phẩm.</div>` : ''}
     <div class="grid two" style="margin-top:16px">
       <div class="card">
         <h3>Theo nền tảng</h3>
@@ -1458,7 +1475,7 @@ document.addEventListener('click', async (e) => {
   const kind = e.target.closest('[data-import-kind]');
   if (kind) { ui.imports.kind = kind.dataset.importKind; render(); return; }
   const goto = e.target.closest('[data-goto-status]');
-  if (goto) { ui.orders.status = goto.dataset.gotoStatus; }
+  if (goto) Object.assign(ui.orders, { status: goto.dataset.gotoStatus, month: goto.dataset.gotoMonth || '', platform: '', q: '' });
 
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
