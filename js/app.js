@@ -497,7 +497,7 @@ function pageOrders() {
     </div>
     <div class="card table-wrap">
       ${list.length ? `<table>
-        <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Doanh thu</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Ship</th><th>Trạng thái</th><th></th></tr></thead>
+        <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody>${list.map(orderRow).join('')}</tbody>
       </table>` : '<div class="empty">Chưa có đơn nào. Bấm “＋ Thêm đơn” hoặc nhập file Shopee.</div>'}
     </div>`;
@@ -580,10 +580,11 @@ function orderRow(o) {
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div>${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
-    <td class="num">${money(s.revenue)}${payInfo(o)}</td>
+    <td class="num">${money(s.gross)}${s.discount ? `<br><span class="small muted">− giảm giá ${money(s.discount)}</span>` : ''}</td>
+    <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
+    <td class="num"><b>${money(orderPayment(costs, o).total)}</b>${payInfo(o)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
-    <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
     <td class="st-cell"><button type="button" class="st-btn st-${o.status}" data-stmenu="${o.id}" aria-haspopup="listbox" aria-expanded="false" aria-label="Trạng thái đơn ${esc(o.code || '')}: ${esc(STATUSES[o.status] || '')}">${esc(STATUSES[o.status] || o.status)}<span aria-hidden="true">▾</span></button></td>
     <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-order" data-id="${o.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-order" data-id="${o.id}" title="Xoá">🗑</button></td>
   </tr>`;
