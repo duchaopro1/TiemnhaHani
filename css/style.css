@@ -550,3 +550,9 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .rev-table { border-collapse: separate; border-spacing: 0; }
 .rev-table thead th { position: sticky; top: 0; z-index: 2; background: var(--blue-soft); box-shadow: 0 1px 0 var(--line, #dfe6f2); }
 .rev-table tfoot td { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -1px 0 var(--line, #dfe6f2); }
+
+/* platform tags on the revenue page, in each app's logo colours */
+.plat-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 1.5; color: #fff; }
+.plat-tag.shopee { background: #ee4d2d; }
+.plat-tag.threads { background: #000; }
+.plat-tag.instagram { background: linear-gradient(45deg, #fcaf45 0%, #f77737 25%, #e1306c 55%, #833ab4 100%); }

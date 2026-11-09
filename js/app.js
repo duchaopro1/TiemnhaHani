@@ -351,7 +351,7 @@ function pageRevenue() {
         </tr></thead>
         <tbody>${rows.map((r) => `<tr>
           <td>${fmtDate(r.order.date)}</td>
-          <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="chip st-done">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
+          <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="plat-tag ${esc(r.order.platform)}">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
           ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}${cell(r.labor)}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
