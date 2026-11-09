@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -406,4 +406,36 @@ test('sản phẩm theo giai đoạn: gom số lượng theo trạng thái, tác
   assert.deepEqual(q.cup.variants.vang, { pending: 0, designed: 0, packed: 0, shipping: 3, done: 0 });
   assert.equal(q.khung.total.designed, 1);
   assert.deepEqual(Object.keys(q).sort(), ['cup', 'khung']); // dòng chưa gắn sản phẩm bị bỏ qua
+});
+
+test('thiếu hàng: đơn cũ được ưu tiên, đơn thiếu không giữ hàng, đơn đã đóng gói đã lấy hàng, đơn huỷ bỏ qua', () => {
+  const imp = (variantId, qty, status = 'received') => ({ kind: 'product', itemId: 'P', variantId, qty, unitCost: 1, extraFee: 0, status });
+  const line = (variantId, qty) => ({ productId: 'P', variantId, qty, price: 1 });
+  const state = {
+    products: [{ id: 'P', variants: [{ id: 'a' }, { id: 'b' }] }],
+    packaging: [],
+    imports: [imp('a', 10), imp('b', 2), imp('a', 10, 'ordered')],
+    orders: [
+      { id: 'o0', code: 'O0', date: '2026-10-30', status: 'packed', items: [line('a', 2)] }, // đã lấy 2 chữ a
+      { id: 'o1', code: 'O1', date: '2026-11-01', status: 'pending', items: [line('a', 5), line('b', 4)] }, // thiếu b
+      { id: 'o2', code: 'O2', date: '2026-11-02', status: 'designed', items: [line('a', 6)] }, // đủ
+      { id: 'o3', code: 'O3', date: '2026-11-03', status: 'pending', items: [line('a', 5)] }, // chỉ còn 2 chữ a
+      { id: 'o4', code: 'O4', date: '2026-11-01', status: 'cancelled', items: [line('a', 99)] },
+      { id: 'o5', code: 'O5', date: '2026-11-04', status: 'shipping', items: [line('a', 1)] },
+    ],
+  };
+  const { short, ready } = orderShortages(state);
+  assert.deepEqual(ready.map((o) => o.code), ['O2']);
+  assert.deepEqual(short.map((s) => s.order.code), ['O1', 'O3']);
+  // O1 thiếu đúng chữ b, không thiếu chữ a (đơn thiếu không giữ hàng của chữ a)
+  assert.deepEqual(short[0].lines.map((l) => [l.variantId, l.need, l.have, l.short]), [['b', 4, 2, 2]]);
+  // O3 đứng sau O2: kho 10 - 2 (O0 đã đóng) - 1 (O5 đang giao) - 6 (O2) = 1 chữ a
+  assert.deepEqual(short[1].lines.map((l) => [l.variantId, l.need, l.have, l.short, l.incoming]), [['a', 5, 1, 4, 10]]);
+  // đơn tạo sau cùng ngày xếp sau theo giờ tạo
+  const same = orderShortages({ ...state, orders: [
+    { id: 'x2', code: 'B', date: '2026-11-01', createdAt: 2, status: 'pending', items: [line('b', 2)] },
+    { id: 'x1', code: 'A', date: '2026-11-01', createdAt: 1, status: 'pending', items: [line('b', 2)] },
+  ] });
+  assert.deepEqual(same.ready.map((o) => o.code), ['A']);
+  assert.deepEqual(same.short.map((s) => s.order.code), ['B']);
 });

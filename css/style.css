@@ -580,3 +580,10 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .stg-table .stg-c.st-packed b { background: var(--st-packed); color: var(--st-packed-ink); }
 .stg-table .stg-c.st-shipping b { background: var(--st-shipping); color: var(--st-shipping-ink); }
 .stg-table .stg-c.st-done b { background: transparent; color: var(--muted); font-weight: 600; }
+
+/* missing goods alert */
+.short-btn { border: 1px solid var(--st-packed-edge); background: var(--st-packed); color: var(--st-packed-ink); font: inherit; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+.short-dialog { max-width: min(560px, calc(100vw - 32px)); }
+.short-list { max-height: 50vh; overflow: auto; display: grid; gap: 10px; }
+.short-order { padding: 10px 12px; border: 1px solid var(--st-packed-edge); background: #fffaf5; border-radius: 12px; }
+.short-order ul { margin: 6px 0 0 18px; padding: 0; font-size: 13px; }

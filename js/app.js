@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -90,7 +90,7 @@ const MODES = {
 };
 
 /* ================= derived state ================= */
-let S, costs, stock, settings;
+let S, costs, stock, settings, shortages = { short: [], ready: [] };
 function derive() {
   S = store.state;
   S.products.sort(byName);
@@ -98,6 +98,7 @@ function derive() {
   S.presets.sort(byName);
   costs = costTable(S);
   stock = stockLevels(S);
+  shortages = orderShortages(S);
   settings = { id: 'settings', shopeeMap: {}, lowStock: 5, laborPerOrder: DEFAULT_LABOR, ...(store.get('meta', 'settings') || {}) };
 }
 const product = (id) => store.get('products', id);
@@ -167,11 +168,13 @@ function render() {
       </span>
       <button type="button" class="sync-state" id="sync-state" data-action="sync-info" hidden></button>
       <button type="button" class="live-btn" id="live-btn" data-action="refresh-now" hidden></button>
+      ${shortages.short.length ? `<button type="button" class="short-btn" data-action="show-short" title="Xem các đơn đang thiếu hàng">⚠ ${shortages.short.length} đơn thiếu hàng</button>` : ''}
     </header>
     <main>${pages[tab]()}</main>`;
   updateSyncBadge({ pending: store.pending, error: store.lastError });
   updateLiveBadge(store.liveInfo());
   fitRevenueTable();
+  checkShortages();
   if (focused && $('#' + focused)) {
     const el = $('#' + focused);
     el.focus();
@@ -187,6 +190,42 @@ function fitRevenueTable() {
   box.style.maxHeight = `${Math.max(240, window.innerHeight - top - 84)}px`;
 }
 window.addEventListener('resize', fitRevenueTable);
+
+/* ================= missing goods alert ================= */
+let shortReady = false; // only after the data has arrived, or every order would look short
+let shownShort = new Set(); // shortages already announced; a new or returning one is announced again
+
+function showShortDialog() {
+  const { short, ready } = shortages;
+  if (!short.length) return;
+  const d = document.createElement('dialog');
+  d.className = 'confirm short-dialog';
+  d.innerHTML = `<div class="modal-body">
+    <h3 style="margin:0 0 6px">⚠ ${short.length} đơn đang thiếu sản phẩm</h3>
+    <p class="small muted" style="margin:0 0 10px">Đơn tạo trước được ưu tiên hàng trước. Đơn thiếu vẫn được giữ, hàng còn lại dùng cho các đơn đủ.</p>
+    <div class="short-list">${short.map((x) => `<div class="short-order">
+      <div><b>${esc(x.order.code || 'Đơn')}</b> · ${esc(x.order.customer || '')} <span class="muted small">· ${fmtDate(x.order.date)} · ${esc(STATUSES[x.order.status])}</span></div>
+      <ul>${x.lines.map((l) => `<li><b>${esc(itemLabel(l.productId, l.variantId))}</b>: cần ${l.need}, kho có ${l.have}, <span class="neg">thiếu ${l.short}</span>${l.incoming ? ` <span class="muted small">(đang về +${l.incoming})</span>` : ''}</li>`).join('')}</ul>
+    </div>`).join('')}</div>
+    ${ready.length ? `<p class="small" style="margin:10px 0 0">✅ <b>${ready.length}</b> đơn đang chờ đã đủ hàng, có thể làm trước.</p>` : ''}
+  </div>
+  <div class="modal-foot"><button class="btn ghost" value="close">Đóng</button><button class="btn" value="orders">Xem đơn hàng</button></div>`;
+  d.addEventListener('click', (e) => { if (e.target.value) d.close(e.target.value); });
+  d.addEventListener('close', () => { if (d.returnValue === 'orders') location.hash = 'orders'; d.remove(); });
+  document.body.append(d);
+  d.showModal();
+}
+
+/** Announce shortages that are new since the last time; waits while another dialog is open. */
+function checkShortages() {
+  if (!shortReady) return;
+  const now = new Set(shortages.short.flatMap((x) => x.lines.map((l) => `${x.order.id}|${l.productId}|${l.variantId}|${l.short}`)));
+  shownShort = new Set([...shownShort].filter((k) => now.has(k))); // one that cleared and comes back is news again
+  const fresh = [...now].filter((k) => !shownShort.has(k));
+  if (!fresh.length || document.querySelector('dialog[open]')) return;
+  fresh.forEach((k) => shownShort.add(k));
+  showShortDialog();
+}
 
 /* ================= save status ================= */
 let syncTimer = null;
@@ -233,6 +272,7 @@ window.addEventListener('beforeunload', (e) => {
 
 /* ================= modal ================= */
 const modal = $('#modal');
+modal.addEventListener('close', () => setTimeout(checkShortages, 50)); // a new order saved in a form may have made another one short
 function openModal({ title, body, foot = '', onMount, wide = true, beforeClose }) {
   modal.style.width = wide ? '' : 'min(560px, calc(100vw - 32px))';
   modal.innerHTML = `
@@ -624,6 +664,9 @@ function payInfo(o) {
   return `<div class="pay"><span class="chip pay-ok" title="${title}">Đã trả đủ</span></div>`;
 }
 
+const shortById = { has: (id) => shortages.short.some((x) => x.order.id === id), get: (id) => shortages.short.find((x) => x.order.id === id) };
+const shortText = (x) => `Thiếu: ${x.lines.map((l) => `${itemLabel(l.productId, l.variantId)} ×${l.short}`).join(', ')}`;
+
 function orderRow(o) {
   const s = orderSummary(costs, o);
   const inactive = INACTIVE_STATUSES.has(o.status);
@@ -636,7 +679,7 @@ function orderRow(o) {
   return `<tr class="${inactive ? 'inactive' : ''}">
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
-    <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
+    <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div>${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
     <td class="num">${money(s.gross)}${s.discount ? `<br><span class="small muted">− giảm giá ${money(s.discount)}</span>` : ''}</td>
     <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
@@ -961,6 +1004,7 @@ function openOrderFormNow(existing, restored) {
           o.code = `${o.platform.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-6)}`;
           form.elements.code.value = o.code;
         }
+        if (!existing) o.createdAt ||= Date.now(); // older orders are served first
         o.id ||= uid(); // fixed before the first try, so "Thử lại" can never create a second copy
         errEl.hidden = true;
         ctl.saving = true;
@@ -1101,6 +1145,7 @@ async function commitShopee(parsed) {
       return { ...old, status: mergeShopeeStatus(old.status, o.status), platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, tracking: o.tracking || old.tracking || '', items };
     }
     added++;
+    o.createdAt = Date.now();
     o.items = o.items.map((l) => {
       const { productId, variantId } = matchListing(l);
       const pr = store.get('presets', product(productId)?.defaultPreset);
@@ -2364,6 +2409,7 @@ document.addEventListener('click', async (e) => {
     case 'del-order': return confirmDel('orders', 'Xoá đơn hàng này?');
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
+    case 'show-short': return showShortDialog();
     case 'copy-tracking': return copyText(btn.dataset.text);
     case 'toggle-stages': ui.stages[id] = !ui.stages[id]; return render();
     case 'new-parcel': return openParcelForm();
@@ -2478,7 +2524,7 @@ async function boot() {
     await store.init();
     render();
   }
-  store.whenReady().then(resumeDraft);
+  store.whenReady().then(async () => { await resumeDraft(); shortReady = true; render(); });
 }
 
 /** After a reload (or a new version of the page) with an order form open: offer that order back. */

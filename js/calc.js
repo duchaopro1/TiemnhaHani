@@ -377,3 +377,53 @@ export function stageQuantities(orders) {
   }
   return out;
 }
+
+/** Orders still waiting for work: their goods have not been packed yet. */
+export const WAITING_STATUSES = ['pending', 'designed'];
+
+/**
+ * Which waiting orders cannot be filled from the goods on the shelf, and what they lack.
+ * The shelf = received stock minus what packed / shipping / done orders already took. Waiting orders
+ * are served oldest first (order date, then creation time). An order that can be filled in full takes
+ * its goods; one that cannot takes nothing, so what is left over still serves the orders behind it.
+ * Returns { short: [{ order, lines: [{ productId, variantId, need, have, short, incoming }] }], ready: [order] }.
+ */
+export function orderShortages(state) {
+  const orders = state.orders || [];
+  const taken = orders.filter((o) => ['packed', 'shipping', 'done'].includes(o.status));
+  const base = stockLevels({ ...state, orders: taken });
+  const avail = { products: { ...base.products }, variants: { ...base.variants } };
+  const incoming = stockLevels(state).incoming;
+  const waiting = orders
+    .filter((o) => WAITING_STATUSES.includes(o.status))
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || num(a.createdAt) - num(b.createdAt) || (a.code || '').localeCompare(b.code || ''));
+  const short = [], ready = [];
+  for (const order of waiting) {
+    // what the order needs, per variant (or per product when no variant is chosen)
+    const need = new Map();
+    for (const l of order.items || []) {
+      if (!l.productId || !(num(l.qty) > 0)) continue;
+      const key = l.variantId ? variantKey(l.productId, l.variantId) : l.productId;
+      const row = need.get(key) || { productId: l.productId, variantId: l.variantId || '', need: 0 };
+      row.need += num(l.qty);
+      need.set(key, row);
+    }
+    const lacking = [];
+    for (const [key, row] of need) {
+      const have = row.variantId ? num(avail.variants[key]) : num(avail.products[key]);
+      if (have < row.need) {
+        lacking.push({
+          ...row, have: Math.max(0, have), short: row.need - Math.max(0, have),
+          incoming: row.variantId ? num(incoming.variants[key]) : num(incoming.products[row.productId]),
+        });
+      }
+    }
+    if (lacking.length) { short.push({ order, lines: lacking }); continue; }
+    ready.push(order);
+    for (const row of need.values()) {
+      avail.products[row.productId] = num(avail.products[row.productId]) - row.need;
+      if (row.variantId) avail.variants[variantKey(row.productId, row.variantId)] = num(avail.variants[variantKey(row.productId, row.variantId)]) - row.need;
+    }
+  }
+  return { short, ready };
+}
