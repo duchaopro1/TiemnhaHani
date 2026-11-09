@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -386,4 +386,24 @@ test('trang doanh thu: chỉ đơn hoàn thành, tổng đơn / doanh thu / chi 
   assert.equal(c.ship, 0);
   assert.equal(c.shipFee, 30000); // phí ship vẫn hiện dù khách trả
   assert.equal(c.profit, 190000 - (40000 + 5000 + 8000 + 10000));
+});
+
+test('sản phẩm theo giai đoạn: gom số lượng theo trạng thái, tách từng phân loại, bỏ đơn huỷ / trả', () => {
+  const line = (variantId, qty) => ({ productId: 'cup', variantId, qty, price: 1 });
+  const orders = [
+    { status: 'pending', items: [line('do', 2), line('xanh', 1)] },
+    { status: 'shipping', items: [line('vang', 3)] },
+    { status: 'done', items: [line('do', 4), line('xanh', 2)] },
+    { status: 'designed', items: [{ productId: 'khung', qty: 1 }] },
+    { status: 'cancelled', items: [line('do', 99)] },
+    { status: 'returned', items: [line('do', 99)] },
+    { status: 'pending', items: [{ productName: 'chưa gắn', qty: 5 }] },
+  ];
+  const q = stageQuantities(orders);
+  assert.deepEqual(q.cup.total, { pending: 3, designed: 0, packed: 0, shipping: 3, done: 6 });
+  assert.equal(q.cup.sum, 12);
+  assert.deepEqual(q.cup.variants.do, { pending: 2, designed: 0, packed: 0, shipping: 0, done: 4 });
+  assert.deepEqual(q.cup.variants.vang, { pending: 0, designed: 0, packed: 0, shipping: 3, done: 0 });
+  assert.equal(q.khung.total.designed, 1);
+  assert.deepEqual(Object.keys(q).sort(), ['cup', 'khung']); // dòng chưa gắn sản phẩm bị bỏ qua
 });

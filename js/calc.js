@@ -351,3 +351,29 @@ export function completedRevenue(costs, orders, labor = DEFAULT_LABOR) {
   rows.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || '') || (b.order.code || '').localeCompare(a.order.code || ''));
   return { rows, total };
 }
+
+/** The stages a product's pieces can be in, in order of the order's life. */
+export const STAGE_KEYS = ['pending', 'designed', 'packed', 'shipping', 'done'];
+
+/**
+ * How many pieces of each product (and of each variant) are at each stage: waiting, designed, packed,
+ * shipping, done. Cancelled and returned orders are not counted. Lines without a product are skipped.
+ * Returns { [productId]: { total: {stage: n}, sum, variants: { [variantId or '']: {stage: n} } } }.
+ */
+export function stageQuantities(orders) {
+  const out = {};
+  const blank = () => Object.fromEntries(STAGE_KEYS.map((k) => [k, 0]));
+  for (const o of orders) {
+    if (!STAGE_KEYS.includes(o.status)) continue;
+    for (const l of o.items || []) {
+      if (!l.productId) continue;
+      const row = (out[l.productId] ||= { total: blank(), sum: 0, variants: {} });
+      const v = (row.variants[l.variantId || ''] ||= blank());
+      const n = num(l.qty);
+      row.total[o.status] += n;
+      v[o.status] += n;
+      row.sum += n;
+    }
+  }
+  return out;
+}

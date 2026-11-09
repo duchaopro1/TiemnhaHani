@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -144,6 +144,7 @@ const ui = {
   orders: { q: '', platform: '', status: '', month: '' },
   imports: { q: '', kind: '', status: '', open: {} },
   products: { q: '' },
+  stages: {}, // product id -> its variants are shown
   export: null, // last choices in the export dialog, kept for the visit
 };
 const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard');
@@ -362,6 +363,43 @@ function pageRevenue() {
     </div>`;
 }
 
+/** Pieces of each product by stage (waiting, designed, packed, shipping, done), colours opened on demand. */
+function stagesChart(orders) {
+  const q = stageQuantities(orders);
+  const ids = Object.keys(q).sort((a, b) => q[b].sum - q[a].sum);
+  const max = Math.max(1, ...ids.map((id) => q[id].sum));
+  const bar = (counts, sum) => `<div class="stg-bar" style="width:${Math.max(6, (sum / max) * 100)}%" role="img" aria-label="${STAGE_KEYS.map((k) => `${STATUSES[k]} ${counts[k]}`).join(', ')}">${STAGE_KEYS.filter((k) => counts[k]).map((k) =>
+    `<i class="st-seg st-${k}" style="flex:${counts[k]}" title="${esc(STATUSES[k])}: ${counts[k]}">${counts[k]}</i>`).join('')}</div>`;
+  const nums = (counts) => STAGE_KEYS.filter((k) => counts[k]).map((k) => `<span class="stg-n st-${k}">${esc(STATUSES[k])} <b>${counts[k]}</b></span>`).join('');
+  return `<section class="card" style="margin-top:16px" aria-labelledby="stg-title">
+    <div class="stboard-head">
+      <h3 id="stg-title">Sản phẩm theo giai đoạn</h3>
+      <span class="muted small">Số lượng từng sản phẩm đang ở mỗi giai đoạn (không tính đơn huỷ / trả hàng)</span>
+    </div>
+    <div class="stg-legend">${STAGE_KEYS.map((k) => `<span class="chip st-${k}">${esc(STATUSES[k])}</span>`).join('')}</div>
+    ${ids.length ? `<div class="stg-list">${ids.map((id) => {
+      const p = product(id);
+      const r = q[id];
+      const vKeys = Object.keys(r.variants);
+      const canOpen = p && hasVariants(p) && vKeys.length > 0 && !(vKeys.length === 1 && vKeys[0] === '');
+      const open = canOpen && ui.stages[id];
+      return `<div class="stg-item">
+        <div class="stg-row">
+          <span class="stg-name item">${thumb(p?.image, p?.name, 'sm')}<b>${esc(p?.name || '(đã xoá)')}</b></span>
+          ${bar(r.total, r.sum)}
+          <span class="stg-sum">${r.sum}</span>
+        </div>
+        <div class="stg-meta">${nums(r.total)}${canOpen ? `<button type="button" class="link-btn" data-action="toggle-stages" data-id="${esc(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾ Ẩn chi tiết' : '▸ Chi tiết từng phân loại'}</button>` : ''}</div>
+        ${open ? `<div class="stg-variants">${vKeys.sort((a, b) => Object.values(r.variants[b]).reduce((x, y) => x + y, 0) - Object.values(r.variants[a]).reduce((x, y) => x + y, 0)).map((vk) => {
+          const c = r.variants[vk];
+          const sum = Object.values(c).reduce((x, y) => x + y, 0);
+          return `<div class="stg-row sub"><span class="stg-name">${esc(variantOf(id, vk)?.name || 'Chưa chọn phân loại')}</span>${bar(c, sum)}<span class="stg-sum">${sum}</span></div><div class="stg-meta sub">${nums(c)}</div>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+    }).join('')}</div>` : '<div class="empty">Chưa có đơn nào đang xử lý trong thời gian này.</div>'}
+  </section>`;
+}
+
 function pageDashboard() {
   const [from, to, periodLabel] = periodRange();
   const orders = S.orders.filter((o) => o.date >= from && o.date <= to);
@@ -429,6 +467,7 @@ function pageDashboard() {
       </div>
       ${openElsewhere ? `<p class="small muted stboard-note">Còn <b>${openElsewhere}</b> đơn chưa xong ở thời gian khác. <a href="#dashboard" data-period="all">Xem tất cả</a></p>` : ''}
     </section>
+    ${stagesChart(orders)}
     ${unmapped ? `<div class="card" style="margin-top:16px">⚠️ Có <b>${unmapped}</b> đơn có sản phẩm chưa gắn với kho (giá vốn = 0). Mở đơn để chọn sản phẩm.</div>` : ''}
     <div class="grid two" style="margin-top:16px">
       <div class="card">
@@ -2307,6 +2346,7 @@ document.addEventListener('click', async (e) => {
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'copy-tracking': return copyText(btn.dataset.text);
+    case 'toggle-stages': ui.stages[id] = !ui.stages[id]; return render();
     case 'new-parcel': return openParcelForm();
     case 'edit-group': return openGroupEdit(btn.dataset.ids.split(','));
     case 'receive-import': return openReceiveDialog([id]);
