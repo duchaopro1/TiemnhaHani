@@ -328,3 +328,27 @@ test('Shopee đọc cột Mã vận đơn / Tracking Number', () => {
   assert.equal(b.tracking, '');
   assert.equal(rowsToOrders([['Order ID', 'Tracking Number*', 'Quantity'], ['B1', 'GHN55', 1]])[0].tracking, 'GHN55');
 });
+
+test('đóng gói cả đơn: tính 1 lần mỗi đơn, trừ kho, bỏ qua vật tư dùng chung, đơn huỷ không trừ', () => {
+  const state = {
+    products: [{ id: 'A', baseCost: 10000 }, { id: 'B', baseCost: 20000 }],
+    packaging: [{ id: 'p1', baseCost: 2000 }, { id: 'p2', baseCost: 3000 }, { id: 'box', baseCost: 5000 }, { id: 'tape', baseCost: 1000, shared: true }],
+    imports: [{ kind: 'packaging', itemId: 'box', qty: 10, unitCost: 5000, extraFee: 0 }],
+    orders: [],
+  };
+  const costs = costTable(state);
+  const order = { status: 'pending', items: [
+    { productId: 'A', qty: 3, price: 50000, pack1: 'p1' },
+    { productId: 'B', qty: 1, price: 60000, pack1: 'p2' },
+  ], wrap1: 'box', wrap2: 'tape' };
+  const s = orderSummary(costs, order);
+  // đóng gói riêng: p1 (2.000) + p2 (3.000); cả đơn: 1 hộp 5.000; băng keo dùng chung không tính vào đơn
+  assert.equal(s.wrapping, 5000);
+  assert.equal(s.packaging, 2000 + 3000 + 5000);
+  assert.equal(s.profit, 210000 - (30000 + 20000) - 10000);
+  // không nhân theo số sản phẩm: 4 sản phẩm vẫn chỉ 1 hộp
+  const st = stockLevels({ ...state, orders: [order, { ...order, status: 'cancelled' }] });
+  assert.equal(st.packaging.box, 10 - 1);
+  // đơn cũ không có wrap vẫn tính như trước
+  assert.equal(orderSummary(costs, { items: order.items }).packaging, 5000);
+});

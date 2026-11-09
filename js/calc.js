@@ -65,6 +65,8 @@ export function countByStatus(orders) {
 }
 
 export const PACK_SLOTS = ['pack1', 'pack2', 'pack3'];
+/** Packaging for the whole order (the outer box/bag that holds every product), one of each per order. */
+export const WRAP_SLOTS = ['wrap1', 'wrap2', 'wrap3'];
 
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 
@@ -128,12 +130,16 @@ export function orderSummary(costs, order) {
     product += c.product;
     packaging += c.packaging;
   }
+  // Outer packaging of the whole order: once per order, shared supplies are operating cost instead.
+  let wrapping = 0;
+  for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
+  packaging += wrapping;
   const discount = num(order.discount);
   const fee = num(order.platformFee);
   const ship = order.shipPayer === 'shop' ? num(order.shipFee) : 0;
   const revenue = gross - discount;
   const cost = product + packaging + fee + ship;
-  return { gross, discount, revenue, product, packaging, fee, ship, cost, profit: revenue - cost };
+  return { gross, discount, revenue, product, packaging, wrapping, fee, ship, cost, profit: revenue - cost };
 }
 
 /**
@@ -191,6 +197,9 @@ export function stockLevels(state) {
   }
   for (const order of state.orders || []) {
     if (INACTIVE_STATUSES.has(order.status)) continue;
+    for (const slot of WRAP_SLOTS) {
+      if (order[slot] && !sharedIds.has(order[slot])) packaging[order[slot]] = num(packaging[order[slot]]) - 1;
+    }
     for (const line of order.items || []) {
       if (line.productId) {
         products[line.productId] = num(products[line.productId]) - num(line.qty);

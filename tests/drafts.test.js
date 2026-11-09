@@ -112,3 +112,10 @@ test('mã vận đơn: bỏ khoảng trắng, sửa mã thì form được coi l
   assert.equal(isDirty(base, { ...base, tracking: '   ' }), false);
   assert.equal(isDirty(base, { ...base, tracking: 'SPX123' }), true);
 });
+
+test('đóng gói cả đơn: nằm trong bản nháp và làm form thành đã sửa', () => {
+  const base = blank();
+  assert.equal(normalizeOrder(base).wrap1, '');
+  assert.equal(isDirty(base, { ...base, wrap1: '' }), false);
+  assert.equal(isDirty(base, { ...base, wrap1: 'box' }), true);
+});

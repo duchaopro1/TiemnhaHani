@@ -1,6 +1,6 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
-  PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
+  PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
   costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
@@ -546,7 +546,7 @@ async function openOrderForm(existing) {
 function openOrderFormNow(existing, restored) {
   const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
-    shipFee: 0, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, items: [blankLine()],
+    shipFee: 0, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, wrap1: '', wrap2: '', wrap3: '', items: [blankLine()],
   };
   if (!base.items?.length) base.items = [blankLine()];
   const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
@@ -597,6 +597,11 @@ function openOrderFormNow(existing, restored) {
       <div id="lines"></div>
       <div id="dup-warn" role="alert" hidden></div>
       <button type="button" class="btn ghost sm" id="add-line">＋ Thêm sản phẩm</button>
+      <h3 style="margin:18px 0 4px">Đóng gói cả đơn</h3>
+      <p class="small muted" style="margin:0 0 8px">Hộp / túi ngoài chứa tất cả sản phẩm của đơn để ship đi. Mỗi đơn dùng 1 cái, không nhân theo số sản phẩm.</p>
+      <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+        ${WRAP_SLOTS.map((k, j) => `<label class="field">Đóng gói cả đơn ${j + 1}<select name="${k}">${options(orderPackaging(), o[k], '— không —')}</select></label>`).join('')}
+      </div>
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
         <label class="field" style="grid-column:1/-1">Mã vận đơn<input name="tracking" value="${esc(o.tracking || '')}" placeholder="VD: SPXVN0123456789 (nhập sau khi gửi hàng cũng được)" autocomplete="off"></label>
@@ -720,6 +725,7 @@ function openOrderFormNow(existing, restored) {
         const d = formData(form);
         return {
           platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
+          wrap1: d.wrap1 || '', wrap2: d.wrap2 || '', wrap3: d.wrap3 || '',
           shipFee: num(d.shipFee), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
           shipPayer: $('#ship-payer .on', m).dataset.v,
