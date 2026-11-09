@@ -538,3 +538,8 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .rev-table tfoot td { border-top: 2px solid var(--line, #dfe6f2); font-weight: 600; background: var(--bg-soft, #f6f9ff); }
 .rev-table td.neg { color: var(--danger, #c0392b); }
 .field.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; }
+
+.rev-table td.pos { color: var(--ok, #1f8a4c); font-weight: 600; }
+.rev-table { font-size: 13px; }
+.rev-table th, .rev-table td { padding-left: 7px; padding-right: 7px; }
+.rev-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }

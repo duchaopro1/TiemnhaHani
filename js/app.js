@@ -299,6 +299,12 @@ function pageRevenue() {
   const pickedOther = ui.period === 'month' && !isMonth(cur);
   const cell = (v, cls = '') => `<td class="num ${cls}">${money(v)}</td>`;
   const profitCls = (v) => (v < 0 ? 'neg' : '');
+  // Shipping with a sign: + the customer pays it (adds to Tổng đơn), − the shop pays it (a cost).
+  const shipCell = (v, shop, net = false) => {
+    const signed = net ? v : shop ? -v : v;
+    if (!signed && !v) return '<td class="num">0đ</td>';
+    return `<td class="num ${signed < 0 ? 'neg' : 'pos'}">${signed < 0 ? '−' : '+'}${money(Math.abs(signed))}${net ? '' : `<br><span class="muted small">${shop ? 'Shop chịu' : 'Khách trả'}</span>`}</td>`;
+  };
   const margin = total.revenue ? Math.round((total.profit / total.revenue) * 1000) / 10 : 0;
 
   return `
@@ -329,18 +335,18 @@ function pageRevenue() {
       ${rows.length ? `<table class="rev-table">
         <thead><tr>
           <th>Ngày</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
-          <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num" title="Phí ship của đơn, ai trả cũng hiện">Phí ship</th><th class="num" title="Phần phí ship shop trả, tính vào chi phí">Ship shop chịu</th><th class="num">Phí sàn</th>
+          <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num" title="+ khách trả (cộng vào Tổng đơn) · − shop chịu (tính vào Chi phí)">Phí ship</th><th class="num">Phí sàn</th>
           <th class="num" title="Giá vốn + đóng gói + ship shop chịu + phí sàn">Chi phí</th><th class="num" title="Doanh thu − chi phí">Lợi nhuận</th>
           <th class="num">Tiền công</th><th class="num" title="Lợi nhuận − tiền công">Lợi nhuận sau công</th>
         </tr></thead>
         <tbody>${rows.map((r) => `<tr>
           <td>${fmtDate(r.order.date)}</td>
           <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="chip st-done">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
-          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}<td class="num">${money(r.shipFee)}${r.shipFee ? `<br><span class="muted small">${r.order.shipPayer === 'shop' ? 'Shop chịu' : 'Khách trả'}</span>` : ''}</td>${cell(r.ship)}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}${cell(r.labor)}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
+          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}${cell(r.labor)}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
           <td colspan="2"><b>Tổng ${total.orders} đơn</b></td>
-          ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${cell(total.shipFee)}${cell(total.ship)}${cell(total.fee)}${cell(total.cost, 'strong')}${cell(total.before, `strong ${profitCls(total.before)}`)}${cell(total.labor)}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
+          ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${shipCell(total.shipFee - 2 * total.ship, false, true)}${cell(total.fee)}${cell(total.cost, 'strong')}${cell(total.before, `strong ${profitCls(total.before)}`)}${cell(total.labor)}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
         </tr></tfoot>
       </table>` : '<div class="empty">Chưa có đơn hoàn thành trong thời gian này.</div>'}
     </div>`;
