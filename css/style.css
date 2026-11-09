@@ -527,3 +527,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 #dup-warn { margin: 10px 0 0; padding: 10px 14px; border-radius: 12px; background: var(--st-pending-bg, #fff4d6); border: 1px solid var(--st-pending-edge, #f0c36a); color: var(--ink, #1b2a4a); font-size: 13px; }
 #dup-warn ul { margin: 4px 0 0 18px; padding: 0; }
 dialog.confirm .modal-body p { white-space: pre-line; }
+
+/* tracking code */
+.track-btn { border: 0; background: none; padding: 0; margin-top: 2px; font: inherit; font-size: 12px; font-weight: 600; color: var(--blue, #1d5fd0); cursor: copy; text-align: left; word-break: break-all; }
+.track-btn:hover { text-decoration: underline; }

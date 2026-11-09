@@ -29,6 +29,22 @@ function toast(msg, ms = 2600) {
 }
 const notify = (msg) => toast(msg, 5000);
 
+/** Copy text to the clipboard; falls back to a hidden textarea where the clipboard API is blocked. */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const t = document.createElement('textarea');
+    t.value = text;
+    t.style.cssText = 'position:fixed;opacity:0';
+    document.body.append(t);
+    t.select();
+    try { document.execCommand('copy'); } catch { /* nothing else to try */ }
+    t.remove();
+  }
+  toast(`Đã sao chép ${text}`);
+}
+
 /** In-page yes/no dialog (browser confirm() is blocked inside Claude artifacts). */
 function ask(message, okLabel = 'Xoá') {
   return new Promise((resolve) => {
@@ -381,7 +397,7 @@ function filteredOrders() {
   const q = normalize(f.q);
   return S.orders
     .filter((o) => (!f.platform || o.platform === f.platform) && (!f.status || o.status === f.status) && (!f.month || (o.date || '').startsWith(f.month)))
-    .filter((o) => !q || normalize([o.code, o.customer, o.note, ...(o.items || []).map((l) => itemLabel(l.productId, l.variantId, l.productName))].join(' ')).includes(q))
+    .filter((o) => !q || normalize([o.code, o.customer, o.note, o.tracking, ...(o.items || []).map((l) => itemLabel(l.productId, l.variantId, l.productName))].join(' ')).includes(q))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
@@ -493,7 +509,7 @@ function orderRow(o) {
     <td class="num">${money(s.revenue)}${payInfo(o)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
-    <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span></td>
+    <td class="small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
     <td class="st-cell"><button type="button" class="st-btn st-${o.status}" data-stmenu="${o.id}" aria-haspopup="listbox" aria-expanded="false" aria-label="Trạng thái đơn ${esc(o.code || '')}: ${esc(STATUSES[o.status] || '')}">${esc(STATUSES[o.status] || o.status)}<span aria-hidden="true">▾</span></button></td>
     <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-order" data-id="${o.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-order" data-id="${o.id}" title="Xoá">🗑</button></td>
   </tr>`;
@@ -530,7 +546,7 @@ async function openOrderForm(existing) {
 function openOrderFormNow(existing, restored) {
   const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
-    shipFee: 0, shipPayer: 'customer', discount: 0, platformFee: 0, paid: null, items: [blankLine()],
+    shipFee: 0, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, items: [blankLine()],
   };
   if (!base.items?.length) base.items = [blankLine()];
   const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
@@ -583,6 +599,7 @@ function openOrderFormNow(existing, restored) {
       <button type="button" class="btn ghost sm" id="add-line">＋ Thêm sản phẩm</button>
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
+        <label class="field" style="grid-column:1/-1">Mã vận đơn<input name="tracking" value="${esc(o.tracking || '')}" placeholder="VD: SPXVN0123456789 (nhập sau khi gửi hàng cũng được)" autocomplete="off"></label>
         <label class="field">Phí ship<input type="number" min="0" step="1000" name="shipFee" value="${num(o.shipFee)}"></label>
         <div class="field"><span>Ai trả ship?</span>
           <div class="seg" id="ship-payer">
@@ -703,7 +720,7 @@ function openOrderFormNow(existing, restored) {
         const d = formData(form);
         return {
           platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
-          shipFee: num(d.shipFee), discount: num(d.discount), platformFee: num(d.platformFee),
+          shipFee: num(d.shipFee), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
           shipPayer: $('#ship-payer .on', m).dataset.v,
         };
@@ -942,7 +959,7 @@ async function commitShopee(parsed) {
         return { ...l, productId: l.productId || m.productId, variantId: l.variantId || (l.productId && l.productId !== m.productId ? '' : m.variantId) };
       };
       const items = old.items?.length ? old.items.map(fill) : o.items;
-      return { ...old, status: mergeShopeeStatus(old.status, o.status), platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, items };
+      return { ...old, status: mergeShopeeStatus(old.status, o.status), platformFee: o.platformFee, discount: o.discount, shipFee: o.shipFee, tracking: o.tracking || old.tracking || '', items };
     }
     added++;
     o.items = o.items.map((l) => {
@@ -2146,7 +2163,7 @@ async function loadDemo() {
   await store.upsertMany('orders', [
     { platform: 'instagram', code: 'IG-0001', date: d, customer: '@linh.ng', status: 'done', shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
       items: [{ productId: p1.id, qty: 2, price: 45000, pack1: bag.id, pack2: card.id, pack3: '', packEach: true }] },
-    { platform: 'threads', code: 'TH-0001', date: d, customer: '@minh', status: 'shipping', shipFee: 25000, shipPayer: 'shop', discount: 10000, platformFee: 0,
+    { platform: 'threads', code: 'TH-0001', date: d, customer: '@minh', status: 'shipping', tracking: 'SPXVN04812345678', shipFee: 25000, shipPayer: 'shop', discount: 10000, platformFee: 0,
       items: [{ productId: p3.id, qty: 1, price: 259000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
     { platform: 'instagram', code: 'IG-0002', date: d, customer: '@thu.ha', status: 'designed', card: true, shipFee: 30000, shipPayer: 'customer', discount: 0, platformFee: 0,
       items: [{ productId: cup.id, variantId: cup.variants[2].id, qty: 2, price: 89000, pack1: box.id, pack2: paper.id, pack3: ribbon.id }] },
@@ -2208,6 +2225,7 @@ document.addEventListener('click', async (e) => {
     case 'del-order': return confirmDel('orders', 'Xoá đơn hàng này?');
     case 'new-import': return openImportForm();
     case 'edit-import': return openImportForm(store.get('imports', id));
+    case 'copy-tracking': return copyText(btn.dataset.text);
     case 'new-parcel': return openParcelForm();
     case 'edit-group': return openGroupEdit(btn.dataset.ids.split(','));
     case 'receive-import': return openReceiveDialog([id]);

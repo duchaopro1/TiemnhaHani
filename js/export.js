@@ -62,7 +62,7 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
   const orderRows = [[
     'Ngày', 'Nền tảng', 'Mã đơn', 'Khách hàng', 'Trạng thái', 'Có thiệp', 'Sản phẩm', 'Số lượng',
     'Tiền hàng', 'Giảm giá', 'Doanh thu', 'Giá vốn SP', 'Đóng gói', 'Phí sàn',
-    'Phí ship', 'Ai trả ship', 'Ship shop chịu', 'Tổng chi phí', 'Lợi nhuận', 'Đã thanh toán (cọc)', 'Còn thu khi nhận hàng', 'Ghi chú',
+    'Phí ship', 'Ai trả ship', 'Mã vận đơn', 'Ship shop chịu', 'Tổng chi phí', 'Lợi nhuận', 'Đã thanh toán (cọc)', 'Còn thu khi nhận hàng', 'Ghi chú',
   ]];
   const lineRows = [[
     'Ngày', 'Nền tảng', 'Mã đơn', 'Trạng thái', 'Sản phẩm', 'Phân loại', 'Số lượng', 'Giá bán / cái',
@@ -83,7 +83,7 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
       vnDate(o.date), PLATFORMS[o.platform]?.label || o.platform, o.code || '', o.customer || '', STATUSES[o.status] || o.status, o.card ? 'Có' : '',
       (o.items || []).map((l) => `${names.item(l.productId, l.variantId, l.productName || '?')} x${l.qty}`).join('; '), qty,
       z(s.gross), z(s.discount), z(s.revenue), z(s.product), z(s.packaging), z(s.fee),
-      +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', z(s.ship), z(s.cost), z(s.profit),
+      +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', o.tracking || '', z(s.ship), z(s.cost), z(s.profit),
       pay.tracked ? pay.paid : '', pay.tracked ? toCollectNow : '', o.note || '',
     ]);
     for (const l of o.items || []) {
@@ -113,7 +113,7 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
 
   orderRows.push([
     'TỔNG', '', `${total.orders} đơn`, '', '', total.cards ? `${total.cards} thiệp` : '', '', total.qty, total.gross, total.discount, total.revenue,
-    total.product, total.packaging, total.fee, '', '', total.ship, total.cost, total.profit, total.paid, total.remaining, '',
+    total.product, total.packaging, total.fee, '', '', '', total.ship, total.cost, total.profit, total.paid, total.remaining, '',
   ]);
 
   // With `operating` (shared supplies bought in the period) the report's cost and profit include it,

@@ -320,3 +320,11 @@ test('cảnh báo đơn trùng: cùng tài khoản + cùng sản phẩm + đơn 
   assert.equal(findDuplicateOrders([old()], { ...draft, customer: '' }).length, 0); // chưa có tên khách
   assert.equal(findDuplicateOrders([old()], { customer: 'khach.a', items: [] }).length, 0);
 });
+
+test('Shopee đọc cột Mã vận đơn / Tracking Number', () => {
+  const rows = [['Mã đơn hàng', 'Trạng Thái Đơn Hàng', 'Mã vận đơn', 'Số lượng'], ['A1', 'Đang giao', 'SPXVN001', 1], ['A2', 'Đang giao', '', 1]];
+  const [a, b] = rowsToOrders(rows);
+  assert.equal(a.tracking, 'SPXVN001');
+  assert.equal(b.tracking, '');
+  assert.equal(rowsToOrders([['Order ID', 'Tracking Number*', 'Quantity'], ['B1', 'GHN55', 1]])[0].tracking, 'GHN55');
+});

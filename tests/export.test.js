@@ -48,8 +48,8 @@ test('lọc đơn theo khoảng, nền tảng, bỏ đơn huỷ; bảng tổng k
   // B: 180.000 - 60.000 vốn - 5.000 hộp - 20.000 ship shop chịu = 95.000; C huỷ → 0
   assert.equal(sheets.total.orders, 1);
   assert.equal(sheets.total.profit, 95000);
-  assert.equal(sheets.orders.at(-1)[18], 95000);
-  assert.equal(sheets.orders[2][18], 0); // đơn huỷ vẫn liệt kê nhưng không tính
+  assert.equal(sheets.orders.at(-1)[19], 95000);
+  assert.equal(sheets.orders[2][19], 0); // đơn huỷ vẫn liệt kê nhưng không tính
   assert.equal(sheets.lines[1][5], 'Đỏ');
   assert.equal(sheets.lines[1][10], 'Hộp');
   assert.ok(toCsv([['a,b', 'c"d']]).endsWith('"a,b","c""d"'));
@@ -113,4 +113,14 @@ test('báo cáo có cột tiền cọc / còn thu và tổng của chúng', () =
   assert.equal(row('Còn phải thu khi nhận hàng (đơn chưa xong)'), 65000);
   assert.equal(row('Khách đã thanh toán trước (đơn có ghi nhận)'), 100000);
   assert.equal(sheets.orders.at(-1).length, head.length);
+});
+
+test('báo cáo có cột Mã vận đơn', () => {
+  const costs = { product: { p: 0 }, packaging: {}, shared: {} };
+  const o = { platform: 'instagram', code: 'A', date: '2026-11-02', status: 'shipping', tracking: 'SPX999', items: [{ productId: 'p', qty: 1, price: 5000 }] };
+  const sheets = buildSheets({ orders: [o], costs, range: exportRange({ mode: 'month', month: '2026-11' }), names: { item: () => 'P', pack: () => '' } });
+  const col = sheets.orders[0].indexOf('Mã vận đơn');
+  assert.ok(col > 0);
+  assert.equal(sheets.orders[1][col], 'SPX999');
+  assert.equal(sheets.orders[0].length, sheets.orders.at(-1).length);
 });

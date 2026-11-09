@@ -104,3 +104,11 @@ test('tiền cọc: để trống khác 0, và sửa tiền cọc thì form đư
   putDraft('new', { order: normalizeOrder({ ...base, paid: 400000 }) }, st, 1000);
   assert.equal(getDraft('new', st, 2000).order.paid, 400000);
 });
+
+test('mã vận đơn: bỏ khoảng trắng, sửa mã thì form được coi là đã sửa', () => {
+  const base = blank();
+  assert.equal(normalizeOrder(base).tracking, '');
+  assert.equal(normalizeOrder({ tracking: '  SPX123 ' }).tracking, 'SPX123');
+  assert.equal(isDirty(base, { ...base, tracking: '   ' }), false);
+  assert.equal(isDirty(base, { ...base, tracking: 'SPX123' }), true);
+});

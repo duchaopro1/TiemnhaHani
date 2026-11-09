@@ -24,6 +24,7 @@ export function normalizeOrder(o) {
     note: str(o.note),
     card: Boolean(o.card),
     shipFee: num(o.shipFee),
+    tracking: str(o.tracking).trim(),
     shipPayer: o.shipPayer === 'shop' ? 'shop' : 'customer',
     discount: num(o.discount),
     platformFee: num(o.platformFee),

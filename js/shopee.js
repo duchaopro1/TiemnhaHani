@@ -26,6 +26,7 @@ const COLUMNS = {
   fixedFee: ['phi co dinh', 'commission fee'],
   serviceFee: ['phi dich vu', 'service fee'],
   paymentFee: ['phi thanh toan', 'transaction fee'],
+  tracking: ['ma van don', 'tracking number', 'tracking no'],
   customer: ['ten nguoi nhan', 'receiver name', 'nguoi mua', 'username (buyer)'],
   note: ['nhan xet tu nguoi mua', 'remark from buyer', 'ghi chu'],
 };
@@ -116,6 +117,7 @@ export function rowsToOrders(rows) {
         discount: parseNumber(get(row, 'shopVoucher')),
         shipFee: parseNumber(get(row, 'buyerShip')),
         shipPayer: 'customer',
+        tracking: String(get(row, 'tracking') || '').trim(),
         platformFee: parseNumber(get(row, 'fixedFee')) + parseNumber(get(row, 'serviceFee')) + parseNumber(get(row, 'paymentFee')),
         items: [],
       };
