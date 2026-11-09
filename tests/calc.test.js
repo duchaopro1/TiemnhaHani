@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -351,4 +351,35 @@ test('đóng gói cả đơn: tính 1 lần mỗi đơn, trừ kho, bỏ qua v�
   assert.equal(st.packaging.box, 10 - 1);
   // đơn cũ không có wrap vẫn tính như trước
   assert.equal(orderSummary(costs, { items: order.items }).packaging, 5000);
+});
+
+test('trang doanh thu: chỉ đơn hoàn thành, tổng đơn / doanh thu / chi phí / lợi nhuận đúng công thức', () => {
+  const state = {
+    products: [{ id: 'A', baseCost: 20000 }],
+    packaging: [{ id: 'box', baseCost: 5000 }, { id: 'tape', baseCost: 1000, shared: true }],
+    imports: [], orders: [],
+  };
+  const costs = costTable(state);
+  const done = {
+    id: 'o1', code: 'X1', date: '2026-11-03', status: 'done', shipFee: 30000, shipPayer: 'shop', discount: 10000, platformFee: 8000,
+    items: [{ productId: 'A', qty: 2, price: 100000, pack1: 'box' }], wrap1: 'tape',
+  };
+  const { rows, total } = completedRevenue(costs, [done, { ...done, id: 'o2', status: 'shipping' }, { ...done, id: 'o3', status: 'cancelled' }], 10000);
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+  assert.equal(r.gross, 200000);
+  assert.equal(r.revenue, 190000); // hàng - giảm giá
+  assert.equal(r.total, 190000); // shop chịu ship nên khách không trả thêm
+  assert.equal(r.product, 40000);
+  assert.equal(r.packaging, 5000); // băng keo dùng chung không vào đơn
+  assert.equal(r.ship, 30000);
+  assert.equal(r.fee, 8000);
+  assert.equal(r.cost, 40000 + 5000 + 30000 + 8000 + 10000);
+  assert.equal(r.profit, 190000 - r.cost);
+  assert.equal(total.profit, r.profit);
+  // khách trả ship: tổng đơn = hàng + ship - giảm giá, ship không phải chi phí của shop
+  const c = completedRevenue(costs, [{ ...done, shipPayer: 'customer' }], 10000).rows[0];
+  assert.equal(c.total, 200000 + 30000 - 10000);
+  assert.equal(c.ship, 0);
+  assert.equal(c.profit, 190000 - (40000 + 5000 + 8000 + 10000));
 });

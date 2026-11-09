@@ -315,3 +315,36 @@ export function findDuplicateOrders(orders, draft) {
   }
   return out.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || ''));
 }
+
+/** Fixed pay for packing one order, in dong; the shop can change it on the revenue page. */
+export const DEFAULT_LABOR = 10000;
+
+/**
+ * One row per finished order (status 'done') with where its money goes.
+ *   total    = goods + shipping the customer pays - discount   (what the customer pays)
+ *   revenue  = goods - discount
+ *   cost     = product cost + packaging + shipping the shop pays + platform fee + labor
+ *   profit   = revenue - cost
+ * Operating costs (shared supplies) are not per order and are not in these rows.
+ */
+export function completedRevenue(costs, orders, labor = DEFAULT_LABOR) {
+  const rows = [];
+  const total = { orders: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, ship: 0, fee: 0, labor: 0, cost: 0, profit: 0 };
+  for (const order of orders) {
+    if (order.status !== 'done') continue;
+    const s = orderSummary(costs, order);
+    const row = {
+      order,
+      total: orderPayment(costs, order).total,
+      gross: s.gross, discount: s.discount, revenue: s.revenue,
+      product: s.product, packaging: s.packaging, ship: s.ship, fee: s.fee, labor: num(labor),
+    };
+    row.cost = row.product + row.packaging + row.ship + row.fee + row.labor;
+    row.profit = row.revenue - row.cost;
+    rows.push(row);
+    total.orders += 1;
+    for (const k of Object.keys(total)) if (k !== 'orders') total[k] += row[k];
+  }
+  rows.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || '') || (b.order.code || '').localeCompare(a.order.code || ''));
+  return { rows, total };
+}

@@ -531,3 +531,10 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 /* tracking code */
 .track-btn { border: 0; background: none; padding: 0; margin-top: 2px; font: inherit; font-size: 12px; font-weight: 600; color: var(--blue, #1d5fd0); cursor: copy; text-align: left; word-break: break-all; }
 .track-btn:hover { text-decoration: underline; }
+
+/* revenue page */
+.rev-table th, .rev-table td { white-space: nowrap; }
+.rev-table td.strong { font-weight: 700; }
+.rev-table tfoot td { border-top: 2px solid var(--line, #dfe6f2); font-weight: 600; background: var(--bg-soft, #f6f9ff); }
+.rev-table td.neg { color: var(--danger, #c0392b); }
+.field.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; }

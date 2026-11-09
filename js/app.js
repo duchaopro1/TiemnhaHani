@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -98,7 +98,7 @@ function derive() {
   S.presets.sort(byName);
   costs = costTable(S);
   stock = stockLevels(S);
-  settings = { id: 'settings', shopeeMap: {}, lowStock: 5, ...(store.get('meta', 'settings') || {}) };
+  settings = { id: 'settings', shopeeMap: {}, lowStock: 5, laborPerOrder: DEFAULT_LABOR, ...(store.get('meta', 'settings') || {}) };
 }
 const product = (id) => store.get('products', id);
 const pack = (id) => store.get('packaging', id);
@@ -132,6 +132,7 @@ const orderPackaging = () => S.packaging.filter((k) => !k.shared);
 const TABS = {
   dashboard: 'Tổng quan',
   orders: 'Đơn hàng',
+  revenue: 'Doanh thu',
   imports: 'Nhập hàng',
   products: 'Sản phẩm',
   packaging: 'Đóng gói',
@@ -150,7 +151,7 @@ const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) 
 function render() {
   derive();
   const tab = currentTab();
-  const pages = { dashboard: pageDashboard, orders: pageOrders, imports: pageImports, products: pageProducts, packaging: pagePackaging, settings: pageSettings };
+  const pages = { dashboard: pageDashboard, orders: pageOrders, revenue: pageRevenue, imports: pageImports, products: pageProducts, packaging: pagePackaging, settings: pageSettings };
   const focused = document.activeElement?.id;
   $('#app').innerHTML = `
     <header class="topbar">
@@ -286,6 +287,62 @@ function periodRange() {
   if (ui.period === 'all') return ['0000', '9999', 'Toàn bộ thời gian'];
   const r = exportRange({ mode: 'month', month: ui.dashMonth });
   return [r.from, r.to, r.label];
+}
+
+/** Finished orders one by one: what the customer paid, every cost taken out, and what is left. */
+function pageRevenue() {
+  const [from, to, periodLabel] = periodRange();
+  const labor = num(settings.laborPerOrder);
+  const { rows, total } = completedRevenue(costs, S.orders.filter((o) => o.date >= from && o.date <= to), labor);
+  const cur = thisMonth();
+  const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
+  const pickedOther = ui.period === 'month' && !isMonth(cur);
+  const cell = (v, cls = '') => `<td class="num ${cls}">${money(v)}</td>`;
+  const profitCls = (v) => (v < 0 ? 'neg' : '');
+  const margin = total.revenue ? Math.round((total.profit / total.revenue) * 1000) / 10 : 0;
+
+  return `
+    <div class="page-head">
+      <div><h1>Doanh thu</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · chỉ tính đơn <b>Hoàn thành</b>. Mỗi đơn cho thấy khách trả bao nhiêu, mất những khoản phí nào và lời bao nhiêu.</p></div>
+      <div class="actions period-bar">
+        <button class="period-btn ${isMonth(cur) ? 'on' : ''}" data-period="this">Tháng này</button>
+        <div class="month-nav ${pickedOther ? 'on' : ''}" title="Chọn các tháng trước">
+          <button class="icon-btn" data-month-step="-1" title="Tháng trước đó" aria-label="Tháng trước đó">‹</button>
+          <input type="month" id="dash-month" value="${esc(ui.period === 'month' ? ui.dashMonth : '')}" max="${cur}" aria-label="Chọn tháng">
+          <button class="icon-btn" data-month-step="1" title="Tháng sau" aria-label="Tháng sau" ${ui.period === 'month' && ui.dashMonth >= cur ? 'disabled' : ''}>›</button>
+        </div>
+        <button class="period-btn ${ui.period === 'all' ? 'on' : ''}" data-period="all">Tất cả</button>
+      </div>
+    </div>
+    <div class="grid kpi">
+      <div class="card kpi-card"><div class="label">Đơn hoàn thành</div><div class="value">${total.orders}</div></div>
+      <div class="card kpi-card"><div class="label">Tổng khách trả</div><div class="value">${money(total.total)}</div></div>
+      <div class="card kpi-card him"><div class="label">Doanh thu (hàng − giảm giá)</div><div class="value">${money(total.revenue)}</div></div>
+      <div class="card kpi-card her"><div class="label">Chi phí</div><div class="value">${money(total.cost)}</div></div>
+      <div class="card kpi-card"><div class="label">Lợi nhuận${total.revenue ? ` · ${margin}%` : ''}</div><div class="value ${profitCls(total.profit)}">${money(total.profit)}</div></div>
+    </div>
+    <div class="toolbar">
+      <label class="field inline">Tiền công mỗi đơn <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
+      <span class="muted small">Chi phí của đơn = giá vốn SP + đóng gói + ship shop chịu + phí sàn + tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
+    </div>
+    <div class="card table-wrap">
+      ${rows.length ? `<table class="rev-table">
+        <thead><tr>
+          <th>Ngày</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
+          <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num">Ship shop chịu</th><th class="num">Phí sàn</th><th class="num">Tiền công</th>
+          <th class="num" title="Giá vốn + đóng gói + ship shop chịu + phí sàn + tiền công">Chi phí</th><th class="num" title="Doanh thu − chi phí">Lợi nhuận</th>
+        </tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td>${fmtDate(r.order.date)}</td>
+          <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="chip st-done">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
+          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${cell(r.ship)}${cell(r.fee)}${cell(r.labor)}${cell(r.cost, 'strong')}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
+        </tr>`).join('')}</tbody>
+        <tfoot><tr>
+          <td colspan="2"><b>Tổng ${total.orders} đơn</b></td>
+          ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${cell(total.ship)}${cell(total.fee)}${cell(total.labor)}${cell(total.cost, 'strong')}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
+        </tr></tfoot>
+      </table>` : '<div class="empty">Chưa có đơn hoàn thành trong thời gian này.</div>'}
+    </div>`;
 }
 
 function pageDashboard() {
@@ -2287,6 +2344,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
+  if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerOrder: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { await importShopeeFile(t.files[0]); t.value = ''; }
   if (t.id === 'restore-file' && t.files[0]) {
     try {
