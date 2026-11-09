@@ -318,28 +318,29 @@ function pageRevenue() {
       <div class="card kpi-card"><div class="label">Đơn hoàn thành</div><div class="value">${total.orders}</div></div>
       <div class="card kpi-card"><div class="label">Tổng khách trả</div><div class="value">${money(total.total)}</div></div>
       <div class="card kpi-card him"><div class="label">Doanh thu (hàng − giảm giá)</div><div class="value">${money(total.revenue)}</div></div>
-      <div class="card kpi-card her"><div class="label">Chi phí</div><div class="value">${money(total.cost)}</div></div>
-      <div class="card kpi-card"><div class="label">Lợi nhuận${total.revenue ? ` · ${margin}%` : ''}</div><div class="value ${profitCls(total.profit)}">${money(total.profit)}</div></div>
+      <div class="card kpi-card her"><div class="label">Chi phí (gồm tiền công)</div><div class="value">${money(total.cost + total.labor)}</div></div>
+      <div class="card kpi-card"><div class="label">Lợi nhuận sau công${total.revenue ? ` · ${margin}%` : ''}</div><div class="value ${profitCls(total.profit)}">${money(total.profit)}</div></div>
     </div>
     <div class="toolbar">
       <label class="field inline">Tiền công mỗi đơn <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
-      <span class="muted small">Chi phí của đơn = giá vốn SP + đóng gói + ship shop chịu + phí sàn + tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
+      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Lợi nhuận sau công = lợi nhuận − tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
     </div>
     <div class="card table-wrap">
       ${rows.length ? `<table class="rev-table">
         <thead><tr>
           <th>Ngày</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
-          <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num">Ship shop chịu</th><th class="num">Phí sàn</th><th class="num">Tiền công</th>
-          <th class="num" title="Giá vốn + đóng gói + ship shop chịu + phí sàn + tiền công">Chi phí</th><th class="num" title="Doanh thu − chi phí">Lợi nhuận</th>
+          <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num">Ship shop chịu</th><th class="num">Phí sàn</th>
+          <th class="num" title="Giá vốn + đóng gói + ship shop chịu + phí sàn">Chi phí</th><th class="num" title="Doanh thu − chi phí">Lợi nhuận</th>
+          <th class="num">Tiền công</th><th class="num" title="Lợi nhuận − tiền công">Lợi nhuận sau công</th>
         </tr></thead>
         <tbody>${rows.map((r) => `<tr>
           <td>${fmtDate(r.order.date)}</td>
           <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="chip st-done">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
-          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${cell(r.ship)}${cell(r.fee)}${cell(r.labor)}${cell(r.cost, 'strong')}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
+          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${cell(r.ship)}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}${cell(r.labor)}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
           <td colspan="2"><b>Tổng ${total.orders} đơn</b></td>
-          ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${cell(total.ship)}${cell(total.fee)}${cell(total.labor)}${cell(total.cost, 'strong')}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
+          ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${cell(total.ship)}${cell(total.fee)}${cell(total.cost, 'strong')}${cell(total.before, `strong ${profitCls(total.before)}`)}${cell(total.labor)}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
         </tr></tfoot>
       </table>` : '<div class="empty">Chưa có đơn hoàn thành trong thời gian này.</div>'}
     </div>`;

@@ -374,9 +374,11 @@ test('trang doanh thu: chỉ đơn hoàn thành, tổng đơn / doanh thu / chi 
   assert.equal(r.packaging, 5000); // băng keo dùng chung không vào đơn
   assert.equal(r.ship, 30000);
   assert.equal(r.fee, 8000);
-  assert.equal(r.cost, 40000 + 5000 + 30000 + 8000 + 10000);
-  assert.equal(r.profit, 190000 - r.cost);
+  assert.equal(r.cost, 40000 + 5000 + 30000 + 8000); // chưa gồm tiền công
+  assert.equal(r.before, 190000 - r.cost); // lợi nhuận trước tiền công
+  assert.equal(r.profit, r.before - 10000); // lợi nhuận sau tiền công
   assert.equal(total.profit, r.profit);
+  assert.equal(total.before, r.before);
   // khách trả ship: tổng đơn = hàng + ship - giảm giá, ship không phải chi phí của shop
   const c = completedRevenue(costs, [{ ...done, shipPayer: 'customer' }], 10000).rows[0];
   assert.equal(c.total, 200000 + 30000 - 10000);
