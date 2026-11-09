@@ -543,3 +543,10 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .rev-table { font-size: 13px; }
 .rev-table th, .rev-table td { padding-left: 7px; padding-right: 7px; }
 .rev-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }
+
+/* revenue page: the table scrolls on its own so the column names (and the totals) stay in view */
+.rev-wrap { min-height: 220px; overflow: auto; padding: 0; }
+.rev-wrap .empty { padding: 24px; }
+.rev-table { border-collapse: separate; border-spacing: 0; }
+.rev-table thead th { position: sticky; top: 0; z-index: 2; background: var(--blue-soft); box-shadow: 0 1px 0 var(--line, #dfe6f2); }
+.rev-table tfoot td { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -1px 0 var(--line, #dfe6f2); }

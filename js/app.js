@@ -169,12 +169,22 @@ function render() {
     <main>${pages[tab]()}</main>`;
   updateSyncBadge({ pending: store.pending, error: store.lastError });
   updateLiveBadge(store.liveInfo());
+  fitRevenueTable();
   if (focused && $('#' + focused)) {
     const el = $('#' + focused);
     el.focus();
     if (el.setSelectionRange && el.type === 'search') el.setSelectionRange(el.value.length, el.value.length);
   }
 }
+
+/** The revenue table gets exactly the screen height left below it, so it scrolls inside its own box. */
+function fitRevenueTable() {
+  const box = $('.rev-wrap');
+  if (!box) return;
+  const top = box.getBoundingClientRect().top + window.scrollY;
+  box.style.maxHeight = `${Math.max(240, window.innerHeight - top - 84)}px`;
+}
+window.addEventListener('resize', fitRevenueTable);
 
 /* ================= save status ================= */
 let syncTimer = null;
@@ -331,7 +341,7 @@ function pageRevenue() {
       <label class="field inline">Tiền công mỗi đơn <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
       <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Lợi nhuận sau công = lợi nhuận − tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
     </div>
-    <div class="card table-wrap">
+    <div class="card table-wrap rev-wrap">
       ${rows.length ? `<table class="rev-table">
         <thead><tr>
           <th>Ngày</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
