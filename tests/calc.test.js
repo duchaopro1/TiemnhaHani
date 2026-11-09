@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -304,4 +304,19 @@ test('Shopee: "Người mua xác nhận đã nhận được hàng… vẫn có 
   assert.equal(mapStatus('Đã nhận hàng'), 'done');
   assert.equal(mapStatus('Yêu cầu Trả hàng/Hoàn tiền đang xử lý'), 'returned'); // trả hàng thật vẫn nhận ra
   assert.equal(mapStatus('Đã hủy'), 'cancelled');
+});
+
+test('cảnh báo đơn trùng: cùng tài khoản + cùng sản phẩm + đơn cũ còn chờ xử lý / đã thiết kế', () => {
+  const old = (o) => ({ id: 'o1', customer: '@Khach.A', status: 'pending', date: '2026-11-01', items: [{ productId: 'p1', variantId: 'v1' }], ...o });
+  const draft = { customer: ' khach.a ', items: [{ productId: 'p1', variantId: 'v1' }] };
+  assert.equal(findDuplicateOrders([old()], draft).length, 1); // không phân biệt hoa thường, @ và khoảng trắng
+  assert.equal(findDuplicateOrders([old({ status: 'designed' })], draft).length, 1);
+  for (const status of ['packed', 'shipping', 'done', 'cancelled', 'returned']) assert.equal(findDuplicateOrders([old({ status })], draft).length, 0, status);
+  assert.equal(findDuplicateOrders([old({ customer: '@khach.b' })], draft).length, 0);
+  assert.equal(findDuplicateOrders([old({ items: [{ productId: 'p2' }] })], draft).length, 0);
+  assert.equal(findDuplicateOrders([old({ items: [{ productId: 'p1', variantId: 'v2' }] })], draft).length, 0); // khác phân loại
+  assert.equal(findDuplicateOrders([old({ items: [{ productId: 'p1' }] })], draft).length, 1); // đơn cũ chưa ghi phân loại
+  assert.equal(findDuplicateOrders([old()], { ...draft, id: 'o1' }).length, 0); // không tự trùng với chính nó
+  assert.equal(findDuplicateOrders([old()], { ...draft, customer: '' }).length, 0); // chưa có tên khách
+  assert.equal(findDuplicateOrders([old()], { customer: 'khach.a', items: [] }).length, 0);
 });

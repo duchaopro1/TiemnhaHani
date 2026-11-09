@@ -281,3 +281,28 @@ export function allocateShipping(fee, lines, mode = 'qty') {
   const weights = lines.map((l) => (mode === 'value' ? num(l.qty) * num(l.unitCost) : num(l.qty)));
   return splitFee(fee, weights);
 }
+
+/** Customer account compared loosely: no case, no spaces, no leading "@". */
+const accountKey = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/\s+/g, '').replace(/^@+/, '');
+
+/**
+ * Orders that look like the one being created: same customer account, still waiting (chờ xử lý /
+ * đã thiết kế), and at least one product in common (same variant when both name one).
+ * Returns [{ order, items: [matching lines of the existing order] }], newest first.
+ */
+export function findDuplicateOrders(orders, draft) {
+  const who = accountKey(draft.customer);
+  if (!who) return [];
+  const mine = (draft.items || []).filter((l) => l.productId);
+  if (!mine.length) return [];
+  const same = (a, b) => a.productId === b.productId && (!a.variantId || !b.variantId || a.variantId === b.variantId);
+  const out = [];
+  for (const o of orders) {
+    if (o.id && o.id === draft.id) continue;
+    if (o.status !== 'pending' && o.status !== 'designed') continue;
+    if (accountKey(o.customer) !== who) continue;
+    const items = (o.items || []).filter((l) => l.productId && mine.some((m) => same(m, l)));
+    if (items.length) out.push({ order: o, items });
+  }
+  return out.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || ''));
+}

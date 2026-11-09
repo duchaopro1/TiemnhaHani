@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived, allocateShipping,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -579,6 +579,7 @@ function openOrderFormNow(existing, restored) {
       </div>
       <h3 style="margin:18px 0 8px">Sản phẩm & đóng gói</h3>
       <div id="lines"></div>
+      <div id="dup-warn" role="alert" hidden></div>
       <button type="button" class="btn ghost sm" id="add-line">＋ Thêm sản phẩm</button>
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
@@ -684,7 +685,19 @@ function openOrderFormNow(existing, restored) {
               <div class="due ${pay.remaining < 0 ? 'over' : pay.remaining === 0 ? 'paid' : ''}"><span>${pay.remaining < 0 ? 'Khách trả dư' : pay.remaining === 0 ? 'Đã trả đủ' : 'Còn lại, thu khi nhận hàng'}</span><b>${money(Math.abs(pay.remaining))}</b></div>
             </div>`
           : '<p class="small muted" style="margin:6px 0 0">Chưa ghi nhận thanh toán. Nhập số tiền khách đã trả (nhập 0 nếu thu hết khi nhận hàng).</p>';
+        drawDup();
         touchDraft();
+      };
+      // New order that repeats a waiting one (same account + product): warn before it is saved twice.
+      const dupes = () => (existing ? [] : findDuplicateOrders(S.orders, { ...o, items: o.items }));
+      const dupText = (d) => `${d.order.code || 'đơn'} (${fmtDate(d.order.date)}, ${STATUSES[d.order.status]}): ${d.items.map((l) => itemLabel(l.productId, l.variantId, l.productName)).join(', ')}`;
+      const drawDup = () => {
+        const list = dupes();
+        const box = $('#dup-warn', m);
+        box.hidden = !list.length;
+        box.innerHTML = list.length
+          ? `<b>⚠ Có thể trùng đơn.</b> ${esc(o.customer)} đang có đơn chưa xử lý xong với cùng sản phẩm:<ul>${list.map((d) => `<li>${esc(dupText(d))}</li>`).join('')}</ul>`
+          : '';
       };
       const readHeader = () => {
         const d = formData(form);
@@ -780,6 +793,14 @@ function openOrderFormNow(existing, restored) {
         if (!items.length) return toast('Chọn ít nhất 1 sản phẩm');
         const noVariant = items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
         if (noVariant && !existing) return notify(`Chọn phân loại (màu, size…) cho "${product(noVariant.productId).name}"`);
+        const dup = existing ? [] : findDuplicateOrders(S.orders, { ...o, items });
+        if (dup.length) {
+          const pick = await choose(`Đơn này có thể bị trùng. ${o.customer} đang có đơn chưa xử lý xong với cùng sản phẩm:\n${dup.map((d) => '• ' + dupText(d)).join('\n')}\nVẫn tạo đơn mới?`, [
+            { value: 'back', label: 'Quay lại kiểm tra' },
+            { value: 'save', label: 'Vẫn tạo đơn', cls: 'btn' },
+          ]);
+          if (pick !== 'save') return;
+        }
         if (!o.code) {
           o.code = `${o.platform.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-6)}`;
           form.elements.code.value = o.code;

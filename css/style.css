@@ -522,3 +522,8 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .parcel-line .parcel-share { grid-column: 1 / -1; }
 .parcel-line select, .parcel-line input { min-width: 0; }
 @media (max-width: 600px) { .parcel-line { grid-template-columns: 1fr 1fr; } }
+
+/* duplicate order warning */
+#dup-warn { margin: 10px 0 0; padding: 10px 14px; border-radius: 12px; background: var(--st-pending-bg, #fff4d6); border: 1px solid var(--st-pending-edge, #f0c36a); color: var(--ink, #1b2a4a); font-size: 13px; }
+#dup-warn ul { margin: 4px 0 0 18px; padding: 0; }
+dialog.confirm .modal-body p { white-space: pre-line; }
