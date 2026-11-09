@@ -145,6 +145,7 @@ const ui = {
   imports: { q: '', kind: '', status: '', open: {} },
   products: { q: '' },
   stages: {}, // product id -> its variants are shown
+  stagesAll: false, // also list products with nothing left to do
   export: null, // last choices in the export dialog, kept for the visit
 };
 const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard');
@@ -363,40 +364,50 @@ function pageRevenue() {
     </div>`;
 }
 
-/** Pieces of each product by stage (waiting, designed, packed, shipping, done), colours opened on demand. */
+/**
+ * Pieces of each product by stage as a table: one row per product, one column per stage.
+ * Zeros are a faint dot so the eye only stops on real numbers. Rows with nothing left to do are
+ * hidden unless asked for; each product with variants opens into one row per variant.
+ */
 function stagesChart(orders) {
   const q = stageQuantities(orders);
-  const ids = Object.keys(q).sort((a, b) => q[b].sum - q[a].sum);
-  const max = Math.max(1, ...ids.map((id) => q[id].sum));
-  const bar = (counts, sum) => `<div class="stg-bar" style="width:${Math.max(6, (sum / max) * 100)}%" role="img" aria-label="${STAGE_KEYS.map((k) => `${STATUSES[k]} ${counts[k]}`).join(', ')}">${STAGE_KEYS.filter((k) => counts[k]).map((k) =>
-    `<i class="st-seg st-${k}" style="flex:${counts[k]}" title="${esc(STATUSES[k])}: ${counts[k]}">${counts[k]}</i>`).join('')}</div>`;
-  const nums = (counts) => STAGE_KEYS.filter((k) => counts[k]).map((k) => `<span class="stg-n st-${k}">${esc(STATUSES[k])} <b>${counts[k]}</b></span>`).join('');
+  const todo = (c) => c.pending + c.designed + c.packed + c.shipping; // everything not finished yet
+  const all = Object.keys(q);
+  const ids = all
+    .filter((id) => ui.stagesAll || todo(q[id].total) > 0)
+    .sort((a, b) => todo(q[b].total) - todo(q[a].total) || q[b].sum - q[a].sum);
+  const hidden = all.length - ids.length;
+  const colSum = Object.fromEntries(STAGE_KEYS.map((k) => [k, ids.reduce((n, id) => n + q[id].total[k], 0)]));
+  const cells = (c) => STAGE_KEYS.map((k) => `<td class="num stg-c ${c[k] ? `has st-${k}` : 'zero'} ${k === 'done' ? 'fin' : ''}">${c[k] ? `<b>${c[k]}</b>` : '·'}</td>`).join('');
+
   return `<section class="card" style="margin-top:16px" aria-labelledby="stg-title">
     <div class="stboard-head">
       <h3 id="stg-title">Sản phẩm theo giai đoạn</h3>
-      <span class="muted small">Số lượng từng sản phẩm đang ở mỗi giai đoạn (không tính đơn huỷ / trả hàng)</span>
+      <span class="muted small">Số lượng từng sản phẩm ở mỗi giai đoạn (không tính đơn huỷ / trả hàng)</span>
     </div>
-    <div class="stg-legend">${STAGE_KEYS.map((k) => `<span class="chip st-${k}">${esc(STATUSES[k])}</span>`).join('')}</div>
-    ${ids.length ? `<div class="stg-list">${ids.map((id) => {
-      const p = product(id);
-      const r = q[id];
-      const vKeys = Object.keys(r.variants);
-      const canOpen = p && hasVariants(p) && vKeys.length > 0 && !(vKeys.length === 1 && vKeys[0] === '');
-      const open = canOpen && ui.stages[id];
-      return `<div class="stg-item">
-        <div class="stg-row">
-          <span class="stg-name item">${thumb(p?.image, p?.name, 'sm')}<b>${esc(p?.name || '(đã xoá)')}</b></span>
-          ${bar(r.total, r.sum)}
-          <span class="stg-sum">${r.sum}</span>
-        </div>
-        <div class="stg-meta">${nums(r.total)}${canOpen ? `<button type="button" class="link-btn" data-action="toggle-stages" data-id="${esc(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾ Ẩn chi tiết' : '▸ Chi tiết từng phân loại'}</button>` : ''}</div>
-        ${open ? `<div class="stg-variants">${vKeys.sort((a, b) => Object.values(r.variants[b]).reduce((x, y) => x + y, 0) - Object.values(r.variants[a]).reduce((x, y) => x + y, 0)).map((vk) => {
-          const c = r.variants[vk];
-          const sum = Object.values(c).reduce((x, y) => x + y, 0);
-          return `<div class="stg-row sub"><span class="stg-name">${esc(variantOf(id, vk)?.name || 'Chưa chọn phân loại')}</span>${bar(c, sum)}<span class="stg-sum">${sum}</span></div><div class="stg-meta sub">${nums(c)}</div>`;
-        }).join('')}</div>` : ''}
-      </div>`;
-    }).join('')}</div>` : '<div class="empty">Chưa có đơn nào đang xử lý trong thời gian này.</div>'}
+    <div class="toolbar" style="margin:10px 0">
+      <label class="check" style="display:inline-flex;align-items:center;gap:8px;width:auto"><input type="checkbox" id="stg-all" style="width:auto;margin:0" ${ui.stagesAll ? 'checked' : ''}> Hiện cả sản phẩm đã xong hết</label>
+      ${hidden ? `<span class="muted small">Đang ẩn ${hidden} sản phẩm không còn việc dang dở</span>` : ''}
+    </div>
+    ${ids.length ? `<div class="table-wrap"><table class="stg-table">
+      <thead><tr><th>Sản phẩm</th>${STAGE_KEYS.map((k) => `<th class="num ${k === 'done' ? 'fin' : ''}">${esc(STATUSES[k])}</th>`).join('')}</tr></thead>
+      <tbody>${ids.map((id) => {
+        const p = product(id);
+        const r = q[id];
+        const vKeys = Object.keys(r.variants);
+        const canOpen = p && hasVariants(p) && vKeys.length > 0 && !(vKeys.length === 1 && vKeys[0] === '');
+        const open = canOpen && ui.stages[id];
+        const sum = (c) => Object.values(c).reduce((x, y) => x + y, 0);
+        return `<tr class="stg-main">
+          <td><span class="item">${thumb(p?.image, p?.name, 'sm')}<span><b>${esc(p?.name || '(đã xoá)')}</b>${canOpen ? `<br><button type="button" class="link-btn" data-action="toggle-stages" data-id="${esc(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾ Ẩn từng phân loại' : '▸ Xem từng phân loại'}</button>` : ''}</span></span></td>
+          ${cells(r.total)}
+        </tr>${open ? vKeys.sort((a, b) => todo(r.variants[b]) - todo(r.variants[a]) || sum(r.variants[b]) - sum(r.variants[a])).map((vk) => `<tr class="stg-sub">
+          <td><span class="stg-vname">${esc(variantOf(id, vk)?.name || 'Chưa chọn phân loại')}</span></td>
+          ${cells(r.variants[vk])}
+        </tr>`).join('') : ''}`;
+      }).join('')}</tbody>
+      <tfoot><tr><td><b>Tổng</b></td>${STAGE_KEYS.map((k) => `<td class="num stg-c ${k === 'done' ? 'fin' : ''} ${colSum[k] ? '' : 'zero'}">${colSum[k] ? `<b>${colSum[k]}</b>` : '·'}</td>`).join('')}</tr></tfoot>
+    </table></div>` : `<div class="empty">${all.length ? 'Không còn sản phẩm nào đang dang dở.' : 'Chưa có đơn nào đang xử lý trong thời gian này.'}</div>`}
   </section>`;
 }
 
@@ -2397,6 +2408,7 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.id === 'stg-all') { ui.stagesAll = t.checked; render(); }
   if (t.id === 'order-platform') { ui.orders.platform = t.value; render(); }
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }

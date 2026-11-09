@@ -557,18 +557,26 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .plat-tag.threads { background: #000; }
 .plat-tag.instagram { background: linear-gradient(45deg, #fcaf45 0%, #f77737 25%, #e1306c 55%, #833ab4 100%); }
 
-/* products by stage */
-.stg-legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
-.stg-list { display: grid; gap: 14px; }
-.stg-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr auto; align-items: center; gap: 12px; }
-.stg-row.sub { padding-left: 28px; grid-template-columns: minmax(92px, 192px) 1fr auto; }
-.stg-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stg-bar { display: flex; height: 24px; border-radius: 8px; overflow: hidden; min-width: 28px; }
-.st-seg { display: flex; align-items: center; justify-content: center; min-width: 22px; font-style: normal; font-weight: 700; font-size: 12px; border-right: 2px solid #fff; }
-.st-seg:last-child { border-right: 0; }
-.stg-sum { font-weight: 700; min-width: 28px; text-align: right; }
-.stg-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 4px 0 0 232px; font-size: 12px; color: var(--muted); }
-.stg-meta.sub { margin-left: 260px; margin-bottom: 6px; }
-.stg-n { padding: 1px 8px; border-radius: 999px; border: 1px solid transparent; }
-.stg-variants { margin-top: 8px; padding: 10px 0 2px; border-top: 1px dashed var(--line, #dfe6f2); display: grid; gap: 2px; }
-@media (max-width: 700px) { .stg-row, .stg-row.sub { grid-template-columns: 1fr auto; } .stg-row .stg-bar { grid-column: 1 / -1; grid-row: 2; } .stg-meta, .stg-meta.sub { margin-left: 0; } .stg-row.sub { padding-left: 12px; } }
+/* products by stage: a table, so the numbers line up in columns */
+.stg-table th, .stg-table td { padding: 8px 10px; }
+.stg-table .stg-c { text-align: center; min-width: 78px; }
+.stg-table th.num { text-align: center; }
+.stg-table .stg-c.zero { color: #b9c3d6; }
+.stg-table .stg-c.has { font-size: 16px; }
+.stg-table .stg-c.has.fin { background: transparent; color: var(--muted); font-weight: 500; }
+.stg-table .fin { color: var(--muted); }
+.stg-table .stg-sub { background: #f8fbff; }
+.stg-table .stg-sub td { font-size: 13px; }
+.stg-table .stg-sub td:first-child { padding-left: 52px; }
+.stg-table .stg-sub .stg-c.has { font-size: 14px; }
+.stg-table tfoot td { border-top: 2px solid var(--line, #dfe6f2); }
+.stg-table .stg-c.has { border-radius: 0; }
+
+/* a number is a small coloured pill; the cell itself stays plain */
+.stg-table .stg-c.has { background: transparent; border-bottom-color: var(--line); }
+.stg-table .stg-c.has b { display: inline-block; min-width: 30px; padding: 2px 10px; border-radius: 999px; }
+.stg-table .stg-c.st-pending b { background: var(--st-pending); color: var(--st-pending-ink); }
+.stg-table .stg-c.st-designed b { background: var(--st-designed); color: var(--st-designed-ink); }
+.stg-table .stg-c.st-packed b { background: var(--st-packed); color: var(--st-packed-ink); }
+.stg-table .stg-c.st-shipping b { background: var(--st-shipping); color: var(--st-shipping-ink); }
+.stg-table .stg-c.st-done b { background: transparent; color: var(--muted); font-weight: 600; }
