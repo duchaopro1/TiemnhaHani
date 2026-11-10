@@ -622,3 +622,9 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .combo-part .pool-picks > .small { flex-basis: 100%; }
 .pool-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .pool-opt input { width: auto; margin: 0; }
+
+/* price steps */
+.tier-list { display: grid; gap: 8px; margin-bottom: 8px; }
+.tier-row { display: grid; grid-template-columns: auto 72px auto 110px 1fr auto; gap: 8px; align-items: center; }
+.tier-row input { min-width: 0; }
+.tier-note { padding: 4px 2px; color: var(--st-designed-ink); }

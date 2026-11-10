@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -785,6 +785,7 @@ function openOrderFormNow(existing, restored) {
       ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(orderPackaging(), l[k], '— không —')}</select></label>`).join('')}
       <button class="icon-btn del" data-remove-line="${i}" title="Xoá dòng" style="margin-bottom:6px">✕</button>
       <div class="combo-picks-wrap" style="grid-column:1/-1">${picksHtml(l)}</div>
+      <div class="tier-note small" style="grid-column:1/-1" hidden></div>
       <div class="meta"></div>
     </div>`;
 
@@ -887,6 +888,45 @@ function openOrderFormNow(existing, restored) {
       const drawLines = () => {
         $('#lines', m).innerHTML = o.items.map(lineHtml).join('');
         o.items.forEach((_, i) => drawMeta(i));
+        showTierNotes();
+        drawSummary();
+      };
+      /** Price steps: each line of a product with steps gets the price for the quantity of that product in the order. */
+      const showTierNotes = () => {
+        // when the form opens, only explain: the prices of a saved order are never changed behind its back
+        const totals = {};
+        for (const l of o.items) if (l.productId) totals[l.productId] = num(totals[l.productId]) + num(l.qty);
+        o.items.forEach((l, i) => {
+          const p = product(l.productId);
+          const note = $(`[data-line="${i}"] .tier-note`, m);
+          if (!note || !p || isCombo(p) || !(p.tiers || []).length) return;
+          const steps = [...p.tiers].sort((a, b) => num(a.minQty) - num(b.minQty)).map((t) => `từ ${t.minQty} cái ${money(t.price)}`).join(' · ');
+          note.hidden = false;
+          note.textContent = `Giá theo số lượng: ${steps}. Đơn này có ${totals[l.productId]} cái.`;
+        });
+      };
+      const applyTiers = () => {
+        const totals = {};
+        for (const l of o.items) if (l.productId) totals[l.productId] = num(totals[l.productId]) + num(l.qty);
+        o.items.forEach((l, i) => {
+          const p = product(l.productId);
+          const note = $(`[data-line="${i}"] .tier-note`, m);
+          if (!note) return;
+          if (!p || isCombo(p) || !(p.tiers || []).length) { note.hidden = true; return; }
+          const v = variantOf(l.productId, l.variantId);
+          const own = v && num(v.price) > 0; // a variant with its own price keeps it
+          const steps = [...p.tiers].sort((a, b) => num(a.minQty) - num(b.minQty)).map((t) => `từ ${t.minQty} cái ${money(t.price)}`).join(' · ');
+          if (!own && !l.priceManual) {
+            l.price = tierPrice(p, totals[l.productId], variantPrice(p, v));
+            const inp = $(`[data-line="${i}"] [data-f="price"]`, m);
+            if (inp) inp.value = l.price;
+            drawMeta(i);
+          }
+          note.hidden = false;
+          note.textContent = own ? `Giá theo số lượng: ${steps} (phân loại này có giá riêng nên không đổi)`
+            : l.priceManual ? `Giá theo số lượng: ${steps}. Bạn đã sửa giá tay nên không tự đổi nữa.`
+            : `Giá theo số lượng: ${steps}. Đơn này có ${totals[l.productId]} cái → ${money(l.price)}/cái.`;
+        });
         drawSummary();
       };
       const drawMeta = (i) => {
@@ -963,8 +1003,10 @@ function openOrderFormNow(existing, restored) {
             const pr = store.get('presets', p.defaultPreset);
             if (pr) PACK_SLOTS.forEach((k) => (l[k] = pr[k] || ''));
           }
+          l.priceManual = false;
           $(`[data-line="${i}"]`, m).outerHTML = lineHtml(l, i);
           drawMeta(i);
+          applyTiers();
         } else if (f === 'preset') {
           const pr = store.get('presets', e.target.value);
           if (pr) PACK_SLOTS.forEach((k) => (l[k] = pr[k] || ''));
@@ -974,8 +1016,10 @@ function openOrderFormNow(existing, restored) {
           l.variantId = e.target.value;
           const p = product(l.productId);
           l.price = variantPrice(p, variantOf(l.productId, l.variantId));
+          l.priceManual = false;
           $(`[data-line="${i}"] [data-f="price"]`, m).value = l.price;
           drawMeta(i);
+          applyTiers();
         } else if (f === 'packEach') {
           l.packEach = e.target.checked;
           drawMeta(i);
@@ -990,8 +1034,10 @@ function openOrderFormNow(existing, restored) {
         if (f !== 'qty' && f !== 'price') return;
         const i = +e.target.closest('[data-line]').dataset.line;
         o.items[i][f] = num(e.target.value);
+        if (f === 'price') o.items[i].priceManual = true; // typed by hand: the steps leave it alone
         if (f === 'qty' && isCombo(product(o.items[i].productId))) $(`[data-line="${i}"] .combo-picks-wrap`, m).innerHTML = picksHtml(o.items[i]);
         drawMeta(i);
+        if (f === 'qty') applyTiers();
         drawSummary();
       });
       $('#lines', m).addEventListener('click', (e) => {
@@ -1000,6 +1046,7 @@ function openOrderFormNow(existing, restored) {
         o.items.splice(+btn.dataset.removeLine, 1);
         if (!o.items.length) o.items.push(blankLine());
         drawLines();
+        applyTiers();
       });
       $('#add-line', m).onclick = () => { o.items.push(blankLine()); drawLines(); };
       $('#pay-quick', m).onclick = (e) => {
@@ -2089,6 +2136,7 @@ const combosUsing = (productId, variantId) => S.products.filter((c) => comboPart
 function openProductForm(existing) {
   const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };
   p.variants ||= [];
+  p.tiers = (p.tiers || []).map((t) => ({ minQty: t.minQty, price: t.price }));
   const imports = existing ? S.imports.filter((i) => i.kind !== 'packaging' && i.itemId === p.id).sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [];
   // A variant that already has imports or orders keeps its stock history, so it can be renamed but not removed.
   const used = (vid) => S.imports.some((i) => i.itemId === p.id && i.variantId === vid)
@@ -2127,6 +2175,15 @@ function openProductForm(existing) {
         </div>
         <div id="variants"></div>
         <button type="button" class="btn ghost sm" id="add-variant">＋ Thêm phân loại</button>
+      </div>
+
+      <div class="vsection">
+        <div class="vsection-head">
+          <h3>Giá theo số lượng</h3>
+          <span class="muted small">Mua nhiều thì giá rẻ hơn. VD: giá 25.000đ, từ 10 cái trở lên còn 22.000đ. Tính theo tổng số cái của sản phẩm này trong một đơn (các phân loại cộng lại).</span>
+        </div>
+        <div id="tiers"></div>
+        <button type="button" class="btn ghost sm" id="add-tier">＋ Thêm mức giá</button>
       </div>
 
       <label class="field" style="margin-top:14px">Ghi chú<input name="note" value="${esc(p.note)}"></label>
@@ -2211,10 +2268,38 @@ function openProductForm(existing) {
           defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
           adjust: p.variants.length ? num(p.adjust) : num(d.adjust), note: d.note.trim(),
           variants: p.variants.map((v) => ({ ...v, name: v.name.trim(), sku: (v.sku || '').trim(), price: num(v.price) })),
+          tiers: p.tiers.filter((t) => num(t.minQty) > 0 && t.price !== '' && Number.isFinite(+t.price))
+            .map((t) => ({ minQty: Math.round(num(t.minQty)), price: num(t.price) }))
+            .sort((a, b) => a.minQty - b.minQty)
+            .filter((t, i, all) => i === 0 || t.minQty !== all[i - 1].minQty),
         });
         m.close();
         toast('Đã lưu sản phẩm');
       };
+      const drawTiers = () => {
+        const base = num(form.salePrice.value);
+        $('#tiers', m).innerHTML = p.tiers.length ? `<div class="tier-list">${p.tiers.map((t, i) => `<div class="tier-row" data-t="${i}">
+          <span>Từ</span><input type="number" min="2" step="1" data-tf="minQty" value="${t.minQty ?? ''}" placeholder="10" aria-label="Từ bao nhiêu cái">
+          <span>cái, giá</span><input type="number" min="0" step="500" data-tf="price" value="${t.price ?? ''}" placeholder="22000" aria-label="Giá mỗi cái">
+          <span class="small muted">${base && num(t.price) && num(t.price) < base ? `giảm ${money(base - num(t.price))} (${Math.round((1 - num(t.price) / base) * 100)}%)` : ''}</span>
+          <button type="button" class="icon-btn del" data-trm="${i}" title="Bỏ mức này">✕</button>
+        </div>`).join('')}</div>` : '<p class="small muted" style="margin:0 0 8px">Chưa có. Mọi số lượng đều bán theo giá chung.</p>';
+      };
+      $('#tiers', m).addEventListener('input', (e) => {
+        const row = e.target.closest('[data-t]');
+        if (!row || !e.target.dataset.tf) return;
+        p.tiers[+row.dataset.t][e.target.dataset.tf] = e.target.value;
+        const note = row.querySelector('.small');
+        const base = num(form.salePrice.value), price = num(p.tiers[+row.dataset.t].price);
+        note.textContent = base && price && price < base ? `giảm ${money(base - price)} (${Math.round((1 - price / base) * 100)}%)` : '';
+      });
+      $('#tiers', m).addEventListener('click', (e) => {
+        const rm = e.target.closest('[data-trm]');
+        if (rm) { p.tiers.splice(+rm.dataset.trm, 1); drawTiers(); }
+      });
+      $('#add-tier', m).onclick = () => { p.tiers.push({ minQty: '', price: '' }); drawTiers(); };
+      form.salePrice.addEventListener('input', drawTiers);
+      drawTiers();
       drawVariants();
     },
   });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -607,4 +607,20 @@ test('combo ngẫu nhiên giữa nhiều sản phẩm: giá vốn trung bình, c
   const r = orderShortages(two);
   assert.deepEqual(r.ready.map((o) => o.code), ['A']);
   assert.deepEqual(r.short[0].lines.filter((l) => l.pool).map((l) => [l.need, l.have, l.short]), [[3, 2, 1]]);
+});
+
+test('giá theo số lượng: từ N cái trở lên giá giảm, mức cao nhất đạt được thắng, dưới mức đầu dùng giá chung', () => {
+  const p = { salePrice: 25000, tiers: [{ minQty: 10, price: 22000 }, { minQty: 50, price: 20000 }] };
+  assert.equal(tierPrice(p, 1, 25000), 25000);
+  assert.equal(tierPrice(p, 9, 25000), 25000);
+  assert.equal(tierPrice(p, 10, 25000), 22000); // đúng 10 cái đã được giá mới
+  assert.equal(tierPrice(p, 11, 25000), 22000);
+  assert.equal(tierPrice(p, 49, 25000), 22000);
+  assert.equal(tierPrice(p, 50, 25000), 20000);
+  assert.equal(tierPrice(p, 500, 25000), 20000);
+  // thứ tự khai báo không quan trọng; mức hỏng bị bỏ qua; không có mức nào thì giá chung
+  assert.equal(tierPrice({ tiers: [{ minQty: 50, price: 20000 }, { minQty: 10, price: 22000 }] }, 12, 25000), 22000);
+  assert.equal(tierPrice({ tiers: [{ minQty: 0, price: 1 }, { minQty: 5, price: '' }] }, 20, 25000), 25000);
+  assert.equal(tierPrice({}, 20, 25000), 25000);
+  assert.equal(tierPrice({ tiers: [{ minQty: 10, price: 0 }] }, 10, 25000), 0); // tặng kèm: giá 0 hợp lệ
 });
