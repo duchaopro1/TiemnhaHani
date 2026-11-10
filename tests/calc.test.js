@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -438,4 +438,25 @@ test('thiếu hàng: đơn cũ được ưu tiên, đơn thiếu không giữ h�
   ] });
   assert.deepEqual(same.ready.map((o) => o.code), ['A']);
   assert.deepEqual(same.short.map((s) => s.order.code), ['B']);
+});
+
+test('giai đoạn hàng đang về: ghi thời điểm mỗi giai đoạn, quay lại thì bỏ các giai đoạn sau, giữ mốc cũ', () => {
+  let s = { ...withTransit({}, 'shipping_cn', 100) };
+  assert.deepEqual(s, { transit: 'shipping_cn', transitAt: { shipping_cn: 100 } });
+  s = withTransit(s, 'customs', 200);
+  assert.deepEqual(s.transitAt, { shipping_cn: 100, customs: 200 });
+  s = withTransit(s, 'cleared', 300);
+  assert.deepEqual(s.transitAt, { shipping_cn: 100, customs: 200, cleared: 300 });
+  assert.deepEqual(transitHistory(s).map((h) => [h.stage, h.at]), [['shipping_cn', 100], ['customs', 200], ['cleared', 300]]);
+  // đặt lại cùng giai đoạn: giữ mốc cũ, không ghi đè
+  assert.equal(withTransit(s, 'cleared', 999).transitAt.cleared, 300);
+  // quay lại "chờ thông quan": bỏ "đã thông quan", giữ mốc của chờ thông quan
+  const back = withTransit(s, 'customs', 999);
+  assert.deepEqual(back.transitAt, { shipping_cn: 100, customs: 200 });
+  assert.equal(back.transit, 'customs');
+  // phiếu cũ chưa có mốc: giai đoạn đầu tiên được ghi từ lúc đổi
+  assert.deepEqual(withTransit({ transit: 'shipping_cn' }, 'customs', 50).transitAt, { customs: 50 });
+  // nhận hàng: bỏ giai đoạn nhưng giữ lịch sử
+  assert.deepEqual(withTransit(s, ''), { transit: '', transitAt: s.transitAt });
+  assert.deepEqual(withTransit({}, ''), { transit: '' });
 });

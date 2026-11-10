@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -1184,6 +1184,13 @@ function rowsOf(list) {
 const TRANSIT_CHIP = { shipping_cn: 'st-pending', customs: 'st-packed', cleared: 'st-designed' };
 /** Chip of an ordered slip: where it is on the way (older slips without a stage just say "Đang về"). */
 const transitChip = (i) => `<span class="chip ${TRANSIT_CHIP[i.transit] || 'pay-due'}">${esc(TRANSIT_STAGES[i.transit] || 'Đang về')}</span>`;
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtStamp = (ms) => { const d = new Date(ms); return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const stampInput = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const daysSince = (ms) => Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+/** Fields to save for a slip that is on its way at `stage` (or, with no stage, not on its way any more). */
+const stageFields = (base, stage) => withTransit(base, stage);
+const transitSince = (i) => { const h = transitHistory(i).find((x) => x.stage === i.transit); return h ? ` <span class="small muted">từ ${fmtStamp(h.at)}</span>` : ''; };
 const transitOptions = (sel) => Object.entries(TRANSIT_STAGES).map(([k, v]) => `<option value="${k}" ${k === (sel || 'shipping_cn') ? 'selected' : ''}>${esc(v)}</option>`).join('');
 
 function importRow(i, child = false) {
@@ -1192,7 +1199,7 @@ function importRow(i, child = false) {
   const got = isReceived(i);
   const v = i.kind === 'packaging' ? null : variantOf(i.itemId, i.variantId);
   return `<tr${child ? ' class="sub-row"' : ''}>
-    <td>${child ? '' : `${fmtDate(i.date)}<br>`}${child ? '' : got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : transitChip(i)}</td>
+    <td>${child ? '' : `${fmtDate(i.date)}<br>`}${child ? '' : got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : transitChip(i) + (transitSince(i) ? '<br>' + transitSince(i) : '')}</td>
     <td>${child ? `<span class="item sub">${thumb(v?.image || item?.image, v?.name, 'sm')}${esc(v?.name || importLabel(i) || '(đã xoá)')}</span>` : `<span class="item">${i.kind === 'packaging' ? '' : thumb(v?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>`}${i.note && !child ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
     <td>${child ? '' : `<span class="chip ${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span>`}</td>
     <td class="num">${num(i.qty)}</td>
@@ -1215,7 +1222,7 @@ function groupRows(g) {
   const costs = new Set(rows.map((i) => num(i.unitCost)));
   const got = isReceived(first);
   const head = `<tr class="group-row">
-    <td>${fmtDate(first.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${first.receivedDate ? ' ' + fmtDate(first.receivedDate).slice(0, 5) : ''}</span>` : transitChip(first)}</td>
+    <td>${fmtDate(first.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${first.receivedDate ? ' ' + fmtDate(first.receivedDate).slice(0, 5) : ''}</span>` : transitChip(first) + (transitSince(first) ? '<br>' + transitSince(first) : '')}</td>
     <td><span class="item">${first.kind === 'packaging' ? '' : thumb(item?.image, item?.name, 'sm')}<span><a href="javascript:void 0" data-action="edit-item" data-kind="${first.kind}" data-id="${first.itemId}">${esc(item?.name || '(đã xoá)')}</a><br><button class="link-btn" data-action="toggle-import-group" data-key="${esc(g.key)}" aria-expanded="${open}">${open ? '▾ Ẩn chi tiết' : '▸ Xem chi tiết'} · ${rows.length} phân loại</button></span></span></td>
     <td><span class="chip ${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span></td>
     <td class="num"><b>${qty}</b></td>
@@ -1271,6 +1278,7 @@ function pageImports() {
             <button class="btn sm" data-action="receive-batch" data-batch="${esc(key)}">Đã nhận hàng</button>
           </div>
           <label class="inbound-stage">${transitChip(first)}<select data-batch-transit="${esc(key)}" aria-label="Hàng đang ở đâu">${transitOptions(first.transit)}</select></label>
+          ${transitHistory(first).length ? `<ul class="transit-log">${transitHistory(first).map((h) => `<li${h.stage === first.transit ? ' class="now"' : ''}><span>${esc(h.label)}</span><input type="datetime-local" data-batch-at="${esc(key)}" data-stage="${h.stage}" value="${stampInput(h.at)}" aria-label="Thời điểm ${esc(h.label)}">${h.stage === first.transit ? `<span class="small muted">${daysSince(h.at) ? daysSince(h.at) + ' ngày nay' : 'hôm nay'}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Chưa có mốc thời gian. Đổi giai đoạn để bắt đầu ghi.</p>'}
           <ul class="inbound-items">${rowsOf(rows).map((g) => {
             const f = g.rows[0], it = itemOf(f), q = g.rows.reduce((n, i) => n + num(i.qty), 0);
             const label = `<span class="item">${f.kind === 'packaging' ? '' : thumb(it?.image, it?.name, 'sm')}${esc(it?.name || '(đã xoá)')}</span><b>×${q}</b>`;
@@ -1336,9 +1344,9 @@ function openReceiveDialog(ids) {
           const n = got[k];
           if (!(n > 0)) return;
           received += 1;
-          docs.push({ ...i, status: 'received', receivedDate: date, qty: n, transit: '' });
+          docs.push({ ...i, status: 'received', receivedDate: date, qty: n, ...stageFields(i, '') });
           if (keep && n < num(i.qty)) {
-            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', transit: i.transit || 'shipping_cn', batchId: i.batchId || i.id });
+            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', ...stageFields(i, i.transit || 'shipping_cn'), batchId: i.batchId || i.id });
           }
         });
         if (!received) return toast('Nhập số lượng thực nhận cho ít nhất 1 dòng');
@@ -1453,7 +1461,7 @@ function openParcelForm() {
             kind, itemId, variantId: kind === 'product' ? l.variantId || '' : '', date: d.date, qty: num(l.qty), unitCost: num(l.unitCost),
             extraFee: sh[i], supplier: (d.supplier || '').trim(), note: (d.note || '').trim(), batchId,
             status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
-            transit: st.status === 'ordered' ? d.transit || 'shipping_cn' : '',
+            ...stageFields({}, st.status === 'ordered' ? d.transit || 'shipping_cn' : ''),
           };
         });
         await store.upsertMany('imports', docs);
@@ -1541,14 +1549,15 @@ function openGroupEdit(ids) {
           status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
           transit: st.status === 'ordered' ? d.transit || 'shipping_cn' : '',
         };
+        const stageOf = (base) => stageFields(base, common.transit);
         const save = [], drop = [];
         rows.forEach((r, i) => {
           const keep = r.slips[0];
           r.slips.slice(1).forEach((x) => drop.push(x.id)); // duplicates of the same variant merge into one
           if (!(q[i] > 0)) { if (keep) drop.push(keep.id); return; }
           const unitCost = d.unitCost === '' ? num(keep ? keep.unitCost : first.unitCost) : num(d.unitCost);
-          if (keep) save.push({ ...keep, ...common, unitCost, qty: q[i], extraFee: fees[i] });
-          else save.push({ kind: first.kind, itemId: first.itemId, variantId: r.variantId, batchId: first.batchId, ...common, unitCost, qty: q[i], extraFee: fees[i] });
+          if (keep) save.push({ ...keep, ...common, ...stageOf(keep), unitCost, qty: q[i], extraFee: fees[i] });
+          else save.push({ kind: first.kind, itemId: first.itemId, variantId: r.variantId, batchId: first.batchId, ...common, ...stageOf(first), unitCost, qty: q[i], extraFee: fees[i] });
         });
         await store.upsertMany('imports', save);
         for (const id of drop) await store.remove('imports', id);
@@ -1703,7 +1712,7 @@ function openImportForm(existing, preset = {}) {
         };
 
         if (existing) {
-          await store.upsert('imports', { ...imp, ...common, variantId: d.variantId || '', qty: num(d.qty), extraFee: num(d.extraFee) });
+          await store.upsert('imports', { ...imp, ...common, ...stageFields(imp, common.transit), variantId: d.variantId || '', qty: num(d.qty), extraFee: num(d.extraFee) });
           m.close();
           return toast(stt.status === 'received' ? 'Đã cập nhật phiếu nhập' : 'Đã cập nhật phiếu (đang chờ hàng về)');
         }
@@ -1734,9 +1743,9 @@ function openImportForm(existing, preset = {}) {
         if (filled.length) {
           const fees = splitFee(num(d.extraFee), filled.map((r) => r.qty));
           const batchId = uid(); // one order: its lines are received together
-          await store.upsertMany('imports', filled.map((r, i) => ({ ...common, batchId, itemId, variantId: r.variantId, qty: num(r.qty), extraFee: fees[i] })));
+          await store.upsertMany('imports', filled.map((r, i) => ({ ...common, ...stageFields({}, common.transit), batchId, itemId, variantId: r.variantId, qty: num(r.qty), extraFee: fees[i] })));
         } else {
-          await store.upsert('imports', { ...common, batchId: uid(), itemId, variantId: '', qty: num(d.qty), extraFee: num(d.extraFee) });
+          await store.upsert('imports', { ...common, ...stageFields({}, common.transit), batchId: uid(), itemId, variantId: '', qty: num(d.qty), extraFee: num(d.extraFee) });
         }
         m.close();
         toast(stt.status === 'ordered' ? 'Đã ghi phiếu đặt hàng. Hàng về thì bấm “Đã nhận hàng”.' : (filled.length > 1 ? `Đã nhập kho ${filled.length} phân loại 📦` : 'Đã nhập kho 📦'));
@@ -2359,7 +2368,7 @@ async function loadDemo() {
     { kind: 'product', itemId: p3.id, date: d, qty: 20, unitCost: 140000, extraFee: 0, supplier: '' },
     ...cup.variants.map((v, i) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty: [12, 8, 4][i], unitCost: 32000, extraFee: [12000, 8000, 4000][i], supplier: 'Xưởng pha lê C' })),
     ...[box, paper, ribbon, bag, card].map((x) => ({ kind: 'packaging', itemId: x.id, date: d, qty: 200, unitCost: x.baseCost, extraFee: 0 })),
-    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', transit: 'shipping_cn', batchId: 'demo-dang-ve' })),
+    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', transit: 'shipping_cn', transitAt: { shipping_cn: Date.now() - 3 * 86400000 }, batchId: 'demo-dang-ve' })),
     { kind: 'packaging', itemId: tape.id, date: d, qty: 2, unitCost: 12000, extraFee: 0, supplier: 'Tạp hoá' },
     { kind: 'packaging', itemId: wrap.id, date: d, qty: 1, unitCost: 60000, extraFee: 15000, supplier: 'Shopee' },
     { kind: 'packaging', itemId: staples.id, date: d, qty: 5, unitCost: 8000, extraFee: 0, supplier: 'Tạp hoá' },
@@ -2483,9 +2492,17 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'stg-all') { ui.stagesAll = t.checked; render(); }
+  if (t.dataset?.batchAt !== undefined && t.value) {
+    const ms = new Date(t.value).getTime();
+    if (Number.isFinite(ms)) {
+      const docs = S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === t.dataset.batchAt).map((i) => ({ ...i, transitAt: { ...(i.transitAt || {}), [t.dataset.stage]: ms } }));
+      await store.upsertMany('imports', docs);
+      toast('Đã sửa thời điểm');
+    }
+  }
   if (t.dataset?.batchTransit !== undefined) {
     const key = t.dataset.batchTransit;
-    const docs = S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === key).map((i) => ({ ...i, transit: t.value }));
+    const docs = S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === key).map((i) => ({ ...i, ...stageFields(i, t.value) }));
     await store.upsertMany('imports', docs);
     toast(`Đã chuyển sang "${TRANSIT_STAGES[t.value]}"`);
   }

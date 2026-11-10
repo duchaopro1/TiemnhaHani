@@ -595,3 +595,8 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 /* where ordered goods are on their way */
 .inbound-stage { display: flex; align-items: center; gap: 8px; }
 .inbound-stage select { flex: 1; min-width: 0; padding: 4px 8px; font-size: 13px; }
+
+.transit-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.transit-log li { display: grid; grid-template-columns: minmax(96px, auto) 1fr auto; align-items: center; gap: 8px; color: var(--muted); }
+.transit-log li.now { color: var(--ink); font-weight: 600; }
+.transit-log input { font-size: 12px; padding: 2px 6px; min-width: 0; }
