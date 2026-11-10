@@ -102,8 +102,9 @@ def main():
         r = analyze(a.file, a.window, a.threshold, a.detect, a.pick)
     except ValueError as e:
         sys.exit(str(e))
-    print(f"Drop tren {r['detect']}: {r['v_before']:.3f} -> {r['v_after']:.3f} "
-          f"(t={r['t_drop']:.3f}s -> {r['t_after']:.3f}s), tim thay {r['n_drops']} drop >= {a.threshold}")
+    print(f"Bat dau giam tai t0 = {r['t_drop']:.3f}s (sample ke tiep: {r['t_after']:.3f}s)")
+    print(f"Drop tren {r['detect']}: {r['v_before']:.3f} -> {r['v_after']:.3f}, "
+          f"tim thay {r['n_drops']} drop >= {a.threshold}")
     print(f"Cua so: [{r['t_start']:.3f}s, {r['t_end']:.3f}s], {r['n_samples']} sample\n")
     print(f"{'Signal':<24}{'Mean':>10}{'Max':>10}{'t(Max)':>11}")
     for s, mean, m, tm in r["rows"]:

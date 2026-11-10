@@ -9,11 +9,24 @@ from igbt_drop_avg import analyze
 HEAD = ("Signal", "Mean", "Max", "t(Max) [s]")
 
 
+def drop_rows(r):
+    """Cac dong thong tin diem giam de doi chieu vao du lieu."""
+    return [
+        ("Bat dau giam (t0) [s]", f"{r['t_drop']:.3f}"),
+        (f"Gia tri {r['detect']} tai t0", f"{r['v_before']:.3f}"),
+        ("Sample ngay sau giam [s]", f"{r['t_after']:.3f}"),
+        (f"Gia tri {r['detect']} sau giam", f"{r['v_after']:.3f}"),
+        ("Cua so tinh: tu [s]", f"{r['t_start']:.3f}"),
+        ("Cua so tinh: den [s]", f"{r['t_end']:.3f}"),
+        ("So sample trong cua so", str(r["n_samples"])),
+    ]
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("IGBT Tj - Mean/Max truoc khi giam dot ngot")
-        self.geometry("720x330")
+        self.geometry("720x520")
         self.path = None
         self.result = None
 
@@ -35,8 +48,14 @@ class App(tk.Tk):
         for c in HEAD:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=260 if c == "Signal" else 130, anchor="w" if c == "Signal" else "e")
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
-        self.tree.bind("<Control-c>", lambda e: self.copy_all())
+        self.tree.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        self.tree2 = ttk.Treeview(self, columns=("Muc", "Gia tri"), show="headings", height=7)
+        self.tree2.heading("Muc", text="Thong tin diem giam")
+        self.tree2.heading("Gia tri", text="Gia tri")
+        self.tree2.column("Muc", width=420, anchor="w")
+        self.tree2.column("Gia tri", width=130, anchor="e")
+        self.tree2.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        self.bind("<Control-c>", lambda e: self.copy_all())
 
         bot = ttk.Frame(self, padding=(8, 0, 8, 8))
         bot.pack(fill="x")
@@ -61,6 +80,7 @@ class App(tk.Tk):
         except Exception as e:
             self.result = None
             self.tree.delete(*self.tree.get_children())
+            self.tree2.delete(*self.tree2.get_children())
             self.info.set(f"{os.path.basename(self.path)}: loi")
             messagebox.showerror("Loi", str(e), parent=self)
             return
@@ -71,6 +91,9 @@ class App(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         for s, mean, m, tm in r["rows"]:
             self.tree.insert("", "end", values=(s, f"{mean:.4f}", f"{m:.4f}", f"{tm:.3f}"))
+        self.tree2.delete(*self.tree2.get_children())
+        for row in drop_rows(r):
+            self.tree2.insert("", "end", values=row)
 
     def copy_all(self):
         if not self.result:
@@ -78,6 +101,9 @@ class App(tk.Tk):
         lines = ["\t".join(HEAD)]
         for s, mean, m, tm in self.result["rows"]:
             lines.append(f"{s}\t{mean:.4f}\t{m:.4f}\t{tm:.3f}")
+        lines.append("")
+        lines.append("Thong tin diem giam\tGia tri")
+        lines += [f"{k}\t{v}" for k, v in drop_rows(self.result)]
         self.clipboard_clear()
         self.clipboard_append("\n".join(lines))
         self.status.set("Da copy!")
