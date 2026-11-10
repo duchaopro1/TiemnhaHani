@@ -439,23 +439,29 @@ export const TRANSIT_STAGES = {
 };
 
 /**
+ * "Đang ship từ TQ" starts the day the goods are ordered, so only the stages after it get a time.
+ */
+export const TIMED_STAGES = ['customs', 'cleared'];
+
+/**
  * Move a slip to another stage on the way and remember when it got there: { transit, transitAt }.
- * `transitAt` maps each stage reached to a time (ms). Going back drops the stages after the new one;
- * a stage reached before keeps its time. An empty stage (received, or none) leaves the history alone.
+ * `transitAt` maps each timed stage reached (not "Đang ship từ TQ") to a time (ms). Going back drops
+ * the stages after the new one; a stage reached before keeps its time. An empty stage (received, or
+ * none) leaves the history alone.
  */
 export function withTransit(slip, stage, now = Date.now()) {
   const keys = Object.keys(TRANSIT_STAGES);
   const old = slip?.transitAt || {};
   if (!stage || !keys.includes(stage)) return { transit: '', ...(slip?.transitAt ? { transitAt: old } : {}) };
   const at = {};
-  for (const k of keys.slice(0, keys.indexOf(stage) + 1)) if (old[k] !== undefined) at[k] = old[k];
-  at[stage] = old[stage] !== undefined ? old[stage] : now;
+  for (const k of keys.slice(0, keys.indexOf(stage) + 1)) if (TIMED_STAGES.includes(k) && old[k] !== undefined) at[k] = old[k];
+  if (TIMED_STAGES.includes(stage)) at[stage] = old[stage] !== undefined ? old[stage] : now;
   return { transit: stage, transitAt: at };
 }
 
 /** The stages a slip has been through, in order: [{ stage, label, at }]. */
 export function transitHistory(slip) {
   return Object.entries(TRANSIT_STAGES)
-    .filter(([k]) => slip?.transitAt?.[k] !== undefined)
+    .filter(([k]) => TIMED_STAGES.includes(k) && slip?.transitAt?.[k] !== undefined)
     .map(([k, label]) => ({ stage: k, label, at: slip.transitAt[k] }));
 }

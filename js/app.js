@@ -1278,7 +1278,7 @@ function pageImports() {
             <button class="btn sm" data-action="receive-batch" data-batch="${esc(key)}">Đã nhận hàng</button>
           </div>
           <label class="inbound-stage">${transitChip(first)}<select data-batch-transit="${esc(key)}" aria-label="Hàng đang ở đâu">${transitOptions(first.transit)}</select></label>
-          ${transitHistory(first).length ? `<ul class="transit-log">${transitHistory(first).map((h) => `<li${h.stage === first.transit ? ' class="now"' : ''}><span>${esc(h.label)}</span><input type="datetime-local" data-batch-at="${esc(key)}" data-stage="${h.stage}" value="${stampInput(h.at)}" aria-label="Thời điểm ${esc(h.label)}">${h.stage === first.transit ? `<span class="small muted">${daysSince(h.at) ? daysSince(h.at) + ' ngày nay' : 'hôm nay'}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Chưa có mốc thời gian. Đổi giai đoạn để bắt đầu ghi.</p>'}
+          ${first.transit === 'shipping_cn' ? `<p class="small muted" style="margin:0">Đang ship từ ngày đặt hàng ${fmtDate(first.date)}${daysSince(Date.parse(first.date)) ? ` · ${daysSince(Date.parse(first.date))} ngày nay` : ''}</p>` : transitHistory(first).length ? `<ul class="transit-log">${transitHistory(first).map((h) => `<li${h.stage === first.transit ? ' class="now"' : ''}><span>${esc(h.label)}</span><input type="datetime-local" data-batch-at="${esc(key)}" data-stage="${h.stage}" value="${stampInput(h.at)}" aria-label="Thời điểm ${esc(h.label)}">${h.stage === first.transit ? `<span class="small muted">${daysSince(h.at) ? daysSince(h.at) + ' ngày nay' : 'hôm nay'}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Chưa có mốc thời gian. Mốc được ghi khi chuyển sang Chờ thông quan.</p>'}
           <ul class="inbound-items">${rowsOf(rows).map((g) => {
             const f = g.rows[0], it = itemOf(f), q = g.rows.reduce((n, i) => n + num(i.qty), 0);
             const label = `<span class="item">${f.kind === 'packaging' ? '' : thumb(it?.image, it?.name, 'sm')}${esc(it?.name || '(đã xoá)')}</span><b>×${q}</b>`;
@@ -2368,7 +2368,7 @@ async function loadDemo() {
     { kind: 'product', itemId: p3.id, date: d, qty: 20, unitCost: 140000, extraFee: 0, supplier: '' },
     ...cup.variants.map((v, i) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty: [12, 8, 4][i], unitCost: 32000, extraFee: [12000, 8000, 4000][i], supplier: 'Xưởng pha lê C' })),
     ...[box, paper, ribbon, bag, card].map((x) => ({ kind: 'packaging', itemId: x.id, date: d, qty: 200, unitCost: x.baseCost, extraFee: 0 })),
-    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', transit: 'shipping_cn', transitAt: { shipping_cn: Date.now() - 3 * 86400000 }, batchId: 'demo-dang-ve' })),
+    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', transit: 'shipping_cn', batchId: 'demo-dang-ve' })),
     { kind: 'packaging', itemId: tape.id, date: d, qty: 2, unitCost: 12000, extraFee: 0, supplier: 'Tạp hoá' },
     { kind: 'packaging', itemId: wrap.id, date: d, qty: 1, unitCost: 60000, extraFee: 15000, supplier: 'Shopee' },
     { kind: 'packaging', itemId: staples.id, date: d, qty: 5, unitCost: 8000, extraFee: 0, supplier: 'Tạp hoá' },
