@@ -2133,12 +2133,40 @@ function openComboDetail(id) {
 /** Combos that use a product (or one of its variants): it cannot be deleted while they do. */
 const combosUsing = (productId, variantId) => S.products.filter((c) => comboParts(c).some((x) => (x.productId === productId && (!variantId || x.variantId === variantId)) || (!variantId && x.pool?.includes(productId))));
 
+/** Move the imports, orders and combo choices of removed variants to the variant they were merged into. */
+async function moveVariantHistory(productId, moves) {
+  const to = new Map(moves.map((x) => [x.from, x.to]));
+  const imports = S.imports.filter((i) => i.itemId === productId && to.has(i.variantId)).map((i) => ({ ...i, variantId: to.get(i.variantId) }));
+  if (imports.length) await store.upsertMany('imports', imports);
+  const orders = [];
+  for (const o of S.orders) {
+    let changed = false;
+    const items = (o.items || []).map((l) => {
+      let line = l;
+      if (l.productId === productId && to.has(l.variantId)) { line = { ...line, variantId: to.get(l.variantId) }; changed = true; }
+      if (l.picks) { // choices made on a combo line: a variant id, or "productId:variantId" for a pool
+        const picks = l.picks.map((unit) => (unit || []).map((pk) => {
+          if (to.has(pk)) return to.get(pk);
+          const [pid, vid] = String(pk).split(':');
+          return pid === productId && vid && to.has(vid) ? (to.get(vid) ? `${pid}:${to.get(vid)}` : pid) : pk;
+        }));
+        if (JSON.stringify(picks) !== JSON.stringify(l.picks)) { line = { ...line, picks }; changed = true; }
+      }
+      return line;
+    });
+    if (changed) orders.push({ ...o, items });
+  }
+  if (orders.length) await store.upsertMany('orders', orders);
+}
+
 function openProductForm(existing) {
   const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };
   p.variants ||= [];
   p.tiers = (p.tiers || []).map((t) => ({ minQty: t.minQty, price: t.price }));
   const imports = existing ? S.imports.filter((i) => i.kind !== 'packaging' && i.itemId === p.id).sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [];
-  // A variant that already has imports or orders keeps its stock history, so it can be renamed but not removed.
+  // A variant with imports or orders can be removed too: its history moves to another variant (or to "no variant")
+  // when the form is saved, so cancelling the form changes nothing.
+  const moves = []; // [{ from, to }]
   const used = (vid) => S.imports.some((i) => i.itemId === p.id && i.variantId === vid)
     || S.orders.some((o) => o.items?.some((l) => l.productId === p.id && l.variantId === vid))
     || combosUsing(p.id, vid).length > 0;
@@ -2207,7 +2235,7 @@ function openProductForm(existing) {
             <input type="number" min="0" step="1000" data-vf="price" value="${num(v.price) || ''}" placeholder="${num(form.salePrice.value) || 'giá chung'}" aria-label="Giá bán ${esc(v.name)}">
             <b class="vstock">${existing ? vStock(p.id, v.id) : 0}</b>
             <input type="number" data-vf="adjust" value="${num(v.adjust)}" aria-label="Điều chỉnh tồn">
-            <button type="button" class="icon-btn del" data-vdel="${i}" title="${used(v.id) ? 'Đã có nhập/đơn — không xoá được' : 'Xoá phân loại'}">✕</button>
+            <button type="button" class="icon-btn del" data-vdel="${i}" title="${used(v.id) ? 'Xoá phân loại (lịch sử nhập/đơn sẽ chuyển sang loại khác)' : 'Xoá phân loại'}">✕</button>
           </div>`).join('')}
         </div>` : '<p class="muted small">Chưa có phân loại. Sản phẩm sẽ tính tồn kho chung.</p>';
       };
@@ -2244,12 +2272,36 @@ function openProductForm(existing) {
         const file = e.target.files[0];
         upload(file, (ref) => { p.variants[+i].image = ref; drawVariants(); });
       });
-      $('#variants', m).addEventListener('click', (e) => {
+      $('#variants', m).addEventListener('click', async (e) => {
         const del = e.target.closest('[data-vdel]');
         if (!del) return;
-        const v = p.variants[+del.dataset.vdel];
-        if (used(v.id)) return notify(`"${v.name}" đã có phiếu nhập hoặc đơn hàng nên không xoá được. Bạn có thể đổi tên.`);
-        p.variants.splice(+del.dataset.vdel, 1);
+        const idx = +del.dataset.vdel;
+        const v = p.variants[idx];
+        const inCombos = combosUsing(p.id, v.id);
+        if (inCombos.length) return notify(`"${v.name}" đang nằm trong combo: ${inCombos.map((c) => c.name).join(', ')}. Sửa combo trước.`);
+        const hasHistory = used(v.id);
+        let to = '';
+        if (hasHistory) {
+          const others = p.variants.filter((x) => x.id !== v.id);
+          const choice = await choose(`"${v.name || 'Phân loại này'}" đã có phiếu nhập hoặc đơn hàng. Xoá thì lịch sử nhập, đơn và tồn của nó chuyển đi đâu?`, [
+            { value: 'cancel', label: 'Huỷ' },
+            { value: 'none', label: 'Về "chưa phân loại"' },
+            ...(others.length ? [{ value: 'merge', label: 'Gộp vào loại khác', cls: 'btn' }] : []),
+          ]);
+          if (!choice || choice === 'cancel') return;
+          if (choice === 'merge') {
+            const target = await choose(`Gộp "${v.name}" vào loại nào?`, [...others.map((x) => ({ value: x.id, label: x.name || '(chưa đặt tên)', cls: 'btn ghost' })), { value: 'cancel', label: 'Huỷ' }]);
+            if (!target || target === 'cancel') return;
+            to = target;
+          }
+        }
+        if (num(v.adjust)) { // its stock adjustment goes with it
+          const t = p.variants.find((x) => x.id === to);
+          if (t) t.adjust = num(t.adjust) + num(v.adjust); else p.adjust = num(p.adjust) + num(v.adjust);
+        }
+        moves.forEach((mv) => { if (mv.to === v.id) mv.to = to; }); // a loại already merged into this one follows it
+        if (hasHistory) moves.push({ from: v.id, to });
+        p.variants.splice(idx, 1);
         drawVariants();
       });
       $('#add-variant', m).onclick = () => {
@@ -2263,6 +2315,7 @@ function openProductForm(existing) {
         if (busy) return toast('Đang tải ảnh, chờ chút…');
         if (!form.reportValidity()) return;
         const d = formData(form);
+        if (moves.length) await moveVariantHistory(p.id, moves);
         await store.upsert('products', {
           ...p, name: d.name.trim(), category: p.category || 'other', sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
           defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
