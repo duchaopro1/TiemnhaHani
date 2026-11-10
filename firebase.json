@@ -1,7 +1,7 @@
 {
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "firestore.rules", "README.md", "package.json", "tests/**", ".github/**", "**/.*", "**/node_modules/**"]
+    "ignore": ["hani.html", "firebase.json", "firestore.rules", "README.md", "package.json", "tests/**", ".github/**", "**/.*", "**/node_modules/**"]
   },
   "firestore": { "rules": "firestore.rules" }
 }

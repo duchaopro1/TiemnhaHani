@@ -26,6 +26,7 @@ const COLUMNS = {
   fixedFee: ['phi co dinh', 'commission fee'],
   serviceFee: ['phi dich vu', 'service fee'],
   paymentFee: ['phi thanh toan', 'transaction fee'],
+  tracking: ['ma van don', 'tracking number', 'tracking no'],
   customer: ['ten nguoi nhan', 'receiver name', 'nguoi mua', 'username (buyer)'],
   note: ['nhan xet tu nguoi mua', 'remark from buyer', 'ghi chu'],
 };
@@ -35,10 +36,22 @@ export function mapStatus(text) {
   const s = normalize(text);
   if (!s) return 'pending';
   if (s.includes('huy') || s.includes('cancel')) return 'cancelled';
+  // "Người mua xác nhận đã nhận được hàng, tuy nhiên Người mua vẫn có thể gửi yêu cầu Trả hàng/Hoàn tiền tới ngày …"
+  // The buyer has the goods: the order is done. The return words are only a deadline, not a return.
+  if (s.includes('xac nhan da nhan') || s.includes('da nhan duoc hang') || s.includes('da nhan hang')) return 'done';
   if (s.includes('tra hang') || s.includes('hoan tien') || s.includes('return') || s.includes('refund')) return 'returned';
   if (s.includes('hoan thanh') || s.includes('completed') || s.includes('da giao') || s.includes('delivered')) return 'done';
   if (s.includes('dang giao') || s.includes('shipping') || s.includes('van chuyen')) return 'shipping';
   return 'pending';
+}
+
+/**
+ * Status to keep when a Shopee file is imported again over an existing order.
+ * Shopee knows nothing about "Đã thiết kế" / "Đã đóng gói", so while Shopee still says the order
+ * is waiting, the shop's own progress stays; anything further (shipping, done, cancelled…) wins.
+ */
+export function mergeShopeeStatus(current, fromShopee) {
+  return (current === 'designed' || current === 'packed') && fromShopee === 'pending' ? current : fromShopee;
 }
 
 export function parseNumber(v) {
@@ -60,7 +73,8 @@ export function parseDate(v) {
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date(); // today in local time, not UTC
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 function findColumns(headers) {
@@ -103,6 +117,7 @@ export function rowsToOrders(rows) {
         discount: parseNumber(get(row, 'shopVoucher')),
         shipFee: parseNumber(get(row, 'buyerShip')),
         shipPayer: 'customer',
+        tracking: String(get(row, 'tracking') || '').trim(),
         platformFee: parseNumber(get(row, 'fixedFee')) + parseNumber(get(row, 'serviceFee')) + parseNumber(get(row, 'paymentFee')),
         items: [],
       };
@@ -112,9 +127,12 @@ export function rowsToOrders(rows) {
     const lineTotal = parseNumber(get(row, 'lineTotal'));
     const price = lineTotal ? lineTotal / qty : parseNumber(get(row, 'unitPrice'));
     const variant = String(get(row, 'variant') || '').trim();
+    const baseName = String(get(row, 'productName') || '').trim();
     order.items.push({
       sku: String(get(row, 'sku') || '').trim(),
-      productName: [String(get(row, 'productName') || '').trim(), variant].filter(Boolean).join(' — '),
+      baseName,
+      variantName: variant,
+      productName: [baseName, variant].filter(Boolean).join(' — '),
       qty,
       price,
     });
