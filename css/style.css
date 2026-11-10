@@ -429,7 +429,7 @@ dialog.confirm p { margin: 0; font-size: 15px; }
 .stboard-head h3 { margin: 0; }
 .stbar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--blue-soft); margin-bottom: 14px; }
 .stbar i { display: block; height: 100%; min-width: 4px; }
-.stcards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); }
+.stcards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); }
 .stcard {
   display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 12px 14px; border-radius: 14px;
   border: 1.5px solid; text-decoration: none; transition: transform .12s ease, box-shadow .12s ease;
@@ -587,3 +587,7 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .short-list { max-height: 50vh; overflow: auto; display: grid; gap: 10px; }
 .short-order { padding: 10px 12px; border: 1px solid var(--st-packed-edge); background: #fffaf5; border-radius: 12px; }
 .short-order ul { margin: 6px 0 0 18px; padding: 0; font-size: 13px; }
+
+/* total orders card, first in the status row */
+.stcard.st-total { background-color: var(--blue); border-color: var(--blue); color: #fff; }
+.stcard.st-total .stcard-pct { opacity: .9; }

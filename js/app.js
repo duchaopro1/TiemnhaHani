@@ -518,6 +518,11 @@ function pageDashboard() {
         ? Object.keys(STATUSES).filter((k) => byStatus[k]).map((k) => `<i style="width:${(byStatus[k] / orders.length) * 100}%;background:var(--st-${k}-edge)" title="${esc(STATUSES[k])}: ${byStatus[k]}"></i>`).join('')
         : ''}</div>
       <div class="stcards">
+        <a class="stcard st-total" href="#orders" data-goto-status="" data-goto-month="${esc(goMonth)}" title="Xem tất cả các đơn">
+          <span class="stcard-label">Tổng đơn hàng</span>
+          <b class="stcard-count" id="total-orders">${orders.length}</b>
+          <span class="stcard-pct">${openNow} chưa xong</span>
+        </a>
         ${Object.entries(STATUSES).map(([k, label]) => `<a class="stcard st-${k} ${byStatus[k] ? '' : 'zero'}" href="#orders" data-goto-status="${k}" data-goto-month="${esc(goMonth)}" title="Xem các đơn ${esc(label.toLowerCase())}">
           <span class="stcard-label">${esc(label)}</span>
           <b class="stcard-count">${byStatus[k]}</b>
