@@ -2167,6 +2167,7 @@ function openProductForm(existing) {
   // A variant with imports or orders can be removed too: its history moves to another variant (or to "no variant")
   // when the form is saved, so cancelling the form changes nothing.
   const moves = []; // [{ from, to }]
+  const releasedFromCombos = new Set(); // variant ids to unpin from the combos that fix them
   const used = (vid) => S.imports.some((i) => i.itemId === p.id && i.variantId === vid)
     || S.orders.some((o) => o.items?.some((l) => l.productId === p.id && l.variantId === vid))
     || combosUsing(p.id, vid).length > 0;
@@ -2278,7 +2279,11 @@ function openProductForm(existing) {
         const idx = +del.dataset.vdel;
         const v = p.variants[idx];
         const inCombos = combosUsing(p.id, v.id);
-        if (inCombos.length) return notify(`"${v.name}" đang nằm trong combo: ${inCombos.map((c) => c.name).join(', ')}. Sửa combo trước.`);
+        if (inCombos.length) {
+          const names = inCombos.map((c) => c.name).join(', ');
+          if (!(await ask(`"${v.name}" đang được cố định trong combo: ${names}. Nếu xoá, combo đó sẽ chuyển thành "chọn loại khi lên đơn" cho sản phẩm này. Tiếp tục xoá?`, 'Xoá loại này'))) return;
+          releasedFromCombos.add(v.id);
+        }
         const hasHistory = used(v.id);
         let to = '';
         if (hasHistory) {
@@ -2316,6 +2321,11 @@ function openProductForm(existing) {
         if (!form.reportValidity()) return;
         const d = formData(form);
         if (moves.length) await moveVariantHistory(p.id, moves);
+        if (releasedFromCombos.size) {
+          const fixed = S.products.filter((c) => comboParts(c).some((x) => x.productId === p.id && releasedFromCombos.has(x.variantId)))
+            .map((c) => ({ ...c, combo: c.combo.map((x) => (x.productId === p.id && releasedFromCombos.has(x.variantId) ? { ...x, variantId: '' } : x)) }));
+          if (fixed.length) await store.upsertMany('products', fixed);
+        }
         await store.upsert('products', {
           ...p, name: d.name.trim(), category: p.category || 'other', sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
           defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
