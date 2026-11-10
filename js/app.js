@@ -191,6 +191,87 @@ function fitRevenueTable() {
 }
 window.addEventListener('resize', fitRevenueTable);
 
+/**
+ * Quick entry of an order: choose a product that has variants and type a quantity next to each variant.
+ * `onAdd({ product, rows: [{ variantId, qty }] })` gets the variants with a quantity.
+ */
+function openQuickAdd(onAdd) {
+  const prods = S.products.filter((p) => !isCombo(p) && hasVariants(p));
+  if (!prods.length) return notify('Chưa có sản phẩm nào có nhiều loại (màu, chữ…).');
+  let pid = ui.quickProduct && prods.some((p) => p.id === ui.quickProduct) ? ui.quickProduct : prods[0].id;
+  const qty = {}; // variantId -> quantity typed
+  const d = document.createElement('dialog');
+  d.className = 'confirm quick-dialog';
+  const draw = () => {
+    const p = product(pid);
+    d.innerHTML = `<div class="modal-body">
+      <h3 style="margin:0 0 8px">⚡ Nhập nhanh nhiều loại</h3>
+      <label class="field">Sản phẩm<select id="qk-product">${prods.map((x) => `<option value="${esc(x.id)}" ${x.id === pid ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <div class="quick-grid" role="group" aria-label="Số lượng từng loại">${p.variants.map((v) => {
+        const have = vStock(p.id, v.id);
+        return `<label class="quick-row ${num(qty[v.id]) > 0 ? 'on' : ''}" data-v="${esc(v.id)}">
+          ${thumb(v.image || p.image, v.name, 'sm')}
+          <span class="quick-name"><b>${esc(v.name)}</b><span class="small ${have <= 0 ? 'neg' : 'muted'}">${have <= 0 ? 'hết hàng' : `còn ${have}`}</span></span>
+          <input type="number" min="0" step="1" inputmode="numeric" data-q="${esc(v.id)}" value="${num(qty[v.id]) || ''}" placeholder="0" aria-label="Số lượng ${esc(v.name)}">
+        </label>`;
+      }).join('')}</div>
+      <div class="quick-sum small" id="qk-sum"></div>
+      <p class="small muted" style="margin:6px 0 0">Mỗi loại thành một dòng, không gắn đóng gói riêng. Dùng "Đóng gói cả đơn" cho hộp hoặc túi chung.</p>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn ghost" value="clear" id="qk-clear">Xoá hết số</button><button class="btn" value="add" id="qk-add">Thêm vào đơn</button></div>`;
+    sum();
+  };
+  const sum = () => {
+    const p = product(pid);
+    const rows = p.variants.filter((v) => num(qty[v.id]) > 0);
+    const total = rows.reduce((n, v) => n + num(qty[v.id]), 0);
+    const over = rows.filter((v) => num(qty[v.id]) > vStock(p.id, v.id));
+    $('#qk-sum', d).innerHTML = rows.length
+      ? `<b>${total}</b> cái · <b>${rows.length}</b> loại${(p.tiers || []).length ? ` · giá ${money(tierPrice(p, total, num(p.salePrice)))}/cái (giá theo số lượng)` : ''}${over.length ? ` · <span class="neg">vượt tồn: ${over.map((v) => esc(v.name)).join(', ')}</span>` : ''}`
+      : '<span class="muted">Nhập số lượng ở các loại cần.</span>';
+    $('#qk-add', d).disabled = !rows.length;
+  };
+  d.addEventListener('input', (e) => {
+    if (e.target.dataset.q === undefined) return;
+    qty[e.target.dataset.q] = e.target.value === '' ? 0 : Math.max(0, Math.round(num(e.target.value)));
+    e.target.closest('.quick-row').classList.toggle('on', qty[e.target.dataset.q] > 0);
+    sum();
+  });
+  d.addEventListener('change', (e) => {
+    if (e.target.id !== 'qk-product') return;
+    pid = e.target.value;
+    ui.quickProduct = pid;
+    for (const k of Object.keys(qty)) delete qty[k];
+    draw();
+    $('.quick-row input', d)?.focus();
+  });
+  d.addEventListener('keydown', (e) => {
+    // Enter moves down the list, like filling a table
+    if (e.key !== 'Enter' || e.target.dataset?.q === undefined) return;
+    e.preventDefault();
+    const inputs = $$('.quick-row input', d);
+    const next = inputs[inputs.indexOf(e.target) + 1];
+    if (next) next.focus(); else $('#qk-add', d).focus();
+  });
+  d.addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.value;
+    if (v === 'clear') { for (const k of Object.keys(qty)) delete qty[k]; draw(); return; }
+    if (v) d.close(v);
+  });
+  d.addEventListener('close', () => {
+    if (d.returnValue === 'add') {
+      const p = product(pid);
+      const rows = p.variants.filter((x) => num(qty[x.id]) > 0).map((x) => ({ variantId: x.id, qty: num(qty[x.id]) }));
+      if (rows.length) onAdd({ product: p, rows });
+    }
+    d.remove();
+  });
+  document.body.append(d);
+  draw();
+  d.showModal();
+  $('.quick-row input', d)?.focus();
+}
+
 /* ================= missing goods alert ================= */
 /** What a shortage line is short of: a product (variant), or one of a pool of products. */
 const shortLabel = (l) => (l.pool ? `Một trong: ${l.pool.map((id) => product(id)?.name || '?').join(' / ')}` : itemLabel(l.productId, l.variantId));
@@ -809,6 +890,7 @@ function openOrderFormNow(existing, restored) {
       <div id="lines"></div>
       <div id="dup-warn" role="alert" hidden></div>
       <button type="button" class="btn ghost sm" id="add-line">＋ Thêm sản phẩm</button>
+      <button type="button" class="btn ghost sm" id="quick-add" title="Chọn một sản phẩm rồi nhập số lượng của nhiều loại cùng lúc">⚡ Nhập nhanh nhiều loại</button>
       <h3 style="margin:18px 0 4px">Đóng gói cả đơn</h3>
       <p class="small muted" style="margin:0 0 8px">Hộp / túi ngoài chứa tất cả sản phẩm của đơn để ship đi. Mỗi đơn dùng 1 cái, không nhân theo số sản phẩm.</p>
       <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
@@ -1049,6 +1131,20 @@ function openOrderFormNow(existing, restored) {
         applyTiers();
       });
       $('#add-line', m).onclick = () => { o.items.push(blankLine()); drawLines(); };
+      // Quick entry: pick a product once, type a quantity for each of its variants, get one line per variant.
+      $('#quick-add', m).onclick = () => openQuickAdd(({ product: qp, rows }) => {
+        o.items = o.items.filter((l) => l.productId || l.productName); // the empty starter line goes away
+        for (const r of rows) {
+          const same = o.items.find((l) => l.productId === qp.id && l.variantId === r.variantId);
+          if (same) { same.qty = num(same.qty) + r.qty; continue; }
+          // no packaging of its own: use "Đóng gói cả đơn" for the shared box or bag
+          o.items.push({ productId: qp.id, variantId: r.variantId, qty: r.qty, price: variantPrice(qp, variantOf(qp.id, r.variantId)), pack1: '', pack2: '', pack3: '', packEach: false });
+        }
+        if (!o.items.length) o.items.push(blankLine());
+        drawLines();
+        applyTiers();
+        toast(`Đã thêm ${rows.length} loại · ${rows.reduce((n, r) => n + r.qty, 0)} cái`);
+      });
       $('#pay-quick', m).onclick = (e) => {
         const v = e.target.dataset.pay;
         if (v === undefined) return;

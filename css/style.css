@@ -628,3 +628,12 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .tier-row { display: grid; grid-template-columns: auto 72px auto 110px 1fr auto; gap: 8px; align-items: center; }
 .tier-row input { min-width: 0; }
 .tier-note { padding: 4px 2px; color: var(--st-designed-ink); }
+
+/* quick entry of variants */
+.quick-dialog { width: min(520px, calc(100vw - 32px)); }
+.quick-grid { display: grid; gap: 6px; margin: 10px 0 8px; max-height: 46vh; overflow: auto; padding-right: 2px; }
+.quick-row { display: grid; grid-template-columns: auto 1fr 84px; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 12px; cursor: text; }
+.quick-row.on { background: var(--st-designed); border-color: var(--st-designed-edge); }
+.quick-name { display: flex; flex-direction: column; min-width: 0; }
+.quick-row input { text-align: center; font-weight: 700; }
+.quick-sum { min-height: 22px; }
