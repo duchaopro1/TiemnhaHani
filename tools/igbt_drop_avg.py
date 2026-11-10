@@ -2,7 +2,7 @@
 """Tinh trung binh 4 signal IGBT Tj trong 1s truoc thoi diem signal giam dot ngot.
 
 Dung:
-    python3 tools/igbt_drop_avg.py file.tsv [--window 1.0] [--threshold 1.0]
+    python3 tools/igbt_drop_avg.py [file.tsv] [--window 1.0] [--threshold 1.0]
                                    [--detect VAR_BCC_tIGBTTj_f32] [--pick first|last|largest]
 
 Drop = buoc nhay giua 2 sample lien tiep <= -threshold (degC). Thoi diem t0 la
@@ -41,14 +41,32 @@ def find_drops(values, threshold):
     return [k for k in range(len(values) - 1) if values[k + 1] - values[k] <= -threshold]
 
 
+def pick_file():
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(title="Chon file TSV", filetypes=[("TSV", "*.tsv"), ("All", "*.*")])
+        root.destroy()
+    except Exception:
+        path = input("Nhap duong dan file .tsv: ").strip().strip('"')
+    if not path:
+        sys.exit("Chua chon file.")
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("file")
+    ap.add_argument("file", nargs="?", help="file .tsv (bo trong -> mo hop thoai chon file)")
     ap.add_argument("--window", type=float, default=1.0, help="do dai cua so (s), mac dinh 1.0")
     ap.add_argument("--threshold", type=float, default=1.0, help="muc giam/sample de coi la dot ngot (degC), mac dinh 1.0")
     ap.add_argument("--detect", default=SIGNALS[0], help="signal dung de tim diem giam")
     ap.add_argument("--pick", choices=["first", "last", "largest"], default="first")
     a = ap.parse_args()
+    if not a.file:
+        a.file = pick_file()
 
     time, data, _, _ = load(a.file)
     det = data.get(a.detect)
