@@ -540,7 +540,15 @@ export const TRANSIT_STAGES = {
   shipping_cn: 'Đang ship từ TQ',
   customs: 'Chờ thông quan',
   cleared: 'Đã thông quan',
+  shipping_vn: 'Đang ship về', // goods ordered in Vietnam have this single stage
 };
+/** The stages of a slip, by where the goods were ordered: China goes through customs, Vietnam only ships. */
+export const TRANSIT_BY_ORIGIN = {
+  cn: ['shipping_cn', 'customs', 'cleared'],
+  vn: ['shipping_vn'],
+};
+/** Where a slip was ordered. Slips from before this option were all from China. */
+export const originOf = (slip) => (slip?.origin === 'vn' || slip?.transit === 'shipping_vn' ? 'vn' : 'cn');
 
 /**
  * "Đang ship từ TQ" starts the day the goods are ordered, so only the stages after it get a time.
@@ -554,9 +562,9 @@ export const TIMED_STAGES = ['customs', 'cleared'];
  * none) leaves the history alone.
  */
 export function withTransit(slip, stage, now = Date.now()) {
-  const keys = Object.keys(TRANSIT_STAGES);
+  const keys = TRANSIT_BY_ORIGIN[stage === 'shipping_vn' ? 'vn' : 'cn'];
   const old = slip?.transitAt || {};
-  if (!stage || !keys.includes(stage)) return { transit: '', ...(slip?.transitAt ? { transitAt: old } : {}) };
+  if (!stage || !(stage in TRANSIT_STAGES)) return { transit: '', ...(slip?.transitAt ? { transitAt: old } : {}) };
   const at = {};
   for (const k of keys.slice(0, keys.indexOf(stage) + 1)) if (TIMED_STAGES.includes(k) && old[k] !== undefined) at[k] = old[k];
   if (TIMED_STAGES.includes(stage)) at[stage] = old[stage] !== undefined ? old[stage] : now;

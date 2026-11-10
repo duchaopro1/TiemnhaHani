@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice, originOf, TRANSIT_BY_ORIGIN } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -623,4 +623,17 @@ test('giá theo số lượng: từ N cái trở lên giá giảm, mức cao nh�
   assert.equal(tierPrice({ tiers: [{ minQty: 0, price: 1 }, { minQty: 5, price: '' }] }, 20, 25000), 25000);
   assert.equal(tierPrice({}, 20, 25000), 25000);
   assert.equal(tierPrice({ tiers: [{ minQty: 10, price: 0 }] }, 10, 25000), 0); // tặng kèm: giá 0 hợp lệ
+});
+
+test('hàng đặt ở Việt Nam chỉ có một giai đoạn "Đang ship về", hàng Trung Quốc giữ 3 giai đoạn', () => {
+  assert.deepEqual(TRANSIT_BY_ORIGIN.cn, ['shipping_cn', 'customs', 'cleared']);
+  assert.deepEqual(TRANSIT_BY_ORIGIN.vn, ['shipping_vn']);
+  assert.equal(originOf({ origin: 'vn' }), 'vn');
+  assert.equal(originOf({ transit: 'shipping_vn' }), 'vn');
+  assert.equal(originOf({ transit: 'customs' }), 'cn');
+  assert.equal(originOf({}), 'cn'); // phiếu cũ coi là hàng Trung Quốc
+  assert.deepEqual(withTransit({}, 'shipping_vn', 5), { transit: 'shipping_vn', transitAt: {} }); // không ghi giờ
+  assert.deepEqual(transitHistory(withTransit({}, 'shipping_vn', 5)), []);
+  // nhận hàng vẫn bỏ giai đoạn
+  assert.equal(withTransit({ transit: 'shipping_vn' }, '').transit, '');
 });

@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -1370,7 +1370,7 @@ function rowsOf(list) {
   return [...groups.values()];
 }
 
-const TRANSIT_CHIP = { shipping_cn: 'st-pending', customs: 'st-packed', cleared: 'st-designed' };
+const TRANSIT_CHIP = { shipping_cn: 'st-pending', customs: 'st-packed', cleared: 'st-designed', shipping_vn: 'st-shipping' };
 /** Chip of an ordered slip: where it is on the way (older slips without a stage just say "Đang về"). */
 const transitChip = (i) => `<span class="chip ${TRANSIT_CHIP[i.transit] || 'pay-due'}">${esc(TRANSIT_STAGES[i.transit] || 'Đang về')}</span>`;
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -1380,7 +1380,30 @@ const daysSince = (ms) => Math.max(0, Math.floor((Date.now() - ms) / 86400000));
 /** Fields to save for a slip that is on its way at `stage` (or, with no stage, not on its way any more). */
 const stageFields = (base, stage) => withTransit(base, stage);
 const transitSince = (i) => { const h = transitHistory(i).find((x) => x.stage === i.transit); return h ? ` <span class="small muted">từ ${fmtStamp(h.at)}</span>` : ''; };
-const transitOptions = (sel) => Object.entries(TRANSIT_STAGES).map(([k, v]) => `<option value="${k}" ${k === (sel || 'shipping_cn') ? 'selected' : ''}>${esc(v)}</option>`).join('');
+const transitOptions = (sel, origin = 'cn') => TRANSIT_BY_ORIGIN[origin].map((k) => `<option value="${k}" ${k === (sel || TRANSIT_BY_ORIGIN[origin][0]) ? 'selected' : ''}>${esc(TRANSIT_STAGES[k])}</option>`).join('');
+/** "Where was it ordered" switch of a form, with the stage chooser that follows it (only China has several stages). */
+const originField = (prefix, slip) => `<div class="field" id="${prefix}-origin-wrap" style="grid-column:1/-1"><span>Hàng đặt ở đâu</span>
+        <div class="seg" id="${prefix}-origin" style="justify-self:start"><button type="button" data-v="cn">Trung Quốc</button><button type="button" data-v="vn">Việt Nam</button></div>
+        <span class="small muted" id="${prefix}-origin-note"></span></div>
+      <label class="field" id="${prefix}-transit" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions(slip?.transit, originOf(slip))}</select></label>`;
+const syncOrigin = (m, prefix, ordered, origin) => {
+  $(`#${prefix}-origin-wrap`, m).hidden = !ordered;
+  $$(`#${prefix}-origin button`, m).forEach((b) => b.classList.toggle('on', b.dataset.v === origin));
+  $(`#${prefix}-transit`, m).hidden = !ordered || origin === 'vn';
+  $(`#${prefix}-origin-note`, m).textContent = origin === 'vn' ? 'Hàng trong nước chỉ có một trạng thái: Đang ship về.' : 'Hàng từ Trung Quốc: Đang ship từ TQ → Chờ thông quan → Đã thông quan.';
+};
+/** What a form saves for the origin/stage of a slip that is (or is not) still on its way. */
+const originFields = (ordered, origin, stage) => ({ origin, transit: ordered ? (origin === 'vn' ? 'shipping_vn' : stage || 'shipping_cn') : '' });
+/** Wire the origin switch: switching rebuilds the stage list. */
+const wireOrigin = (m, prefix, state, after) => {
+  $(`#${prefix}-origin`, m).addEventListener('click', (e) => {
+    const v = e.target.dataset.v;
+    if (!v) return;
+    state.origin = v;
+    $(`#${prefix}-transit select`, m).innerHTML = transitOptions('', v);
+    after();
+  });
+};
 
 function importRow(i, child = false) {
   const item = itemOf(i);
@@ -1454,7 +1477,7 @@ function pageImports() {
     <div class="toolbar">
       <input type="search" id="import-q" placeholder="Tìm mặt hàng, nhà cung cấp…" value="${esc(f.q)}">
       <div class="seg">${[['', 'Tất cả'], ['product', 'Sản phẩm'], ['packaging', 'Dụng cụ đóng gói']].map(([k, v]) => `<button data-import-kind="${k}" class="${f.kind === k ? 'on' : ''}">${v}</button>`).join('')}</div>
-      <div class="seg">${[['', 'Mọi tình trạng'], ['ordered', 'Đang về'], ...Object.entries(TRANSIT_STAGES), ['received', 'Đã nhận']].map(([k, v]) => `<button data-import-status="${k}" class="${f.status === k ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <div class="seg">${[['', 'Mọi tình trạng'], ['ordered', 'Tất cả đang về'], ...Object.entries(TRANSIT_STAGES).map(([k, v]) => [k, k === 'shipping_vn' ? 'Đang ship về (VN)' : v]), ['received', 'Đã nhận']].map(([k, v]) => `<button data-import-status="${k}" class="${f.status === k ? 'on' : ''}">${v}</button>`).join('')}</div>
       <span class="muted small" style="margin-left:auto">${list.length} phiếu · Đã nhận ${money(gotTotal)}${comingTotal ? ` · Đang về ${money(comingTotal)}` : ''}</span>
     </div>
     ${batchList.length ? `<section class="card inbound-card" aria-labelledby="inbound-title">
@@ -1466,8 +1489,10 @@ function pageImports() {
             <div><b>Đặt ngày ${fmtDate(first.date)}</b>${first.supplier ? ` · ${esc(first.supplier)}` : ''}<br><span class="small muted">${rows.length} mặt hàng · ${money(rows.reduce((n, i) => n + amountOf(i), 0))}</span></div>
             <button class="btn sm" data-action="receive-batch" data-batch="${esc(key)}">Đã nhận hàng</button>
           </div>
-          <label class="inbound-stage">${transitChip(first)}<select data-batch-transit="${esc(key)}" aria-label="Hàng đang ở đâu">${transitOptions(first.transit)}</select></label>
-          ${first.transit === 'shipping_cn' ? `<p class="small muted" style="margin:0">Đang ship từ ngày đặt hàng ${fmtDate(first.date)}${daysSince(Date.parse(first.date)) ? ` · ${daysSince(Date.parse(first.date))} ngày nay` : ''}</p>` : transitHistory(first).length ? `<ul class="transit-log">${transitHistory(first).map((h) => `<li${h.stage === first.transit ? ' class="now"' : ''}><span>${esc(h.label)}</span><input type="datetime-local" data-batch-at="${esc(key)}" data-stage="${h.stage}" value="${stampInput(h.at)}" aria-label="Thời điểm ${esc(h.label)}">${h.stage === first.transit ? `<span class="small muted">${daysSince(h.at) ? daysSince(h.at) + ' ngày nay' : 'hôm nay'}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Chưa có mốc thời gian. Mốc được ghi khi chuyển sang Chờ thông quan.</p>'}
+          ${originOf(first) === 'vn'
+            ? `<div class="inbound-stage">${transitChip(first)}<span class="small muted">Hàng đặt trong nước</span></div>`
+            : `<label class="inbound-stage">${transitChip(first)}<select data-batch-transit="${esc(key)}" aria-label="Hàng đang ở đâu">${transitOptions(first.transit)}</select></label>`}
+          ${first.transit === 'shipping_cn' || first.transit === 'shipping_vn' ? `<p class="small muted" style="margin:0">Đang ship từ ngày đặt hàng ${fmtDate(first.date)}${daysSince(Date.parse(first.date)) ? ` · ${daysSince(Date.parse(first.date))} ngày nay` : ''}</p>` : transitHistory(first).length ? `<ul class="transit-log">${transitHistory(first).map((h) => `<li${h.stage === first.transit ? ' class="now"' : ''}><span>${esc(h.label)}</span><input type="datetime-local" data-batch-at="${esc(key)}" data-stage="${h.stage}" value="${stampInput(h.at)}" aria-label="Thời điểm ${esc(h.label)}">${h.stage === first.transit ? `<span class="small muted">${daysSince(h.at) ? daysSince(h.at) + ' ngày nay' : 'hôm nay'}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Chưa có mốc thời gian. Mốc được ghi khi chuyển sang Chờ thông quan.</p>'}
           <ul class="inbound-items">${rowsOf(rows).map((g) => {
             const f = g.rows[0], it = itemOf(f), q = g.rows.reduce((n, i) => n + num(i.qty), 0);
             const label = `<span class="item">${f.kind === 'packaging' ? '' : thumb(it?.image, it?.name, 'sm')}${esc(it?.name || '(đã xoá)')}</span><b>×${q}</b>`;
@@ -1535,7 +1560,7 @@ function openReceiveDialog(ids) {
           received += 1;
           docs.push({ ...i, status: 'received', receivedDate: date, qty: n, ...stageFields(i, '') });
           if (keep && n < num(i.qty)) {
-            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', ...stageFields(i, i.transit || 'shipping_cn'), batchId: i.batchId || i.id });
+            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', origin: originOf(i), ...stageFields(i, i.transit || (originOf(i) === 'vn' ? 'shipping_vn' : 'shipping_cn')), batchId: i.batchId || i.id });
           }
         });
         if (!received) return toast('Nhập số lượng thực nhận cho ít nhất 1 dòng');
@@ -1554,7 +1579,7 @@ function openReceiveDialog(ids) {
 function openParcelForm() {
   const blank = () => ({ ref: '', variantId: '', qty: 1, unitCost: 0 });
   const lines = [blank(), blank()];
-  const st = { status: 'ordered', mode: 'qty' };
+  const st = { status: 'ordered', mode: 'qty', origin: ui.lastOrigin || 'cn' };
   const refOptions = (sel) => `<option value="">— chọn mặt hàng —</option>
     <optgroup label="Sản phẩm">${S.products.filter((p) => !isCombo(p)).map((p) => `<option value="product:${esc(p.id)}" ${sel === 'product:' + p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>
     <optgroup label="Dụng cụ đóng gói">${S.packaging.map((k) => `<option value="packaging:${esc(k.id)}" ${sel === 'packaging:' + k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</optgroup>`;
@@ -1569,7 +1594,7 @@ function openParcelForm() {
       <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
         <div class="seg" id="pc-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
       </div>
-      <label class="field" id="pc-transit" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions('')}</select></label>
+      ${originField('pc', null)}
       <label class="field" id="pc-recv" style="grid-column:1/-1" hidden>Ngày nhận hàng<input type="date" name="receivedDate" value="${today()}"></label>
       <div id="pc-lines" style="grid-column:1/-1"></div>
       <button type="button" class="btn ghost sm" id="pc-add" style="justify-self:start">＋ Thêm mặt hàng</button><span></span>
@@ -1599,7 +1624,7 @@ function openParcelForm() {
         $$('#pc-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
         $$('#pc-mode button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.mode));
         $('#pc-recv', m).hidden = st.status !== 'received';
-        $('#pc-transit', m).hidden = st.status !== 'ordered';
+        syncOrigin(m, 'pc', st.status === 'ordered', st.origin);
         const sh = shares();
         let goods = 0, qty = 0;
         lines.forEach((l, i) => {
@@ -1613,6 +1638,7 @@ function openParcelForm() {
       };
       drawLines();
       sync();
+      wireOrigin(m, 'pc', st, sync);
       m.addEventListener('click', (e) => {
         const seg = e.target.closest('#pc-status [data-v], #pc-mode [data-v]');
         if (seg) { st[seg.parentElement.id === 'pc-mode' ? 'mode' : 'status'] = seg.dataset.v; sync(); }
@@ -1650,9 +1676,10 @@ function openParcelForm() {
             kind, itemId, variantId: kind === 'product' ? l.variantId || '' : '', date: d.date, qty: num(l.qty), unitCost: num(l.unitCost),
             extraFee: sh[i], supplier: (d.supplier || '').trim(), note: (d.note || '').trim(), batchId,
             status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
-            ...stageFields({}, st.status === 'ordered' ? d.transit || 'shipping_cn' : ''),
+            ...stageFields({}, originFields(st.status === 'ordered', st.origin, d.transit).transit), origin: st.origin,
           };
         });
+        ui.lastOrigin = st.origin;
         await store.upsertMany('imports', docs);
         m.close();
         toast(st.status === 'received' ? `Đã nhập kho ${docs.length} dòng, phí ship đã chia 📦` : `Đã ghi kiện ${docs.length} dòng. Hàng về thì bấm “Đã nhận hàng”`);
@@ -1679,7 +1706,7 @@ function openGroupEdit(ids) {
     r.qty = r.slips.reduce((n, i) => n + num(i.qty), 0);
   }
   const costs0 = new Set(slips.map((i) => num(i.unitCost)));
-  const st = { status: first.status || 'received' };
+  const st = { status: first.status || 'received', origin: originOf(first) };
   const feeNow = slips.reduce((n, i) => n + num(i.extraFee), 0);
 
   openModal({
@@ -1691,7 +1718,7 @@ function openGroupEdit(ids) {
       <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
         <div class="seg" id="ge-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
       </div>
-      <label class="field" id="ge-transit" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions(first.transit)}</select></label>
+      ${originField('ge', first)}
       <label class="field" id="ge-recv" style="grid-column:1/-1">Ngày nhận hàng<input type="date" name="receivedDate" value="${esc(first.receivedDate || today())}"></label>
       <div class="vqty" style="grid-column:1/-1">
         <div class="vqty-head"><span>Phân loại</span><span>Đang có</span><span>Số lượng</span></div>
@@ -1714,7 +1741,7 @@ function openGroupEdit(ids) {
       const sync = () => {
         $$('#ge-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
         $('#ge-recv', m).hidden = st.status !== 'received';
-        $('#ge-transit', m).hidden = st.status !== 'ordered';
+        syncOrigin(m, 'ge', st.status === 'ordered', st.origin);
         const q = qtys();
         const total = q.reduce((a, b) => a + b, 0);
         const goods = form.unitCost.value === ''
@@ -1724,6 +1751,7 @@ function openGroupEdit(ids) {
         $('#ge-sum', m).innerHTML = `<div><span>Tổng số lượng</span><b>${total}</b></div><div><span>Thành tiền</span><b>${money(goods + fee)}</b></div><div><span>Vốn / đơn vị</span><b>${money(total ? (goods + fee) / total : 0)}</b></div>`;
       };
       sync();
+      wireOrigin(m, 'ge', st, sync);
       m.addEventListener('input', sync);
       $('#ge-status', m).onclick = (e) => { if (e.target.dataset.v) { st.status = e.target.dataset.v; sync(); } };
       $('[data-close2]', m).onclick = () => m.close();
@@ -1736,7 +1764,7 @@ function openGroupEdit(ids) {
         const common = {
           date: d.date, supplier: (d.supplier || '').trim(), note: (d.note || '').trim(),
           status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
-          transit: st.status === 'ordered' ? d.transit || 'shipping_cn' : '',
+          ...originFields(st.status === 'ordered', st.origin, d.transit),
         };
         const stageOf = (base) => stageFields(base, common.transit);
         const save = [], drop = [];
@@ -1787,7 +1815,7 @@ function openImportForm(existing, preset = {}) {
         </div>
         <span class="small muted" id="imp-status-note"></span>
       </div>
-      <label class="field" id="transit-wrap" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions(imp.transit)}</select></label>
+      ${originField('tw', imp)}
       <label class="field" id="recv-wrap" style="grid-column:1/-1">Ngày nhận hàng<input type="date" name="receivedDate" value="${esc(imp.receivedDate || (imp.status === 'received' ? imp.date : today()))}"></label>
       <label class="field" style="grid-column:1/-1">Mặt hàng<select name="itemId" required>${itemOptions(imp.kind, imp.itemId)}</select></label>
       <label class="field" style="grid-column:1/-1" id="new-item-wrap" hidden>Tên mặt hàng mới<input name="newName" placeholder="VD: Cúp pha lê mini"></label>
@@ -1801,17 +1829,18 @@ function openImportForm(existing, preset = {}) {
     foot: `${existing ? '<button class="btn danger" id="imp-del" style="margin-right:auto">Xoá phiếu</button>' : ''}<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="imp-save">Lưu</button>`,
     onMount(m) {
       const form = $('#import-form', m);
-      const stt = { status: imp.status };
+      const stt = { status: imp.status, origin: existing ? originOf(existing) : ui.lastOrigin || 'cn' };
       const drawStatus = () => {
         $$('#imp-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === stt.status));
         $('#recv-wrap', m).hidden = stt.status !== 'received';
-        $('#transit-wrap', m).hidden = stt.status !== 'ordered';
+        syncOrigin(m, 'tw', stt.status === 'ordered', stt.origin);
         $('#imp-status-note', m).textContent = stt.status === 'received'
           ? 'Cộng vào tồn kho, giá vốn và chi phí ngay.'
           : 'Chưa tính vào tồn kho, giá vốn và chi phí. Khi hàng về, bấm “Đã nhận hàng” ở trang Nhập hàng.';
       };
       $('#imp-status', m).onclick = (e) => { if (e.target.dataset.v) { stt.status = e.target.dataset.v; drawStatus(); } };
       drawStatus();
+      wireOrigin(m, 'tw', stt, drawStatus);
       const totalQty = () => (rows.length ? rows.reduce((s, r) => s + num(r.qty), 0) : num(form.qty?.value));
 
       const drawQty = () => {
@@ -1897,8 +1926,9 @@ function openImportForm(existing, preset = {}) {
         const common = {
           kind, date: d.date, unitCost: num(d.unitCost), supplier: d.supplier.trim(), note: d.note.trim(),
           status: stt.status, receivedDate: stt.status === 'received' ? (d.receivedDate || today()) : '',
-          transit: stt.status === 'ordered' ? d.transit || 'shipping_cn' : '',
+          ...originFields(stt.status === 'ordered', stt.origin, d.transit),
         };
+        ui.lastOrigin = stt.origin;
 
         if (existing) {
           await store.upsert('imports', { ...imp, ...common, ...stageFields(imp, common.transit), variantId: d.variantId || '', qty: num(d.qty), extraFee: num(d.extraFee) });
