@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -273,7 +273,12 @@ window.addEventListener('beforeunload', (e) => {
 /* ================= modal ================= */
 const modal = $('#modal');
 modal.addEventListener('close', () => setTimeout(checkShortages, 50)); // a new order saved in a form may have made another one short
+let modalListeners = null;
 function openModal({ title, body, foot = '', onMount, wide = true, beforeClose }) {
+  // The dialog element is reused: listeners a form added to it must not outlive that form.
+  modalListeners?.abort();
+  modalListeners = new AbortController();
+  modal.addEventListener = (type, fn, opts) => EventTarget.prototype.addEventListener.call(modal, type, fn, { ...(typeof opts === 'object' ? opts : { capture: !!opts }), signal: modalListeners.signal });
   modal.style.width = wide ? '' : 'min(560px, calc(100vw - 32px))';
   modal.innerHTML = `
     <div class="modal-head"><h2>${title}</h2><button class="icon-btn" data-close>✕</button></div>
@@ -470,7 +475,7 @@ function pageDashboard() {
   const maxRev = Math.max(1, ...Object.values(agg.byPlatform).map((p) => p.revenue));
   const top = Object.entries(agg.byProduct).sort((a, b) => b[1].profit - a[1].profit).slice(0, 8);
   // Products with variants are checked colour by colour, others by their total.
-  const lowP = S.products.flatMap((p) => (hasVariants(p)
+  const lowP = S.products.filter((p) => !isCombo(p)).flatMap((p) => (hasVariants(p)
     ? p.variants.filter((v) => vStock(p.id, v.id) <= lowOf(p)).map((v) => ({ p, v, n: vStock(p.id, v.id) }))
     : num(stock.products[p.id]) <= lowOf(p) ? [{ p, n: num(stock.products[p.id]) }] : []));
   const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= lowOf(k));
@@ -1367,7 +1372,7 @@ function openParcelForm() {
   const lines = [blank(), blank()];
   const st = { status: 'ordered', mode: 'qty' };
   const refOptions = (sel) => `<option value="">— chọn mặt hàng —</option>
-    <optgroup label="Sản phẩm">${S.products.map((p) => `<option value="product:${esc(p.id)}" ${sel === 'product:' + p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>
+    <optgroup label="Sản phẩm">${S.products.filter((p) => !isCombo(p)).map((p) => `<option value="product:${esc(p.id)}" ${sel === 'product:' + p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>
     <optgroup label="Dụng cụ đóng gói">${S.packaging.map((k) => `<option value="packaging:${esc(k.id)}" ${sel === 'packaging:' + k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</optgroup>`;
   const prodOf = (l) => (l.ref.startsWith('product:') ? product(l.ref.slice(8)) : null);
 
@@ -1583,7 +1588,7 @@ function openImportForm(existing, preset = {}) {
       : [];
   };
   if (!existing) loadRows();
-  const itemOptions = (kind, sel) => options(kind === 'packaging' ? S.packaging : S.products, sel, '— chọn —') + '<option value="__new">＋ Mặt hàng mới…</option>';
+  const itemOptions = (kind, sel) => options(kind === 'packaging' ? S.packaging : S.products.filter((p) => !isCombo(p)), sel, '— chọn —') + '<option value="__new">＋ Mặt hàng mới…</option>';
 
   openModal({
     title: existing ? 'Sửa phiếu nhập' : 'Phiếu nhập hàng',
@@ -1782,12 +1787,13 @@ function pageProducts() {
       <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
       <span class="ptile-name">${esc(p.name)}</span>
       ${tileFlag(p)}
+      ${isCombo(p) ? `<span class="chip him ptile-combo">Combo · ${comboParts(p).length} món</span>` : ''}
     </button>`;
 
   return `
     <div class="page-head">
       <div><h1>Sản phẩm</h1><p>Bấm vào sản phẩm để xem các phân loại, số lượng tồn và giá bán.</p></div>
-      <div class="actions"><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
+      <div class="actions"><button class="btn" data-action="new-combo" title="Ghép nhiều sản phẩm có sẵn thành một combo">🎁 Tạo combo</button><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
     </div>
     <div class="toolbar">
       <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(ui.products.q)}">
@@ -1855,11 +1861,161 @@ function openProductDetail(id) {
       $('#pd-import', m).onclick = () => openImportForm(undefined, { kind: 'product', itemId: p.id });
       $('#pd-del', m).onclick = async () => {
         if (S.orders.some((o) => o.items?.some((l) => l.productId === p.id))) return notify('Sản phẩm đã có trong đơn hàng, không xoá được.');
+        if (combosUsing(p.id).length) return notify(`Sản phẩm đang nằm trong combo: ${combosUsing(p.id).map((c) => c.name).join(', ')}. Sửa hoặc xoá combo trước.`);
         if (await ask(`Xoá sản phẩm "${p.name}"?`)) { await store.remove('products', p.id); m.close(); }
       };
     },
   });
 }
+
+/**
+ * Combo: a product made of other products (and variants). Its cost and stock come from the parts, so it
+ * is never imported; selling it takes its parts out of stock.
+ */
+function openComboForm(existing) {
+  const c = existing ? structuredClone(existing) : { name: '', sku: '', salePrice: 0, note: '', image: '', combo: [], variants: [] };
+  const parts = (c.combo || []).map((x) => ({ productId: x.productId, variantId: x.variantId || '', qty: num(x.qty) || 1 }));
+  if (!parts.length) parts.push({ productId: '', variantId: '', qty: 1 }, { productId: '', variantId: '', qty: 1 });
+  const pickable = S.products.filter((p) => !isCombo(p) && p.id !== c.id);
+  let busy = 0;
+
+  openModal({
+    title: existing ? 'Sửa combo' : 'Tạo combo',
+    wide: false,
+    body: `<form id="combo-form" class="form-grid" style="grid-template-columns:1fr" onsubmit="return false">
+      <div class="pform">
+        <div class="pform-img">
+          <label class="imgpick" title="Chọn ảnh combo">
+            <span id="cb-img-preview">${thumb(c.image, c.name || '+', 'xl')}</span>
+            <input type="file" accept="image/*" id="cb-img" hidden>
+          </label>
+          <button type="button" class="link-btn" id="cb-img-clear" ${c.image ? '' : 'hidden'}>Bỏ ảnh</button>
+        </div>
+        <div class="pform-main">
+          <label class="field">Tên combo<input name="name" value="${esc(c.name)}" placeholder="VD: Combo A" required></label>
+          <label class="field">Giá bán cả combo<input type="number" min="0" step="1000" name="salePrice" value="${num(c.salePrice)}"></label>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin:6px 0 8px">Gồm những sản phẩm nào</h3>
+        <div id="cb-parts" class="combo-parts"></div>
+        <button type="button" class="btn ghost sm" id="cb-add">＋ Thêm sản phẩm vào combo</button>
+      </div>
+      <label class="field">Ghi chú<input name="note" value="${esc(c.note || '')}"></label>
+      <div class="summary" id="cb-sum"></div>
+      <p class="small muted">Combo không nhập kho riêng: giá vốn là tổng giá vốn các sản phẩm bên trong, số bộ còn lại tính theo sản phẩm sắp hết nhất. Bán combo sẽ trừ kho từng sản phẩm.</p>
+    </form>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="cb-save">Lưu combo</button>`,
+    onMount(m) {
+      const form = $('#combo-form', m);
+      const drawParts = () => {
+        $('#cb-parts', m).innerHTML = parts.map((x, i) => {
+          const p = product(x.productId);
+          return `<div class="combo-part" data-i="${i}">
+            <select data-f="productId" aria-label="Sản phẩm">${options(pickable, x.productId, '— chọn sản phẩm —')}</select>
+            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">— phân loại —</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
+            <input type="number" min="1" step="1" data-f="qty" value="${num(x.qty)}" aria-label="Số lượng" title="Số lượng trong 1 combo">
+            <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ">✕</button>
+          </div>`;
+        }).join('');
+      };
+      const sync = () => {
+        const cost = parts.reduce((n, x) => n + num(x.qty) * num(costs.product[x.productId]), 0);
+        const price = num(form.salePrice.value);
+        const made = parts.filter((x) => x.productId).map((x) => Math.floor((x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId])) / Math.max(1, num(x.qty))));
+        $('#cb-sum', m).innerHTML = `<div><span>Giá vốn cả combo</span><b>${money(cost)}</b></div><div><span>Giá bán</span><b>${money(price)}</b></div><div class="profit ${price - cost < 0 ? 'neg' : ''}"><span>Lãi / combo</span><b>${money(price - cost)}</b></div><div><span>Làm được ngay</span><b>${made.length ? Math.min(...made) : 0} bộ</b></div>`;
+      };
+      drawParts();
+      sync();
+      m.addEventListener('input', (e) => {
+        const row = e.target.closest('.combo-part');
+        if (row) {
+          const x = parts[+row.dataset.i], f = e.target.dataset.f;
+          x[f] = f === 'qty' ? num(e.target.value) : e.target.value;
+          if (f === 'productId') { x.variantId = ''; drawParts(); }
+        }
+        sync();
+      });
+      m.addEventListener('click', (e) => {
+        if (e.target.id === 'cb-add') { parts.push({ productId: '', variantId: '', qty: 1 }); drawParts(); sync(); }
+        const rm = e.target.closest('[data-rm]');
+        if (rm && parts.length > 1) { parts.splice(+rm.dataset.rm, 1); drawParts(); sync(); }
+      });
+      const setImage = (ref) => { c.image = ref; $('#cb-img-preview', m).innerHTML = thumb(ref, form.name.value || '+', 'xl'); $('#cb-img-clear', m).hidden = !ref; };
+      $('#cb-img', m).onchange = async (e) => {
+        const f = e.target.files[0]; e.target.value = '';
+        if (!f) return;
+        busy++; $('#cb-save', m).disabled = true;
+        try { setImage(await saveImage(f)); } catch (err) { notify('Không tải được ảnh: ' + (err.message || err.code)); } finally { busy--; $('#cb-save', m).disabled = busy > 0; }
+      };
+      $('#cb-img-clear', m).onclick = () => setImage('');
+      $('[data-close2]', m).onclick = () => m.close();
+      $('#cb-save', m).onclick = async () => {
+        if (!form.reportValidity()) return;
+        const filled = parts.filter((x) => x.productId);
+        if (filled.length < 2) return toast('Combo cần ít nhất 2 sản phẩm');
+        const noVariant = filled.find((x) => hasVariants(product(x.productId)) && !x.variantId);
+        if (noVariant && !(await ask(`"${product(noVariant.productId).name}" có nhiều phân loại nhưng chưa chọn loại nào. Combo sẽ trừ kho chung của sản phẩm (không theo màu). Vẫn lưu?`, 'Vẫn lưu'))) return;
+        const d = formData(form);
+        await store.upsert('products', {
+          ...c, name: d.name.trim(), salePrice: num(d.salePrice), note: (d.note || '').trim(), baseCost: 0, variants: [],
+          combo: filled.map((x) => ({ productId: x.productId, variantId: x.variantId || '', qty: Math.max(1, Math.round(num(x.qty))) })),
+        });
+        m.close();
+        toast('Đã lưu combo 🎁');
+      };
+    },
+  });
+}
+
+/** Detail of a combo: what is inside, how many sets can be made, and which part limits it. */
+function openComboDetail(id) {
+  const p = product(id);
+  if (!p) return;
+  const cost = num(costs.product[p.id]);
+  const made = num(stock.products[p.id]);
+  const rows = comboParts(p).map((x) => {
+    const part = product(x.productId);
+    const have = x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId]);
+    return { x, part, have, sets: Math.floor(have / x.qty) };
+  });
+  const limit = rows.length ? Math.min(...rows.map((r) => r.sets)) : 0;
+  openModal({
+    title: esc(p.name),
+    wide: false,
+    body: `<div class="pdetail">
+      <div class="pdetail-head">
+        <span class="pdetail-img tone-${toneOf(p)}">${thumb(p.image, p.name, 'xl')}</span>
+        <dl class="pdetail-facts">
+          <div><dt>Làm được ngay</dt><dd>${made} bộ</dd></div>
+          <div><dt>Giá vốn / combo</dt><dd>${money(cost)}</dd></div>
+          <div><dt>Giá bán</dt><dd>${money(p.salePrice)} <span class="small ${signCls(num(p.salePrice) - cost)}">lãi ${money(num(p.salePrice) - cost)}</span></dd></div>
+        </dl>
+      </div>
+      <h3 style="margin:10px 0 6px">Gồm</h3>
+      <div class="vcards">
+        ${rows.map((r) => `<div class="vcard ${r.sets === limit && limit <= 0 ? 'low' : ''}">
+          ${thumb(variantOf(r.x.productId, r.x.variantId)?.image || r.part?.image, r.part?.name, '')}
+          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo</span></div>
+          <div class="vcard-num"><span>Kho có</span><b>${r.have}</b>${r.sets === limit ? '<span class="chip warn">giới hạn</span>' : ''}</div>
+          <div class="vcard-num"><span>Đủ cho</span><b>${r.sets} bộ</b></div>
+        </div>`).join('')}
+      </div>
+      ${p.note ? `<p class="small muted">${esc(p.note)}</p>` : ''}
+    </div>`,
+    foot: `<button class="btn danger" id="cd-del" style="margin-right:auto">Xoá</button><button class="btn" id="cd-edit">✎ Sửa combo</button>`,
+    onMount(m) {
+      $('#cd-edit', m).onclick = () => openComboForm(p);
+      $('#cd-del', m).onclick = async () => {
+        if (S.orders.some((o) => o.items?.some((l) => l.productId === p.id))) return notify('Combo đã có trong đơn hàng, không xoá được.');
+        if (await ask(`Xoá combo "${p.name}"?`)) { await store.remove('products', p.id); m.close(); }
+      };
+    },
+  });
+}
+
+/** Combos that use a product (or one of its variants): it cannot be deleted while they do. */
+const combosUsing = (productId, variantId) => S.products.filter((c) => comboParts(c).some((x) => x.productId === productId && (!variantId || x.variantId === variantId)));
 
 function openProductForm(existing) {
   const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };
@@ -1867,7 +2023,8 @@ function openProductForm(existing) {
   const imports = existing ? S.imports.filter((i) => i.kind !== 'packaging' && i.itemId === p.id).sort((a, b) => (b.date || '').localeCompare(a.date || '')) : [];
   // A variant that already has imports or orders keeps its stock history, so it can be renamed but not removed.
   const used = (vid) => S.imports.some((i) => i.itemId === p.id && i.variantId === vid)
-    || S.orders.some((o) => o.items?.some((l) => l.productId === p.id && l.variantId === vid));
+    || S.orders.some((o) => o.items?.some((l) => l.productId === p.id && l.variantId === vid))
+    || combosUsing(p.id, vid).length > 0;
 
   openModal({
     title: existing ? 'Sửa sản phẩm' : 'Thêm sản phẩm',
@@ -2455,7 +2612,8 @@ document.addEventListener('click', async (e) => {
     case 'receive-batch': return openReceiveDialog(S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === btn.dataset.batch).map((i) => i.id));
     case 'del-import': return confirmDel('imports', 'Xoá phiếu nhập này? Tồn kho và giá vốn sẽ tính lại.');
     case 'new-product': return openProductForm();
-    case 'open-product': return openProductDetail(id);
+    case 'new-combo': return openComboForm();
+    case 'open-product': return isCombo(product(id)) ? openComboDetail(id) : openProductDetail(id);
     case 'edit-item':
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));

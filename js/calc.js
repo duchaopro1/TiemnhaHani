@@ -96,8 +96,30 @@ export function costTable(state) {
     }
     return out;
   };
-  return { product: avg('product', state.products), packaging: avg('packaging', state.packaging), shared };
+  const product = avg('product', state.products);
+  // A combo costs what its parts cost; it is never imported itself.
+  for (const p of state.products || []) {
+    const parts = comboParts(p);
+    if (parts.length) product[p.id] = parts.reduce((n, c) => n + num(c.qty) * num(product[c.productId]), 0);
+  }
+  return { product, packaging: avg('packaging', state.packaging), shared };
 }
+
+/**
+ * A combo is a product made of other products: `combo: [{ productId, variantId?, qty }]`. It is sold
+ * like any product, but its cost and stock come from its parts. Parts must not be combos themselves.
+ */
+export const comboParts = (p) => (p?.combo || []).filter((c) => c.productId && num(c.qty) > 0);
+export const isCombo = (p) => comboParts(p).length > 0;
+
+/** The stock-bearing lines a sold line stands for: itself, or one line per part when it is a combo. */
+export function expandLine(line, combos) {
+  const combo = combos?.get?.(line.productId);
+  if (!combo) return line.productId ? [line] : [];
+  return comboParts(combo).map((c) => ({ productId: c.productId, variantId: c.variantId || '', qty: num(line.qty) * num(c.qty) }));
+}
+/** Map of combo products by id, for expandLine. */
+export const comboMap = (products) => new Map((products || []).filter(isCombo).map((p) => [p.id, p]));
 
 /** Number of packaging units a line uses: once per line, or once per product unit. */
 export function packUnits(line) {
@@ -174,6 +196,7 @@ export function stockLevels(state) {
     }
   }
   const sharedIds = new Set((state.packaging || []).filter((k) => k.shared).map((k) => k.id));
+  const combos = comboMap(state.products);
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
     if (!isReceived(imp)) {
@@ -201,14 +224,18 @@ export function stockLevels(state) {
       if (order[slot] && !sharedIds.has(order[slot])) packaging[order[slot]] = num(packaging[order[slot]]) - 1;
     }
     for (const line of order.items || []) {
-      if (line.productId) {
-        products[line.productId] = num(products[line.productId]) - num(line.qty);
-        addVariant(line.productId, line.variantId, -num(line.qty));
+      for (const part of expandLine(line, combos)) {
+        products[part.productId] = num(products[part.productId]) - num(part.qty);
+        addVariant(part.productId, part.variantId, -num(part.qty));
       }
       for (const slot of PACK_SLOTS) {
         if (line[slot] && !sharedIds.has(line[slot])) packaging[line[slot]] = num(packaging[line[slot]]) - packUnits(line);
       }
     }
+  }
+  // A combo can be made as many times as its scarcest part allows.
+  for (const p of combos.values()) {
+    products[p.id] = Math.min(...comboParts(p).map((c) => Math.floor((c.variantId ? num(variants[variantKey(c.productId, c.variantId)]) : num(products[c.productId])) / num(c.qty))));
   }
   return { products, packaging, variants, incoming };
 }
@@ -390,6 +417,7 @@ export const WAITING_STATUSES = ['pending', 'designed'];
  */
 export function orderShortages(state) {
   const orders = state.orders || [];
+  const combos = comboMap(state.products);
   const taken = orders.filter((o) => ['packed', 'shipping', 'done'].includes(o.status));
   const base = stockLevels({ ...state, orders: taken });
   const avail = { products: { ...base.products }, variants: { ...base.variants } };
@@ -401,7 +429,7 @@ export function orderShortages(state) {
   for (const order of waiting) {
     // what the order needs, per variant (or per product when no variant is chosen)
     const need = new Map();
-    for (const l of order.items || []) {
+    for (const l of (order.items || []).flatMap((x) => expandLine(x, combos))) {
       if (!l.productId || !(num(l.qty) > 0)) continue;
       const key = l.variantId ? variantKey(l.productId, l.variantId) : l.productId;
       const row = need.get(key) || { productId: l.productId, variantId: l.variantId || '', need: 0 };

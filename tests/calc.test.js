@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -462,4 +462,38 @@ test('giai đoạn hàng đang về: Đang ship từ TQ không ghi giờ (cùng 
   // nhận hàng: bỏ giai đoạn nhưng giữ lịch sử
   assert.deepEqual(withTransit(s, ''), { transit: '', transitAt: s.transitAt });
   assert.deepEqual(withTransit({}, ''), { transit: '' });
+});
+
+test('combo: giá vốn = tổng giá vốn thành phần, tồn = số bộ tối đa, bán combo trừ kho thành phần, thiếu hàng theo thành phần', () => {
+  const imp = (itemId, qty, unitCost, variantId = '') => ({ kind: 'product', itemId, variantId, qty, unitCost, extraFee: 0 });
+  const state = {
+    products: [
+      { id: 'p1', name: 'Cúp', variants: [{ id: 'do' }, { id: 'xanh' }] },
+      { id: 'p2', name: 'Móc khóa' },
+      { id: 'cb', name: 'Combo A', salePrice: 200000, combo: [{ productId: 'p1', variantId: 'do', qty: 1 }, { productId: 'p2', qty: 2 }] },
+    ],
+    packaging: [],
+    imports: [imp('p1', 5, 50000, 'do'), imp('p1', 3, 50000, 'xanh'), imp('p2', 11, 10000)],
+    orders: [],
+  };
+  const costs = costTable(state);
+  assert.equal(costs.product.cb, 50000 + 2 * 10000); // 1 cúp + 2 móc khóa
+  let st = stockLevels(state);
+  assert.equal(st.products.cb, 5); // móc khóa 11 / 2 = 5 bộ, cúp đỏ 5 → 5 bộ
+  // bán 2 combo: trừ 2 cúp đỏ + 4 móc khóa, không động tới cúp xanh
+  const sold = { ...state, orders: [{ id: 'o1', code: 'A', date: '2026-11-01', status: 'pending', items: [{ productId: 'cb', qty: 2, price: 200000 }] }] };
+  st = stockLevels(sold);
+  assert.equal(st.variants['p1:do'], 3);
+  assert.equal(st.variants['p1:xanh'], 3);
+  assert.equal(st.products.p1, 6);
+  assert.equal(st.products.p2, 7);
+  assert.equal(st.products.cb, 3); // móc khóa 7 / 2 = 3 bộ
+  // lợi nhuận đơn tính theo giá vốn thành phần
+  const s = orderSummary(costs, sold.orders[0]);
+  assert.equal(s.product, 2 * 70000);
+  assert.equal(s.profit, 400000 - 140000);
+  // thiếu hàng: đơn cần 4 combo, chỉ đủ cúp đỏ cho 5 nhưng móc khóa 11 chỉ đủ 5 bộ → đủ; đơn 6 combo thiếu
+  const big = { ...state, orders: [{ id: 'o2', code: 'B', date: '2026-11-01', status: 'pending', items: [{ productId: 'cb', qty: 6, price: 1 }] }] };
+  const { short } = orderShortages(big);
+  assert.deepEqual(short[0].lines.map((l) => [l.productId, l.variantId, l.need, l.have, l.short]).sort(), [['p1', 'do', 6, 5, 1], ['p2', '', 12, 11, 1]].sort());
 });

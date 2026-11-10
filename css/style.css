@@ -600,3 +600,10 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .transit-log li { display: grid; grid-template-columns: minmax(96px, auto) 1fr auto; align-items: center; gap: 8px; color: var(--muted); }
 .transit-log li.now { color: var(--ink); font-weight: 600; }
 .transit-log input { font-size: 12px; padding: 2px 6px; min-width: 0; }
+
+/* combos */
+.ptile-combo { position: absolute; bottom: 8px; left: 8px; font-size: 11px; }
+.combo-parts { display: grid; gap: 8px; margin-bottom: 8px; }
+.combo-part { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 64px auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--line, #dfe6f2); border-radius: 12px; }
+.combo-part select, .combo-part input { min-width: 0; }
+@media (max-width: 600px) { .combo-part { grid-template-columns: 1fr 1fr; } }
