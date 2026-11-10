@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tinh trung binh 4 signal IGBT Tj trong 1s truoc thoi diem signal giam dot ngot.
+"""Mean/Max of the 4 IGBT Tj signals in the 1 s window before a sudden drop.
 
-Dung:
+Usage:
     python3 tools/igbt_drop_avg.py [file.tsv] [--window 1.0] [--threshold 1.0]
                                    [--detect VAR_BCC_tIGBTTj_f32] [--pick first|last|largest]
 
-Drop = buoc nhay giua 2 sample lien tiep <= -threshold (degC). Thoi diem t0 la
-sample CUA TRUOC buoc giam (con o muc cao). Cua so tinh = [t0 - window, t0].
+Drop = step between 2 consecutive samples <= -threshold (degC). t0 is the sample
+BEFORE the step (still at the high level). Window = [t0 - window, t0].
 """
 import argparse
 import csv
@@ -31,7 +31,7 @@ def load(path):
     data = {}
     for s in SIGNALS:
         if s not in cols:
-            sys.exit(f"Khong thay signal '{s}' trong file. Cot co: {names}")
+            sys.exit(f"Signal '{s}' not found in file. Columns: {names}")
         data[s] = [float(r[cols[s]].replace(",", ".")) for r in rows[1:]]
     return time, data, cols, rows
 
@@ -48,17 +48,17 @@ def pick_file():
         root = tkinter.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        path = filedialog.askopenfilename(title="Chon file TSV", filetypes=[("TSV", "*.tsv"), ("All", "*.*")])
+        path = filedialog.askopenfilename(title="Select TSV file", filetypes=[("TSV", "*.tsv"), ("All", "*.*")])
         root.destroy()
     except Exception:
-        path = input("Nhap duong dan file .tsv: ").strip().strip('"')
+        path = input("Enter path to .tsv file: ").strip().strip('"')
     if not path:
-        sys.exit("Chua chon file.")
+        sys.exit("No file selected.")
     return path
 
 
 def analyze(path, window=1.0, threshold=1.0, detect=SIGNALS[0], pick="first"):
-    """Tra ve dict: info ve drop/cua so va list hang (signal, mean, max, t_max). Loi -> ValueError."""
+    """Returns dict: drop/window info and rows (signal, mean, max, t_max). Raises ValueError on error."""
     time, data, _, _ = load(path)
     det = data.get(detect)
     if det is None:
@@ -66,7 +66,7 @@ def analyze(path, window=1.0, threshold=1.0, detect=SIGNALS[0], pick="first"):
     drops = find_drops(det, threshold)
     if not drops:
         steps = min(det[k + 1] - det[k] for k in range(len(det) - 1))
-        raise ValueError(f"Khong tim thay drop >= {threshold}. Buoc giam lon nhat: {steps:.3f}. Thu giam threshold.")
+        raise ValueError(f"No drop >= {threshold} found. Largest single-step decrease: {steps:.3f}. Try a lower threshold.")
     if pick == "first":
         k = drops[0]
     elif pick == "last":
@@ -90,10 +90,10 @@ def analyze(path, window=1.0, threshold=1.0, detect=SIGNALS[0], pick="first"):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("file", nargs="?", help="file .tsv (bo trong -> mo hop thoai chon file)")
-    ap.add_argument("--window", type=float, default=1.0, help="do dai cua so (s), mac dinh 1.0")
-    ap.add_argument("--threshold", type=float, default=1.0, help="muc giam/sample de coi la dot ngot (degC), mac dinh 1.0")
-    ap.add_argument("--detect", default=SIGNALS[0], help="signal dung de tim diem giam")
+    ap.add_argument("file", nargs="?", help=".tsv file (omit to open a file dialog)")
+    ap.add_argument("--window", type=float, default=1.0, help="window length in s (default 1.0)")
+    ap.add_argument("--threshold", type=float, default=1.0, help="decrease per sample counted as a sudden drop, degC (default 1.0)")
+    ap.add_argument("--detect", default=SIGNALS[0], help="signal used to detect the drop")
     ap.add_argument("--pick", choices=["first", "last", "largest"], default="first")
     a = ap.parse_args()
     if not a.file:
@@ -102,10 +102,10 @@ def main():
         r = analyze(a.file, a.window, a.threshold, a.detect, a.pick)
     except ValueError as e:
         sys.exit(str(e))
-    print(f"Bat dau giam tai t0 = {r['t_drop']:.3f}s (sample ke tiep: {r['t_after']:.3f}s)")
-    print(f"Drop tren {r['detect']}: {r['v_before']:.3f} -> {r['v_after']:.3f}, "
-          f"tim thay {r['n_drops']} drop >= {a.threshold}")
-    print(f"Cua so: [{r['t_start']:.3f}s, {r['t_end']:.3f}s], {r['n_samples']} sample\n")
+    print(f"Drop starts at t0 = {r['t_drop']:.3f}s (next sample: {r['t_after']:.3f}s)")
+    print(f"Drop on {r['detect']}: {r['v_before']:.3f} -> {r['v_after']:.3f}, "
+          f"{r['n_drops']} drop(s) >= {a.threshold} found")
+    print(f"Window: [{r['t_start']:.3f}s, {r['t_end']:.3f}s], {r['n_samples']} samples\n")
     print(f"{'Signal':<24}{'Mean':>10}{'Max':>10}{'t(Max)':>11}")
     for s, mean, m, tm in r["rows"]:
         print(f"{s:<24}{mean:>10.4f}{m:>10.4f}{tm:>10.3f}s")
