@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -192,6 +192,9 @@ function fitRevenueTable() {
 window.addEventListener('resize', fitRevenueTable);
 
 /* ================= missing goods alert ================= */
+/** What a shortage line is short of: a product (variant), or one of a pool of products. */
+const shortLabel = (l) => (l.pool ? `Một trong: ${l.pool.map((id) => product(id)?.name || '?').join(' / ')}` : itemLabel(l.productId, l.variantId));
+
 let shortReady = false; // only after the data has arrived, or every order would look short
 let shownShort = new Set(); // shortages already announced; a new or returning one is announced again
 
@@ -205,7 +208,7 @@ function showShortDialog() {
     <p class="small muted" style="margin:0 0 10px">Đơn tạo trước được ưu tiên hàng trước. Đơn thiếu vẫn được giữ, hàng còn lại dùng cho các đơn đủ.</p>
     <div class="short-list">${short.map((x) => `<div class="short-order">
       <div><b>${esc(x.order.code || 'Đơn')}</b> · ${esc(x.order.customer || '')} <span class="muted small">· ${fmtDate(x.order.date)} · ${esc(STATUSES[x.order.status])}</span></div>
-      <ul>${x.lines.map((l) => `<li><b>${esc(itemLabel(l.productId, l.variantId))}</b>: cần ${l.need}, kho có ${l.have}, <span class="neg">thiếu ${l.short}</span>${l.incoming ? ` <span class="muted small">(đang về +${l.incoming})</span>` : ''}</li>`).join('')}</ul>
+      <ul>${x.lines.map((l) => `<li><b>${esc(shortLabel(l))}</b>: cần ${l.need}, kho có ${l.have}, <span class="neg">thiếu ${l.short}</span>${l.incoming ? ` <span class="muted small">(đang về +${l.incoming})</span>` : ''}</li>`).join('')}</ul>
     </div>`).join('')}</div>
     ${ready.length ? `<p class="small" style="margin:10px 0 0">✅ <b>${ready.length}</b> đơn đang chờ đã đủ hàng, có thể làm trước.</p>` : ''}
   </div>
@@ -219,7 +222,7 @@ function showShortDialog() {
 /** Announce shortages that are new since the last time; waits while another dialog is open. */
 function checkShortages() {
   if (!shortReady) return;
-  const now = new Set(shortages.short.flatMap((x) => x.lines.map((l) => `${x.order.id}|${l.productId}|${l.variantId}|${l.short}`)));
+  const now = new Set(shortages.short.flatMap((x) => x.lines.map((l) => `${x.order.id}|${l.productId}|${l.variantId}|${(l.pool || []).join(',')}|${l.short}`)));
   shownShort = new Set([...shownShort].filter((k) => now.has(k))); // one that cleared and comes back is news again
   const fresh = [...now].filter((k) => !shownShort.has(k));
   if (!fresh.length || document.querySelector('dialog[open]')) return;
@@ -675,7 +678,7 @@ function payInfo(o) {
 }
 
 const shortById = { has: (id) => shortages.short.some((x) => x.order.id === id), get: (id) => shortages.short.find((x) => x.order.id === id) };
-const shortText = (x) => `Thiếu: ${x.lines.map((l) => `${itemLabel(l.productId, l.variantId)} ×${l.short}`).join(', ')}`;
+const shortText = (x) => `Thiếu: ${x.lines.map((l) => `${shortLabel(l)} ×${l.short}`).join(', ')}`;
 
 function orderRow(o) {
   const s = orderSummary(costs, o);
@@ -749,11 +752,17 @@ function openOrderFormNow(existing, restored) {
     const parts = comboParts(combo);
     const units = Math.max(0, Math.round(num(l.qty)));
     l.picks = Array.from({ length: units }, (_, u) => parts.map((c, i) => (c.variantId ? '' : l.picks?.[u]?.[i] || '')));
-    const open = parts.map((c, i) => [c, i]).filter(([c]) => !c.variantId && hasVariants(product(c.productId)));
+    // a part needs a choice when its product has variants and none is fixed, or when it is a pool of products
+    const open = parts.map((c, i) => [c, i]).filter(([c]) => isPoolPart(c) || (!c.variantId && hasVariants(product(c.productId))));
     if (!open.length) return '';
-    return `<div class="combo-picks"><b class="small">Chọn loại cho từng combo${parts.some((c) => c.random) ? ' <span class="muted">(món 🎲 ngẫu nhiên không bắt buộc)</span>' : ''}</b>${l.picks.map((unit, u) => `<div class="combo-pick">
+    const poolSelect = (c, i, u, unit) => `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="Món ngẫu nhiên cho combo ${u + 1}"><option value="">🎲 Ngẫu nhiên giữa ${esc(c.pool.map((id) => product(id)?.name || '?').join(' / '))} (chọn sau được)</option>${c.pool.map((id) => product(id)).filter(Boolean).map((pp) => (hasVariants(pp)
+      ? `<optgroup label="${esc(pp.name)}"><option value="${esc(pp.id)}" ${unit[i] === pp.id ? 'selected' : ''}>${esc(pp.name)} (chưa rõ loại)</option>${pp.variants.map((v) => `<option value="${esc(pp.id + ':' + v.id)}" ${unit[i] === pp.id + ':' + v.id ? 'selected' : ''}>${esc(pp.name)} · ${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</optgroup>`
+      : `<option value="${esc(pp.id)}" ${unit[i] === pp.id ? 'selected' : ''}>${esc(pp.name)} (còn ${num(stock.products[pp.id])})</option>`)).join('')}</select>`;
+    const varSelect = (c, i, u, unit) => { const pp = product(c.productId); return `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="${esc(pp.name)} cho combo ${u + 1}"><option value="">${c.random ? `🎲 ${esc(pp.name)}: ngẫu nhiên (có thể chọn sau)` : `— ${esc(pp.name)} —`}</option>${pp.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === unit[i] ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</select>`; };
+    const surprise = parts.some((c) => c.random || isPoolPart(c));
+    return `<div class="combo-picks"><b class="small">Chọn loại cho từng combo${surprise ? ' <span class="muted">(món 🎲 ngẫu nhiên không bắt buộc)</span>' : ''}</b>${l.picks.map((unit, u) => `<div class="combo-pick">
       <span class="small muted">Combo ${u + 1}</span>
-      ${open.map(([c, i]) => { const pp = product(c.productId); return `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="${esc(pp.name)} cho combo ${u + 1}"><option value="">${c.random ? `🎲 ${esc(pp.name)}: ngẫu nhiên (có thể chọn sau)` : `— ${esc(pp.name)} —`}</option>${pp.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === unit[i] ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</select>`; }).join('')}
+      ${open.map(([c, i]) => (isPoolPart(c) ? poolSelect(c, i, u, unit) : varSelect(c, i, u, unit))).join('')}
     </div>`).join('')}</div>`;
   };
 
@@ -1028,7 +1037,7 @@ function openOrderFormNow(existing, restored) {
           for (const l of items) {
             const combo = product(l.productId);
             if (!isCombo(combo)) continue;
-            const missing = comboParts(combo).map((c, i) => [c, i]).filter(([c]) => !c.variantId && !c.random && hasVariants(product(c.productId)))
+            const missing = comboParts(combo).map((c, i) => [c, i]).filter(([c]) => !isPoolPart(c) && !c.variantId && !c.random && hasVariants(product(c.productId)))
               .find(([, i]) => (l.picks || []).some((unit) => !unit?.[i]) || !(l.picks || []).length);
             if (missing) return notify(`Chọn loại "${product(missing[0].productId).name}" cho từng "${combo.name}"`);
           }
@@ -1916,8 +1925,9 @@ function openProductDetail(id) {
  */
 function openComboForm(existing) {
   const c = existing ? structuredClone(existing) : { name: '', sku: '', salePrice: 0, note: '', image: '', combo: [], variants: [] };
-  const parts = (c.combo || []).map((x) => ({ productId: x.productId, variantId: x.variantId || '', random: !!x.random, qty: num(x.qty) || 1 }));
-  if (!parts.length) parts.push({ productId: '', variantId: '', qty: 1 }, { productId: '', variantId: '', qty: 1 });
+  const blankPart = () => ({ productId: '', variantId: '', random: false, isPool: false, pool: [], qty: 1 });
+  const parts = (c.combo || []).map((x) => ({ productId: x.productId || '', variantId: x.variantId || '', random: !!x.random, isPool: !x.productId && (x.pool || []).length > 0, pool: [...(x.pool || [])], qty: num(x.qty) || 1 }));
+  if (!parts.length) parts.push(blankPart(), blankPart());
   const pickable = S.products.filter((p) => !isCombo(p) && p.id !== c.id);
   let busy = 0;
 
@@ -1954,33 +1964,45 @@ function openComboForm(existing) {
         $('#cb-parts', m).innerHTML = parts.map((x, i) => {
           const p = product(x.productId);
           return `<div class="combo-part" data-i="${i}">
-            <select data-f="productId" aria-label="Sản phẩm">${options(pickable, x.productId, '— chọn sản phẩm —')}</select>
+            <select data-f="productId" aria-label="Sản phẩm"><option value="">— chọn sản phẩm —</option><option value="__pool" ${x.isPool ? 'selected' : ''}>🎲 Ngẫu nhiên giữa nhiều sản phẩm…</option>${pickable.map((q) => `<option value="${esc(q.id)}" ${q.id === x.productId ? 'selected' : ''}>${esc(q.name)}</option>`).join('')}</select>
             ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">Chọn loại khi lên đơn</option><option value="__random" ${x.random ? 'selected' : ''}>Ngẫu nhiên (không cần chọn)</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>Luôn là ${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
             <input type="number" min="1" step="1" data-f="qty" value="${num(x.qty)}" aria-label="Số lượng" title="Số lượng trong 1 combo">
             <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ">✕</button>
+            ${x.isPool ? `<div class="pool-picks"><span class="small muted">Tích các sản phẩm có thể rơi vào combo (từ 2 sản phẩm):</span>${pickable.map((q) => `<label class="pool-opt"><input type="checkbox" data-pool="${esc(q.id)}" ${x.pool.includes(q.id) ? 'checked' : ''}> ${esc(q.name)}</label>`).join('')}</div>` : ''}
           </div>`;
         }).join('');
       };
+      const filledPart = (x) => (x.isPool ? x.pool.length > 0 : !!x.productId);
+      const partCost = (x) => (x.isPool ? (x.pool.length ? x.pool.reduce((n, id) => n + num(costs.product[id]), 0) / x.pool.length : 0) : num(costs.product[x.productId]));
+      const partHave = (x) => (x.isPool ? x.pool.reduce((n, id) => n + num(stock.products[id]), 0) : x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId]));
       const sync = () => {
-        const cost = parts.reduce((n, x) => n + num(x.qty) * num(costs.product[x.productId]), 0);
+        const cost = parts.reduce((n, x) => n + num(x.qty) * partCost(x), 0);
         const price = num(form.salePrice.value);
-        const made = parts.filter((x) => x.productId).map((x) => Math.floor((x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId])) / Math.max(1, num(x.qty))));
-        $('#cb-sum', m).innerHTML = `<div><span>Giá vốn cả combo</span><b>${money(cost)}</b></div><div><span>Giá bán</span><b>${money(price)}</b></div><div class="profit ${price - cost < 0 ? 'neg' : ''}"><span>Lãi / combo</span><b>${money(price - cost)}</b></div><div><span>Làm được ngay</span><b>${made.length ? Math.min(...made) : 0} bộ</b></div>`;
+        const made = parts.filter(filledPart).map((x) => Math.floor(partHave(x) / Math.max(1, num(x.qty))));
+        $('#cb-sum', m).innerHTML = `<div><span>Giá vốn cả combo${parts.some((x) => x.isPool) ? ' (món ngẫu nhiên tính trung bình)' : ''}</span><b>${money(cost)}</b></div><div><span>Giá bán</span><b>${money(price)}</b></div><div class="profit ${price - cost < 0 ? 'neg' : ''}"><span>Lãi / combo</span><b>${money(price - cost)}</b></div><div><span>Làm được ngay</span><b>${made.length ? Math.min(...made) : 0} bộ</b></div>`;
       };
       drawParts();
       sync();
       m.addEventListener('input', (e) => {
         const row = e.target.closest('.combo-part');
-        if (row) {
+        if (row && e.target.dataset.pool !== undefined) {
+          const x = parts[+row.dataset.i], id = e.target.dataset.pool;
+          x.pool = e.target.checked ? [...new Set([...x.pool, id])] : x.pool.filter((q) => q !== id);
+        } else if (row) {
           const x = parts[+row.dataset.i], f = e.target.dataset.f;
           x[f] = f === 'qty' ? num(e.target.value) : e.target.value;
           if (f === 'variantId') { x.random = x.variantId === '__random'; if (x.random) x.variantId = ''; }
-          if (f === 'productId') { x.variantId = ''; x.random = false; drawParts(); }
+          if (f === 'productId') {
+            x.isPool = x.productId === '__pool';
+            if (x.isPool) x.productId = '';
+            x.variantId = ''; x.random = false;
+            drawParts();
+          }
         }
         sync();
       });
       m.addEventListener('click', (e) => {
-        if (e.target.id === 'cb-add') { parts.push({ productId: '', variantId: '', qty: 1 }); drawParts(); sync(); }
+        if (e.target.id === 'cb-add') { parts.push(blankPart()); drawParts(); sync(); }
         const rm = e.target.closest('[data-rm]');
         if (rm && parts.length > 1) { parts.splice(+rm.dataset.rm, 1); drawParts(); sync(); }
       });
@@ -1995,12 +2017,15 @@ function openComboForm(existing) {
       $('[data-close2]', m).onclick = () => m.close();
       $('#cb-save', m).onclick = async () => {
         if (!form.reportValidity()) return;
-        const filled = parts.filter((x) => x.productId);
+        const filled = parts.filter(filledPart);
         if (filled.length < 2) return toast('Combo cần ít nhất 2 sản phẩm');
+        if (parts.some((x) => x.isPool && x.pool.length < 2)) return toast('Món ngẫu nhiên cần tích ít nhất 2 sản phẩm');
         const d = formData(form);
         await store.upsert('products', {
           ...c, name: d.name.trim(), salePrice: num(d.salePrice), note: (d.note || '').trim(), baseCost: 0, variants: [],
-          combo: filled.map((x) => ({ productId: x.productId, variantId: x.variantId || '', ...(x.random && !x.variantId ? { random: true } : {}), qty: Math.max(1, Math.round(num(x.qty))) })),
+          combo: filled.map((x) => (x.isPool
+            ? { pool: x.pool, qty: Math.max(1, Math.round(num(x.qty))) }
+            : { productId: x.productId, variantId: x.variantId || '', ...(x.random && !x.variantId ? { random: true } : {}), qty: Math.max(1, Math.round(num(x.qty))) })),
         });
         m.close();
         toast('Đã lưu combo 🎁');
@@ -2017,8 +2042,11 @@ function openComboDetail(id) {
   const made = num(stock.products[p.id]);
   const rows = comboParts(p).map((x) => {
     const part = product(x.productId);
-    const have = x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId]);
-    return { x, part, have, sets: Math.floor(have / x.qty) };
+    const pool = isPoolPart(x) ? x.pool.map(product).filter(Boolean) : null;
+    const have = pool
+      ? pool.reduce((n, q) => n + num(stock.products[q.id]), 0) - num(stock.unassigned?.[poolKey(x.pool)])
+      : x.variantId ? vStock(x.productId, x.variantId) : num(stock.products[x.productId]);
+    return { x, part, pool, have, sets: Math.floor(have / x.qty) };
   });
   const limit = rows.length ? Math.min(...rows.map((r) => r.sets)) : 0;
   openModal({
@@ -2036,8 +2064,8 @@ function openComboDetail(id) {
       <h3 style="margin:10px 0 6px">Gồm</h3>
       <div class="vcards">
         ${rows.map((r) => `<div class="vcard ${r.sets === limit && limit <= 0 ? 'low' : ''}">
-          ${thumb(variantOf(r.x.productId, r.x.variantId)?.image || r.part?.image, r.part?.name, '')}
-          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo${r.part && hasVariants(r.part) && !r.x.variantId ? (r.x.random ? ' · ngẫu nhiên' : ' · chọn loại khi lên đơn') : ''}</span></div>
+          ${thumb(r.pool ? r.pool[0]?.image : variantOf(r.x.productId, r.x.variantId)?.image || r.part?.image, r.pool ? '🎲' : r.part?.name, '')}
+          <div class="vcard-name"><b>${esc(r.pool ? `🎲 Ngẫu nhiên: ${r.pool.map((q) => q.name).join(' / ')}` : r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo${r.part && hasVariants(r.part) && !r.x.variantId ? (r.x.random ? ' · ngẫu nhiên' : ' · chọn loại khi lên đơn') : ''}</span></div>
           <div class="vcard-num"><span>Kho có</span><b>${r.have}</b>${r.sets === limit ? '<span class="chip warn">giới hạn</span>' : ''}</div>
           <div class="vcard-num"><span>Đủ cho</span><b>${r.sets} bộ</b></div>
         </div>`).join('')}
@@ -2056,7 +2084,7 @@ function openComboDetail(id) {
 }
 
 /** Combos that use a product (or one of its variants): it cannot be deleted while they do. */
-const combosUsing = (productId, variantId) => S.products.filter((c) => comboParts(c).some((x) => x.productId === productId && (!variantId || x.variantId === variantId)));
+const combosUsing = (productId, variantId) => S.products.filter((c) => comboParts(c).some((x) => (x.productId === productId && (!variantId || x.variantId === variantId)) || (!variantId && x.pool?.includes(productId))));
 
 function openProductForm(existing) {
   const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };

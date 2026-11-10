@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap } from '../js/calc.js';
+import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -557,4 +557,54 @@ test('combo có món ngẫu nhiên: không cần chọn loại, trừ ở mức 
   const big = { ...state, orders: [{ id: 'o2', code: 'B', date: '2026-11-01', status: 'pending', items: [{ productId: 'box', qty: 13, price: 1, picks: Array.from({ length: 13 }, () => ['do', '']) }] }] };
   const { short } = orderShortages(big);
   assert.deepEqual(short[0].lines.map((l) => [l.productId, l.variantId, l.short]).sort(), [['cup', 'do', 8], ['moc', '', 1]].sort());
+});
+
+test('combo ngẫu nhiên giữa nhiều sản phẩm: giá vốn trung bình, chưa chọn thì chưa trừ sản phẩm nào, chọn rồi thì trừ đúng sản phẩm và loại', () => {
+  const imp = (itemId, variantId, qty, unitCost) => ({ kind: 'product', itemId, variantId, qty, unitCost, extraFee: 0 });
+  const state = {
+    products: [
+      { id: 'cup', name: 'Cúp' },
+      { id: 'anh', name: 'Móc in ảnh' },
+      { id: 'chu', name: 'Móc chữ', variants: [{ id: 'A' }, { id: 'B' }] },
+      { id: 'cau', name: 'Móc cầu lông' },
+      { id: 'box', name: 'Box 1', salePrice: 1, combo: [{ productId: 'cup', qty: 1 }, { pool: ['anh', 'chu', 'cau'], qty: 1 }] },
+    ],
+    packaging: [],
+    imports: [imp('cup', '', 10, 50000), imp('anh', '', 4, 6000), imp('chu', 'A', 2, 9000), imp('chu', 'B', 2, 9000), imp('cau', '', 2, 9000)],
+    orders: [],
+  };
+  assert.equal(isPoolPart(state.products[4].combo[1]), true);
+  assert.equal(poolKey(['b', 'a']), 'a,b');
+  assert.deepEqual(parsePick('chu:A', ['anh', 'chu']), { productId: 'chu', variantId: 'A' });
+  assert.equal(parsePick('khac', ['anh', 'chu']), null);
+  const costs = costTable(state);
+  assert.equal(costs.product.box, 50000 + (6000 + 9000 + 9000) / 3); // móc tính trung bình khi chưa chọn
+  // 3 box, chưa chọn móc nào
+  const open = { productId: 'box', qty: 3, price: 100000, picks: [['', ''], ['', ''], ['', '']] };
+  let st = stockLevels({ ...state, orders: [{ id: 'o', code: 'A', date: '2026-11-01', status: 'pending', items: [open] }] });
+  assert.equal(st.products.cup, 7);
+  assert.equal(st.products.anh, 4); // chưa trừ sản phẩm nào trong nhóm
+  assert.equal(st.unassigned['anh,cau,chu'], 3);
+  assert.equal(st.products.box, Math.min(7, 10 - 3)); // nhóm móc có 4 + 4 + 2 = 10, trừ 3 chưa gán = 7 bộ; cúp còn 7
+  // chọn: box 1 = móc ảnh, box 2 = móc chữ A, box 3 chưa chọn
+  const picked = { productId: 'box', qty: 3, price: 100000, picks: [['', 'anh'], ['', 'chu:A'], ['', '']] };
+  st = stockLevels({ ...state, orders: [{ id: 'o', code: 'A', date: '2026-11-01', status: 'pending', items: [picked] }] });
+  assert.equal(st.products.anh, 3);
+  assert.equal(st.variants['chu:A'], 1);
+  assert.equal(st.unassigned['anh,cau,chu'], 1);
+  // giá vốn theo sản phẩm đã chọn: 3 cúp + 6000 (ảnh) + 9000 (chữ) + 8000 (chưa chọn: trung bình 8000)
+  const s = orderSummary(costs, { items: [picked] });
+  assert.equal(s.product, 3 * 50000 + 6000 + 9000 + 8000);
+  // thiếu hàng: đơn 11 box cần 11 cúp (có 10) và 11 móc (nhóm có 10)
+  const big = { ...state, orders: [{ id: 'o2', code: 'B', date: '2026-11-01', status: 'pending', items: [{ productId: 'box', qty: 11, price: 1, picks: [] }] }] };
+  const { short } = orderShortages(big);
+  assert.deepEqual(short[0].lines.map((l) => [l.productId, l.pool?.length || 0, l.need, l.have, l.short]), [['cup', 0, 11, 10, 1], ['', 3, 11, 10, 1]]);
+  // hai đơn: đơn cũ giữ 8 móc, đơn mới chỉ còn 2
+  const two = { ...state, orders: [
+    { id: 'a', code: 'A', date: '2026-11-01', status: 'pending', items: [{ productId: 'box', qty: 8, price: 1, picks: [] }] },
+    { id: 'b', code: 'B', date: '2026-11-02', status: 'pending', items: [{ productId: 'box', qty: 3, price: 1, picks: [] }] },
+  ] };
+  const r = orderShortages(two);
+  assert.deepEqual(r.ready.map((o) => o.code), ['A']);
+  assert.deepEqual(r.short[0].lines.filter((l) => l.pool).map((l) => [l.need, l.have, l.short]), [[3, 2, 1]]);
 });

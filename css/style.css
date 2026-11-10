@@ -617,3 +617,8 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .psec + .psec { margin-top: 28px; padding-top: 18px; border-top: 2px dashed var(--line); }
 .psec-title { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 20px; }
 .psec-count { font: 700 13px var(--font-body, inherit); padding: 2px 10px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); }
+
+.combo-part .pool-picks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 2px 0; }
+.combo-part .pool-picks > .small { flex-basis: 100%; }
+.pool-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.pool-opt input { width: auto; margin: 0; }

@@ -100,9 +100,9 @@ export function costTable(state) {
   // A combo costs what its parts cost; it is never imported itself.
   for (const p of state.products || []) {
     const parts = comboParts(p);
-    if (parts.length) product[p.id] = parts.reduce((n, c) => n + num(c.qty) * num(product[c.productId]), 0);
+    if (parts.length) product[p.id] = parts.reduce((n, c) => n + num(c.qty) * partUnitCost(c, product), 0);
   }
-  return { product, packaging: avg('packaging', state.packaging), shared };
+  return { product, packaging: avg('packaging', state.packaging), shared, combos: comboMap(state.products) };
 }
 
 /**
@@ -110,13 +110,29 @@ export function costTable(state) {
  * with `random` is a surprise pick among the product's variants: it needs no choice on the order. It is sold
  * like any product, but its cost and stock come from its parts. Parts must not be combos themselves.
  */
-export const comboParts = (p) => (p?.combo || []).filter((c) => c.productId && num(c.qty) > 0);
+export const comboParts = (p) => (p?.combo || []).filter((c) => (c.productId || c.pool?.length) && num(c.qty) > 0);
+/** A part that is a surprise pick among several products: `{ pool: [productId…], qty }`. */
+export const isPoolPart = (c) => !c.productId && (c.pool?.length || 0) > 0;
+/** Stable key of a pool, whatever the order of its products. */
+export const poolKey = (pool) => [...(pool || [])].sort().join(',');
+/** Pick on an order for a pool part: "productId" or "productId:variantId", only if it is in the pool. */
+export const parsePick = (pick, pool) => {
+  if (!pick) return null;
+  const [productId, variantId = ''] = String(pick).split(':');
+  return (pool || []).includes(productId) ? { productId, variantId } : null;
+};
+/** Cost of one piece of a part: the product's cost; for a pool the average of its products. */
+const partUnitCost = (c, table) => (isPoolPart(c)
+  ? c.pool.reduce((n, id) => n + num(table[id]), 0) / Math.max(1, c.pool.length)
+  : num(table[c.productId]));
 export const isCombo = (p) => comboParts(p).length > 0;
 
 /**
  * The stock-bearing lines a sold line stands for: itself, or the parts of the combo. A part without a
  * fixed variant takes the one chosen on the order: `line.picks[unit][part]`, one choice per combo sold,
- * so each combo can have its own colour/letter. Same product and variant add up into one line.
+ * so each combo can have its own colour/letter. A pool part takes the product (and variant) picked on the
+ * order as "productId[:variantId]"; with no pick it stays an open pool line `{ pool, qty }`.
+ * Same product and variant (or same pool) add up into one line.
  */
 export function expandLine(line, combos) {
   const combo = combos?.get?.(line.productId);
@@ -125,9 +141,13 @@ export function expandLine(line, combos) {
   const out = new Map();
   for (let u = 0; u < Math.max(0, Math.round(num(line.qty))); u++) {
     parts.forEach((c, i) => {
-      const variantId = c.variantId || line.picks?.[u]?.[i] || '';
-      const key = `${c.productId}:${variantId}`;
-      const row = out.get(key) || { productId: c.productId, variantId, qty: 0 };
+      let productId = c.productId, variantId = c.variantId || line.picks?.[u]?.[i] || '', row, key;
+      if (isPoolPart(c)) {
+        const pick = parsePick(line.picks?.[u]?.[i], c.pool);
+        if (pick) ({ productId, variantId } = pick);
+        else { key = `pool:${poolKey(c.pool)}`; row = out.get(key) || { pool: c.pool, productId: '', variantId: '', qty: 0 }; }
+      }
+      if (!row) { key = `${productId}:${variantId}`; row = out.get(key) || { productId, variantId, qty: 0 }; }
       row.qty += num(c.qty);
       out.set(key, row);
     });
@@ -145,7 +165,18 @@ export function packUnits(line) {
 /** Cost breakdown of one order line. */
 export function lineCost(costs, line) {
   const qty = num(line.qty);
-  const product = qty * num(costs.product[line.productId]);
+  let product = qty * num(costs.product[line.productId]);
+  const combo = costs.combos?.get?.(line.productId);
+  if (combo && comboParts(combo).some(isPoolPart)) {
+    // a pool part costs what the picked product costs (the average of the pool until it is picked)
+    product = 0;
+    for (let u = 0; u < Math.max(0, Math.round(qty)); u++) {
+      comboParts(combo).forEach((c, i) => {
+        const pick = isPoolPart(c) ? parsePick(line.picks?.[u]?.[i], c.pool) : null;
+        product += num(c.qty) * (pick ? num(costs.product[pick.productId]) : partUnitCost(c, costs.product));
+      });
+    }
+  }
   let packaging = 0;
   for (const slot of PACK_SLOTS) {
     if (line[slot] && !costs.shared?.[line[slot]]) packaging += num(costs.packaging[line[slot]]) * packUnits(line);
@@ -213,6 +244,7 @@ export function stockLevels(state) {
   }
   const sharedIds = new Set((state.packaging || []).filter((k) => k.shared).map((k) => k.id));
   const combos = comboMap(state.products);
+  const unassigned = {}; // pieces sold from a pool of products whose actual product is not picked yet
   for (const k of state.packaging || []) packaging[k.id] = num(k.adjust);
   for (const imp of state.imports || []) {
     if (!isReceived(imp)) {
@@ -241,6 +273,7 @@ export function stockLevels(state) {
     }
     for (const line of order.items || []) {
       for (const part of expandLine(line, combos)) {
+        if (part.pool) { unassigned[poolKey(part.pool)] = num(unassigned[poolKey(part.pool)]) + num(part.qty); continue; }
         products[part.productId] = num(products[part.productId]) - num(part.qty);
         addVariant(part.productId, part.variantId, -num(part.qty));
       }
@@ -251,9 +284,14 @@ export function stockLevels(state) {
   }
   // A combo can be made as many times as its scarcest part allows.
   for (const p of combos.values()) {
-    products[p.id] = Math.min(...comboParts(p).map((c) => Math.floor((c.variantId ? num(variants[variantKey(c.productId, c.variantId)]) : num(products[c.productId])) / num(c.qty))));
+    products[p.id] = Math.min(...comboParts(p).map((c) => {
+      const have = isPoolPart(c)
+        ? c.pool.reduce((n, id) => n + num(products[id]), 0) - num(unassigned[poolKey(c.pool)])
+        : c.variantId ? num(variants[variantKey(c.productId, c.variantId)]) : num(products[c.productId]);
+      return Math.floor(have / num(c.qty));
+    }));
   }
-  return { products, packaging, variants, incoming };
+  return { products, packaging, variants, incoming, unassigned };
 }
 
 /**
@@ -445,7 +483,15 @@ export function orderShortages(state) {
   for (const order of waiting) {
     // what the order needs, per variant (or per product when no variant is chosen)
     const need = new Map();
+    const poolNeed = new Map(); // open pools: the actual product is not picked yet
     for (const l of (order.items || []).flatMap((x) => expandLine(x, combos))) {
+      if (l.pool) {
+        const k = poolKey(l.pool);
+        const row = poolNeed.get(k) || { pool: l.pool, need: 0 };
+        row.need += num(l.qty);
+        poolNeed.set(k, row);
+        continue;
+      }
       if (!l.productId || !(num(l.qty) > 0)) continue;
       const key = l.variantId ? variantKey(l.productId, l.variantId) : l.productId;
       const row = need.get(key) || { productId: l.productId, variantId: l.variantId || '', need: 0 };
@@ -462,8 +508,22 @@ export function orderShortages(state) {
         });
       }
     }
+    for (const row of poolNeed.values()) {
+      const have = row.pool.reduce((n, id) => n + Math.max(0, num(avail.products[id])), 0);
+      if (have < row.need) {
+        lacking.push({ productId: '', variantId: '', pool: row.pool, need: row.need, have, short: row.need - have, incoming: row.pool.reduce((n, id) => n + num(incoming.products[id]), 0) });
+      }
+    }
     if (lacking.length) { short.push({ order, lines: lacking }); continue; }
     ready.push(order);
+    for (const row of poolNeed.values()) {
+      let left = row.need; // take them from the products of the pool, one after the other
+      for (const id of row.pool) {
+        const take = Math.min(left, Math.max(0, num(avail.products[id])));
+        avail.products[id] = num(avail.products[id]) - take;
+        left -= take;
+      }
+    }
     for (const row of need.values()) {
       avail.products[row.productId] = num(avail.products[row.productId]) - row.need;
       if (row.variantId) avail.variants[variantKey(row.productId, row.variantId)] = num(avail.variants[variantKey(row.productId, row.variantId)]) - row.need;
