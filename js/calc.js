@@ -112,11 +112,26 @@ export function costTable(state) {
 export const comboParts = (p) => (p?.combo || []).filter((c) => c.productId && num(c.qty) > 0);
 export const isCombo = (p) => comboParts(p).length > 0;
 
-/** The stock-bearing lines a sold line stands for: itself, or one line per part when it is a combo. */
+/**
+ * The stock-bearing lines a sold line stands for: itself, or the parts of the combo. A part without a
+ * fixed variant takes the one chosen on the order: `line.picks[unit][part]`, one choice per combo sold,
+ * so each combo can have its own colour/letter. Same product and variant add up into one line.
+ */
 export function expandLine(line, combos) {
   const combo = combos?.get?.(line.productId);
   if (!combo) return line.productId ? [line] : [];
-  return comboParts(combo).map((c) => ({ productId: c.productId, variantId: c.variantId || '', qty: num(line.qty) * num(c.qty) }));
+  const parts = comboParts(combo);
+  const out = new Map();
+  for (let u = 0; u < Math.max(0, Math.round(num(line.qty))); u++) {
+    parts.forEach((c, i) => {
+      const variantId = c.variantId || line.picks?.[u]?.[i] || '';
+      const key = `${c.productId}:${variantId}`;
+      const row = out.get(key) || { productId: c.productId, variantId, qty: 0 };
+      row.qty += num(c.qty);
+      out.set(key, row);
+    });
+  }
+  return [...out.values()];
 }
 /** Map of combo products by id, for expandLine. */
 export const comboMap = (products) => new Map((products || []).filter(isCombo).map((p) => [p.id, p]));

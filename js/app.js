@@ -742,6 +742,21 @@ function openOrderFormNow(existing, restored) {
   // Shared between the close guard below and the form code inside onMount.
   const ctl = { saving: false, timer: null, snap: null, flush: () => {} };
 
+  /** For a combo line: one group of choices per combo sold, one select per part that has no fixed variant. */
+  const picksHtml = (l) => {
+    const combo = product(l.productId);
+    if (!isCombo(combo)) return '';
+    const parts = comboParts(combo);
+    const units = Math.max(0, Math.round(num(l.qty)));
+    l.picks = Array.from({ length: units }, (_, u) => parts.map((c, i) => (c.variantId ? '' : l.picks?.[u]?.[i] || '')));
+    const open = parts.map((c, i) => [c, i]).filter(([c]) => !c.variantId && hasVariants(product(c.productId)));
+    if (!open.length) return '';
+    return `<div class="combo-picks"><b class="small">Chọn loại cho từng combo</b>${l.picks.map((unit, u) => `<div class="combo-pick">
+      <span class="small muted">Combo ${u + 1}</span>
+      ${open.map(([c, i]) => { const pp = product(c.productId); return `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="${esc(pp.name)} cho combo ${u + 1}"><option value="">— ${esc(pp.name)} —</option>${pp.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === unit[i] ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</select>`; }).join('')}
+    </div>`).join('')}</div>`;
+  };
+
   const lineHtml = (l, i) => `
     <div class="line" data-line="${i}">
       <div class="field">
@@ -760,6 +775,7 @@ function openOrderFormNow(existing, restored) {
       </label>
       ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(orderPackaging(), l[k], '— không —')}</select></label>`).join('')}
       <button class="icon-btn del" data-remove-line="${i}" title="Xoá dòng" style="margin-bottom:6px">✕</button>
+      <div class="combo-picks-wrap" style="grid-column:1/-1">${picksHtml(l)}</div>
       <div class="meta"></div>
     </div>`;
 
@@ -924,9 +940,14 @@ function openOrderFormNow(existing, restored) {
         const i = +lineEl.dataset.line;
         const l = o.items[i];
         const f = e.target.dataset.f;
+        if (e.target.dataset.pickU !== undefined) {
+          l.picks[+e.target.dataset.pickU][+e.target.dataset.pickI] = e.target.value;
+          return;
+        }
         if (f === 'productId') {
           l.productId = e.target.value;
           l.variantId = '';
+          l.picks = [];
           const p = product(l.productId);
           if (p) {
             l.price = num(p.salePrice);
@@ -960,6 +981,7 @@ function openOrderFormNow(existing, restored) {
         if (f !== 'qty' && f !== 'price') return;
         const i = +e.target.closest('[data-line]').dataset.line;
         o.items[i][f] = num(e.target.value);
+        if (f === 'qty' && isCombo(product(o.items[i].productId))) $(`[data-line="${i}"] .combo-picks-wrap`, m).innerHTML = picksHtml(o.items[i]);
         drawMeta(i);
         drawSummary();
       });
@@ -1002,6 +1024,15 @@ function openOrderFormNow(existing, restored) {
         if (!items.length) return toast('Chọn ít nhất 1 sản phẩm');
         const noVariant = items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
         if (noVariant && !existing) return notify(`Chọn phân loại (màu, size…) cho "${product(noVariant.productId).name}"`);
+        if (!existing) {
+          for (const l of items) {
+            const combo = product(l.productId);
+            if (!isCombo(combo)) continue;
+            const missing = comboParts(combo).map((c, i) => [c, i]).filter(([c]) => !c.variantId && hasVariants(product(c.productId)))
+              .find(([, i]) => (l.picks || []).some((unit) => !unit?.[i]) || !(l.picks || []).length);
+            if (missing) return notify(`Chọn loại "${product(missing[0].productId).name}" cho từng "${combo.name}"`);
+          }
+        }
         const dup = existing ? [] : findDuplicateOrders(S.orders, { ...o, items });
         if (dup.length) {
           const pick = await choose(`Đơn này có thể bị trùng. ${o.customer} đang có đơn chưa xử lý xong với cùng sản phẩm:\n${dup.map((d) => '• ' + dupText(d)).join('\n')}\nVẫn tạo đơn mới?`, [
@@ -1903,7 +1934,7 @@ function openComboForm(existing) {
       </div>
       <label class="field">Ghi chú<input name="note" value="${esc(c.note || '')}"></label>
       <div class="summary" id="cb-sum"></div>
-      <p class="small muted">Combo không nhập kho riêng: giá vốn là tổng giá vốn các sản phẩm bên trong, số bộ còn lại tính theo sản phẩm sắp hết nhất. Bán combo sẽ trừ kho từng sản phẩm.</p>
+      <p class="small muted">Chỉ cần chọn sản phẩm. Sản phẩm có nhiều loại (màu, chữ…) thì để "Chọn loại khi lên đơn": lúc tạo đơn bạn chọn loại cho từng combo. Combo không nhập kho riêng: giá vốn là tổng giá vốn các sản phẩm bên trong, bán combo trừ kho đúng loại đã chọn.</p>
     </form>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="cb-save">Lưu combo</button>`,
     onMount(m) {
@@ -1913,7 +1944,7 @@ function openComboForm(existing) {
           const p = product(x.productId);
           return `<div class="combo-part" data-i="${i}">
             <select data-f="productId" aria-label="Sản phẩm">${options(pickable, x.productId, '— chọn sản phẩm —')}</select>
-            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">— phân loại —</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
+            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">Chọn loại khi lên đơn</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>Luôn là ${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
             <input type="number" min="1" step="1" data-f="qty" value="${num(x.qty)}" aria-label="Số lượng" title="Số lượng trong 1 combo">
             <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ">✕</button>
           </div>`;
@@ -1954,8 +1985,6 @@ function openComboForm(existing) {
         if (!form.reportValidity()) return;
         const filled = parts.filter((x) => x.productId);
         if (filled.length < 2) return toast('Combo cần ít nhất 2 sản phẩm');
-        const noVariant = filled.find((x) => hasVariants(product(x.productId)) && !x.variantId);
-        if (noVariant && !(await ask(`"${product(noVariant.productId).name}" có nhiều phân loại nhưng chưa chọn loại nào. Combo sẽ trừ kho chung của sản phẩm (không theo màu). Vẫn lưu?`, 'Vẫn lưu'))) return;
         const d = formData(form);
         await store.upsert('products', {
           ...c, name: d.name.trim(), salePrice: num(d.salePrice), note: (d.note || '').trim(), baseCost: 0, variants: [],
@@ -1996,7 +2025,7 @@ function openComboDetail(id) {
       <div class="vcards">
         ${rows.map((r) => `<div class="vcard ${r.sets === limit && limit <= 0 ? 'low' : ''}">
           ${thumb(variantOf(r.x.productId, r.x.variantId)?.image || r.part?.image, r.part?.name, '')}
-          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo</span></div>
+          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo${r.part && hasVariants(r.part) && !r.x.variantId ? ' · chọn loại khi lên đơn' : ''}</span></div>
           <div class="vcard-num"><span>Kho có</span><b>${r.have}</b>${r.sets === limit ? '<span class="chip warn">giới hạn</span>' : ''}</div>
           <div class="vcard-num"><span>Đủ cho</span><b>${r.sets} bộ</b></div>
         </div>`).join('')}

@@ -607,3 +607,7 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .combo-part { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 64px auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--line, #dfe6f2); border-radius: 12px; }
 .combo-part select, .combo-part input { min-width: 0; }
 @media (max-width: 600px) { .combo-part { grid-template-columns: 1fr 1fr; } }
+
+.combo-picks { display: grid; gap: 6px; padding: 8px 10px; border: 1px dashed var(--st-designed-edge); border-radius: 12px; background: #f6fcfc; }
+.combo-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.combo-pick select { flex: 1 1 160px; min-width: 0; }
