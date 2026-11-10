@@ -4,9 +4,8 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from igbt_drop_avg import analyze
+from igbt_drop_avg import HEAD, analyze, fmt_row
 
-HEAD = ("Signal", "Mean", "Max", "t(Max) [s]")
 
 
 def drop_rows(r):
@@ -26,7 +25,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("IGBT Tj - Mean/Max before sudden drop")
-        self.geometry("720x520")
+        self.geometry("900x700")
         self.path = None
         self.result = None
 
@@ -44,10 +43,10 @@ class App(tk.Tk):
         self.info = tk.StringVar(value="No file selected")
         ttk.Label(self, textvariable=self.info, padding=(8, 0), wraplength=700).pack(fill="x")
 
-        self.tree = ttk.Treeview(self, columns=HEAD, show="headings", height=5, selectmode="extended")
+        self.tree = ttk.Treeview(self, columns=HEAD, show="headings", height=16, selectmode="extended")
         for c in HEAD:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=260 if c == "Signal" else 130, anchor="w" if c == "Signal" else "e")
+            self.tree.column(c, width=210 if c == "Signal" else 90, anchor="w" if c == "Signal" else "e")
         self.tree.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         self.tree2 = ttk.Treeview(self, columns=("Item", "Value"), show="headings", height=7)
         self.tree2.heading("Item", text="Drop point info")
@@ -89,8 +88,8 @@ class App(tk.Tk):
                       f"at t={r['t_drop']:.3f}s | window [{r['t_start']:.3f}s, {r['t_end']:.3f}s], "
                       f"{r['n_samples']} samples")
         self.tree.delete(*self.tree.get_children())
-        for s, mean, m, tm in r["rows"]:
-            self.tree.insert("", "end", values=(s, f"{mean:.4f}", f"{m:.4f}", f"{tm:.3f}"))
+        for row in r["rows"]:
+            self.tree.insert("", "end", values=fmt_row(row))
         self.tree2.delete(*self.tree2.get_children())
         for row in drop_rows(r):
             self.tree2.insert("", "end", values=row)
@@ -99,8 +98,8 @@ class App(tk.Tk):
         if not self.result:
             return
         lines = ["\t".join(HEAD)]
-        for s, mean, m, tm in self.result["rows"]:
-            lines.append(f"{s}\t{mean:.4f}\t{m:.4f}\t{tm:.3f}")
+        for row in self.result["rows"]:
+            lines.append("\t".join(fmt_row(row)))
         lines.append("")
         lines.append("Drop point info\tValue")
         lines += [f"{k}\t{v}" for k, v in drop_rows(self.result)]
