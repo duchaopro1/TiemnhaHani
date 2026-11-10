@@ -216,7 +216,7 @@ function openQuickAdd(onAdd) {
         </label>`;
       }).join('')}</div>
       <div class="quick-sum small" id="qk-sum"></div>
-      <p class="small muted" style="margin:6px 0 0">Mỗi loại thành một dòng, không gắn đóng gói riêng. Dùng "Đóng gói cả đơn" cho hộp hoặc túi chung.</p>
+      <p class="small muted" style="margin:6px 0 0">Mỗi loại thành một dòng và tự lấy bộ đóng gói mặc định của sản phẩm (sửa từng dòng được). Hộp hoặc túi chung cả đơn thì dùng "Đóng gói cả đơn".</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn ghost" value="clear" id="qk-clear">Xoá hết số</button><button class="btn" value="add" id="qk-add">Thêm vào đơn</button></div>`;
     sum();
@@ -1137,8 +1137,9 @@ function openOrderFormNow(existing, restored) {
         for (const r of rows) {
           const same = o.items.find((l) => l.productId === qp.id && l.variantId === r.variantId);
           if (same) { same.qty = num(same.qty) + r.qty; continue; }
-          // no packaging of its own: use "Đóng gói cả đơn" for the shared box or bag
-          o.items.push({ productId: qp.id, variantId: r.variantId, qty: r.qty, price: variantPrice(qp, variantOf(qp.id, r.variantId)), pack1: '', pack2: '', pack3: '', packEach: false });
+          // like any new line: the product's default packaging set
+          const pr = store.get('presets', qp.defaultPreset);
+          o.items.push({ productId: qp.id, variantId: r.variantId, qty: r.qty, price: variantPrice(qp, variantOf(qp.id, r.variantId)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '', packEach: false });
         }
         if (!o.items.length) o.items.push(blankLine());
         drawLines();
