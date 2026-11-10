@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -1181,13 +1181,18 @@ function rowsOf(list) {
   return [...groups.values()];
 }
 
+const TRANSIT_CHIP = { shipping_cn: 'st-pending', customs: 'st-packed', cleared: 'st-designed' };
+/** Chip of an ordered slip: where it is on the way (older slips without a stage just say "Đang về"). */
+const transitChip = (i) => `<span class="chip ${TRANSIT_CHIP[i.transit] || 'pay-due'}">${esc(TRANSIT_STAGES[i.transit] || 'Đang về')}</span>`;
+const transitOptions = (sel) => Object.entries(TRANSIT_STAGES).map(([k, v]) => `<option value="${k}" ${k === (sel || 'shipping_cn') ? 'selected' : ''}>${esc(v)}</option>`).join('');
+
 function importRow(i, child = false) {
   const item = itemOf(i);
   const totalRow = importAmount(i);
   const got = isReceived(i);
   const v = i.kind === 'packaging' ? null : variantOf(i.itemId, i.variantId);
   return `<tr${child ? ' class="sub-row"' : ''}>
-    <td>${child ? '' : `${fmtDate(i.date)}<br>`}${child ? '' : got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : '<span class="chip pay-due">Đang về</span>'}</td>
+    <td>${child ? '' : `${fmtDate(i.date)}<br>`}${child ? '' : got ? `<span class="chip pay-ok">Đã nhận${i.receivedDate ? ' ' + fmtDate(i.receivedDate).slice(0, 5) : ''}</span>` : transitChip(i)}</td>
     <td>${child ? `<span class="item sub">${thumb(v?.image || item?.image, v?.name, 'sm')}${esc(v?.name || importLabel(i) || '(đã xoá)')}</span>` : `<span class="item">${i.kind === 'packaging' ? '' : thumb(v?.image || item?.image, item?.name, 'sm')}<a href="javascript:void 0" data-action="edit-item" data-kind="${i.kind}" data-id="${i.itemId}">${esc(importLabel(i) || '(đã xoá)')}</a></span>`}${i.note && !child ? `<br><span class="small muted">${esc(i.note)}</span>` : ''}</td>
     <td>${child ? '' : `<span class="chip ${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${i.kind === 'packaging' ? (pack(i.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span>`}</td>
     <td class="num">${num(i.qty)}</td>
@@ -1210,7 +1215,7 @@ function groupRows(g) {
   const costs = new Set(rows.map((i) => num(i.unitCost)));
   const got = isReceived(first);
   const head = `<tr class="group-row">
-    <td>${fmtDate(first.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${first.receivedDate ? ' ' + fmtDate(first.receivedDate).slice(0, 5) : ''}</span>` : '<span class="chip pay-due">Đang về</span>'}</td>
+    <td>${fmtDate(first.date)}<br>${got ? `<span class="chip pay-ok">Đã nhận${first.receivedDate ? ' ' + fmtDate(first.receivedDate).slice(0, 5) : ''}</span>` : transitChip(first)}</td>
     <td><span class="item">${first.kind === 'packaging' ? '' : thumb(item?.image, item?.name, 'sm')}<span><a href="javascript:void 0" data-action="edit-item" data-kind="${first.kind}" data-id="${first.itemId}">${esc(item?.name || '(đã xoá)')}</a><br><button class="link-btn" data-action="toggle-import-group" data-key="${esc(g.key)}" aria-expanded="${open}">${open ? '▾ Ẩn chi tiết' : '▸ Xem chi tiết'} · ${rows.length} phân loại</button></span></span></td>
     <td><span class="chip ${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'friend' : 'backup') : 'him'}">${first.kind === 'packaging' ? (pack(first.itemId)?.shared ? 'Vận hành' : 'Đóng gói') : 'Sản phẩm'}</span></td>
     <td class="num"><b>${qty}</b></td>
@@ -1230,7 +1235,7 @@ function pageImports() {
   const amountOf = (i) => num(i.qty) * num(i.unitCost) + num(i.extraFee);
   const list = S.imports
     .filter((i) => !f.kind || i.kind === f.kind)
-    .filter((i) => !f.status || (f.status === 'ordered') === !isReceived(i))
+    .filter((i) => !f.status || (f.status === 'received' ? isReceived(i) : !isReceived(i) && (f.status === 'ordered' || i.transit === f.status)))
     .filter((i) => !q || normalize([importLabel(i), i.supplier, i.note].join(' ')).includes(q))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
   const gotTotal = list.filter(isReceived).reduce((n, i) => n + amountOf(i), 0);
@@ -1253,7 +1258,7 @@ function pageImports() {
     <div class="toolbar">
       <input type="search" id="import-q" placeholder="Tìm mặt hàng, nhà cung cấp…" value="${esc(f.q)}">
       <div class="seg">${[['', 'Tất cả'], ['product', 'Sản phẩm'], ['packaging', 'Dụng cụ đóng gói']].map(([k, v]) => `<button data-import-kind="${k}" class="${f.kind === k ? 'on' : ''}">${v}</button>`).join('')}</div>
-      <div class="seg">${[['', 'Mọi tình trạng'], ['ordered', 'Đang về'], ['received', 'Đã nhận']].map(([k, v]) => `<button data-import-status="${k}" class="${f.status === k ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <div class="seg">${[['', 'Mọi tình trạng'], ['ordered', 'Đang về'], ...Object.entries(TRANSIT_STAGES), ['received', 'Đã nhận']].map(([k, v]) => `<button data-import-status="${k}" class="${f.status === k ? 'on' : ''}">${v}</button>`).join('')}</div>
       <span class="muted small" style="margin-left:auto">${list.length} phiếu · Đã nhận ${money(gotTotal)}${comingTotal ? ` · Đang về ${money(comingTotal)}` : ''}</span>
     </div>
     ${batchList.length ? `<section class="card inbound-card" aria-labelledby="inbound-title">
@@ -1265,6 +1270,7 @@ function pageImports() {
             <div><b>Đặt ngày ${fmtDate(first.date)}</b>${first.supplier ? ` · ${esc(first.supplier)}` : ''}<br><span class="small muted">${rows.length} mặt hàng · ${money(rows.reduce((n, i) => n + amountOf(i), 0))}</span></div>
             <button class="btn sm" data-action="receive-batch" data-batch="${esc(key)}">Đã nhận hàng</button>
           </div>
+          <label class="inbound-stage">${transitChip(first)}<select data-batch-transit="${esc(key)}" aria-label="Hàng đang ở đâu">${transitOptions(first.transit)}</select></label>
           <ul class="inbound-items">${rowsOf(rows).map((g) => {
             const f = g.rows[0], it = itemOf(f), q = g.rows.reduce((n, i) => n + num(i.qty), 0);
             const label = `<span class="item">${f.kind === 'packaging' ? '' : thumb(it?.image, it?.name, 'sm')}${esc(it?.name || '(đã xoá)')}</span><b>×${q}</b>`;
@@ -1330,9 +1336,9 @@ function openReceiveDialog(ids) {
           const n = got[k];
           if (!(n > 0)) return;
           received += 1;
-          docs.push({ ...i, status: 'received', receivedDate: date, qty: n });
+          docs.push({ ...i, status: 'received', receivedDate: date, qty: n, transit: '' });
           if (keep && n < num(i.qty)) {
-            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', batchId: i.batchId || i.id });
+            docs.push({ kind: i.kind, itemId: i.itemId, variantId: i.variantId || '', date: i.date, qty: num(i.qty) - n, unitCost: i.unitCost, extraFee: 0, supplier: i.supplier || '', note: i.note || '', status: 'ordered', transit: i.transit || 'shipping_cn', batchId: i.batchId || i.id });
           }
         });
         if (!received) return toast('Nhập số lượng thực nhận cho ít nhất 1 dòng');
@@ -1366,6 +1372,7 @@ function openParcelForm() {
       <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
         <div class="seg" id="pc-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
       </div>
+      <label class="field" id="pc-transit" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions('')}</select></label>
       <label class="field" id="pc-recv" style="grid-column:1/-1" hidden>Ngày nhận hàng<input type="date" name="receivedDate" value="${today()}"></label>
       <div id="pc-lines" style="grid-column:1/-1"></div>
       <button type="button" class="btn ghost sm" id="pc-add" style="justify-self:start">＋ Thêm mặt hàng</button><span></span>
@@ -1395,6 +1402,7 @@ function openParcelForm() {
         $$('#pc-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
         $$('#pc-mode button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.mode));
         $('#pc-recv', m).hidden = st.status !== 'received';
+        $('#pc-transit', m).hidden = st.status !== 'ordered';
         const sh = shares();
         let goods = 0, qty = 0;
         lines.forEach((l, i) => {
@@ -1445,6 +1453,7 @@ function openParcelForm() {
             kind, itemId, variantId: kind === 'product' ? l.variantId || '' : '', date: d.date, qty: num(l.qty), unitCost: num(l.unitCost),
             extraFee: sh[i], supplier: (d.supplier || '').trim(), note: (d.note || '').trim(), batchId,
             status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
+            transit: st.status === 'ordered' ? d.transit || 'shipping_cn' : '',
           };
         });
         await store.upsertMany('imports', docs);
@@ -1485,6 +1494,7 @@ function openGroupEdit(ids) {
       <div class="field" style="grid-column:1/-1"><span>Tình trạng hàng</span>
         <div class="seg" id="ge-status" style="justify-self:start"><button type="button" data-v="ordered">Đang đặt, chờ hàng về</button><button type="button" data-v="received">Đã nhận, nhập kho</button></div>
       </div>
+      <label class="field" id="ge-transit" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions(first.transit)}</select></label>
       <label class="field" id="ge-recv" style="grid-column:1/-1">Ngày nhận hàng<input type="date" name="receivedDate" value="${esc(first.receivedDate || today())}"></label>
       <div class="vqty" style="grid-column:1/-1">
         <div class="vqty-head"><span>Phân loại</span><span>Đang có</span><span>Số lượng</span></div>
@@ -1507,6 +1517,7 @@ function openGroupEdit(ids) {
       const sync = () => {
         $$('#ge-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === st.status));
         $('#ge-recv', m).hidden = st.status !== 'received';
+        $('#ge-transit', m).hidden = st.status !== 'ordered';
         const q = qtys();
         const total = q.reduce((a, b) => a + b, 0);
         const goods = form.unitCost.value === ''
@@ -1528,6 +1539,7 @@ function openGroupEdit(ids) {
         const common = {
           date: d.date, supplier: (d.supplier || '').trim(), note: (d.note || '').trim(),
           status: st.status, receivedDate: st.status === 'received' ? (d.receivedDate || today()) : '',
+          transit: st.status === 'ordered' ? d.transit || 'shipping_cn' : '',
         };
         const save = [], drop = [];
         rows.forEach((r, i) => {
@@ -1577,6 +1589,7 @@ function openImportForm(existing, preset = {}) {
         </div>
         <span class="small muted" id="imp-status-note"></span>
       </div>
+      <label class="field" id="transit-wrap" style="grid-column:1/-1">Hàng đang ở đâu<select name="transit">${transitOptions(imp.transit)}</select></label>
       <label class="field" id="recv-wrap" style="grid-column:1/-1">Ngày nhận hàng<input type="date" name="receivedDate" value="${esc(imp.receivedDate || (imp.status === 'received' ? imp.date : today()))}"></label>
       <label class="field" style="grid-column:1/-1">Mặt hàng<select name="itemId" required>${itemOptions(imp.kind, imp.itemId)}</select></label>
       <label class="field" style="grid-column:1/-1" id="new-item-wrap" hidden>Tên mặt hàng mới<input name="newName" placeholder="VD: Cúp pha lê mini"></label>
@@ -1594,6 +1607,7 @@ function openImportForm(existing, preset = {}) {
       const drawStatus = () => {
         $$('#imp-status button', m).forEach((b) => b.classList.toggle('on', b.dataset.v === stt.status));
         $('#recv-wrap', m).hidden = stt.status !== 'received';
+        $('#transit-wrap', m).hidden = stt.status !== 'ordered';
         $('#imp-status-note', m).textContent = stt.status === 'received'
           ? 'Cộng vào tồn kho, giá vốn và chi phí ngay.'
           : 'Chưa tính vào tồn kho, giá vốn và chi phí. Khi hàng về, bấm “Đã nhận hàng” ở trang Nhập hàng.';
@@ -1685,6 +1699,7 @@ function openImportForm(existing, preset = {}) {
         const common = {
           kind, date: d.date, unitCost: num(d.unitCost), supplier: d.supplier.trim(), note: d.note.trim(),
           status: stt.status, receivedDate: stt.status === 'received' ? (d.receivedDate || today()) : '',
+          transit: stt.status === 'ordered' ? d.transit || 'shipping_cn' : '',
         };
 
         if (existing) {
@@ -1882,7 +1897,7 @@ function openProductForm(existing) {
       <label class="field" style="margin-top:14px">Ghi chú<input name="note" value="${esc(p.note)}"></label>
     </form>
     ${existing ? `<h3 style="margin:16px 0 8px">Lịch sử nhập (${imports.length})</h3>
-      ${imports.length ? `<div class="table-wrap"><table><tbody>${imports.map((i) => `<tr><td>${fmtDate(i.date)}${isReceived(i) ? '' : ' <span class="chip pay-due">đang về</span>'}</td><td>${esc(variantOf(p.id, i.variantId)?.name || '')}</td><td class="num">${num(i.qty)} cái</td><td class="num">${money(i.unitCost)}/cái</td><td><button class="icon-btn" data-edit-imp="${i.id}">✎</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">Chưa nhập lần nào.</p>'}
+      ${imports.length ? `<div class="table-wrap"><table><tbody>${imports.map((i) => `<tr><td>${fmtDate(i.date)}${isReceived(i) ? '' : ' ' + transitChip(i)}</td><td>${esc(variantOf(p.id, i.variantId)?.name || '')}</td><td class="num">${num(i.qty)} cái</td><td class="num">${money(i.unitCost)}/cái</td><td><button class="icon-btn" data-edit-imp="${i.id}">✎</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">Chưa nhập lần nào.</p>'}
       <p class="small">Giá vốn TB: <b>${money(costs.product[p.id])}</b> · Tồn: <b>${num(stock.products[p.id])}</b></p>` : ''}`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="p-save">Lưu</button>`,
     onMount(m) {
@@ -2344,7 +2359,7 @@ async function loadDemo() {
     { kind: 'product', itemId: p3.id, date: d, qty: 20, unitCost: 140000, extraFee: 0, supplier: '' },
     ...cup.variants.map((v, i) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty: [12, 8, 4][i], unitCost: 32000, extraFee: [12000, 8000, 4000][i], supplier: 'Xưởng pha lê C' })),
     ...[box, paper, ribbon, bag, card].map((x) => ({ kind: 'packaging', itemId: x.id, date: d, qty: 200, unitCost: x.baseCost, extraFee: 0 })),
-    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', batchId: 'demo-dang-ve' })),
+    ...[[cup.variants[2], 20], [cup.variants[0], 10]].map(([v, qty]) => ({ kind: 'product', itemId: cup.id, variantId: v.id, date: d, qty, unitCost: 32000, extraFee: 0, supplier: 'Xưởng pha lê C', status: 'ordered', transit: 'shipping_cn', batchId: 'demo-dang-ve' })),
     { kind: 'packaging', itemId: tape.id, date: d, qty: 2, unitCost: 12000, extraFee: 0, supplier: 'Tạp hoá' },
     { kind: 'packaging', itemId: wrap.id, date: d, qty: 1, unitCost: 60000, extraFee: 15000, supplier: 'Shopee' },
     { kind: 'packaging', itemId: staples.id, date: d, qty: 5, unitCost: 8000, extraFee: 0, supplier: 'Tạp hoá' },
@@ -2468,6 +2483,12 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'stg-all') { ui.stagesAll = t.checked; render(); }
+  if (t.dataset?.batchTransit !== undefined) {
+    const key = t.dataset.batchTransit;
+    const docs = S.imports.filter((i) => !isReceived(i) && (i.batchId || i.id) === key).map((i) => ({ ...i, transit: t.value }));
+    await store.upsertMany('imports', docs);
+    toast(`Đã chuyển sang "${TRANSIT_STAGES[t.value]}"`);
+  }
   if (t.id === 'order-platform') { ui.orders.platform = t.value; render(); }
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }

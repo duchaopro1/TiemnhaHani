@@ -427,3 +427,13 @@ export function orderShortages(state) {
   }
   return { short, ready };
 }
+
+/**
+ * Where goods that are ordered (not yet received) are on their way from China. Only a label for the
+ * shop: stock, cost and operating cost still count the goods when the slip is received.
+ */
+export const TRANSIT_STAGES = {
+  shipping_cn: 'Đang ship từ TQ',
+  customs: 'Chờ thông quan',
+  cleared: 'Đã thông quan',
+};

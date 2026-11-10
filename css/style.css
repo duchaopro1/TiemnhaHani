@@ -591,3 +591,7 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 /* total orders card, first in the status row */
 .stcard.st-total { background-color: var(--blue); border-color: var(--blue); color: #fff; }
 .stcard.st-total .stcard-pct { opacity: .9; }
+
+/* where ordered goods are on their way */
+.inbound-stage { display: flex; align-items: center; gap: 8px; }
+.inbound-stage select { flex: 1; min-width: 0; padding: 4px 8px; font-size: 13px; }
