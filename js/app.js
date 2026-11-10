@@ -1813,6 +1813,8 @@ function tileFlag(p) {
 function pageProducts() {
   const q = normalize(ui.products.q);
   const list = S.products.filter((p) => !q || normalize([p.name, p.sku, ...(p.variants || []).flatMap((v) => [v.name, v.sku])].join(' ')).includes(q));
+  const plain = list.filter((p) => !isCombo(p));
+  const combos = list.filter(isCombo);
 
   const tile = (p) => `<button class="ptile tone-${toneOf(p)}" data-action="open-product" data-id="${p.id}">
       <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
@@ -1828,10 +1830,18 @@ function pageProducts() {
     </div>
     <div class="toolbar">
       <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(ui.products.q)}">
-      <span class="muted small" style="margin-left:auto">${list.length} sản phẩm</span>
+      <span class="muted small" style="margin-left:auto">${plain.length} sản phẩm · ${combos.length} combo</span>
     </div>
-    ${list.length ? `<div class="ptiles">${list.map(tile).join('')}</div>`
-      : `<div class="card empty">${S.products.length ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
+    <section class="psec" aria-labelledby="psec-products">
+      <h2 class="psec-title" id="psec-products">Sản phẩm <span class="psec-count">${plain.length}</span></h2>
+      ${plain.length ? `<div class="ptiles">${plain.map(tile).join('')}</div>`
+        : `<div class="card empty">${S.products.some((p) => !isCombo(p)) ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
+    </section>
+    <section class="psec" aria-labelledby="psec-combos">
+      <h2 class="psec-title" id="psec-combos">Combo <span class="psec-count">${combos.length}</span></h2>
+      ${combos.length ? `<div class="ptiles">${combos.map(tile).join('')}</div>`
+        : `<div class="card empty">${S.products.some((p) => isCombo(p)) ? 'Không có combo khớp tìm kiếm.' : 'Chưa có combo. Bấm “🎁 Tạo combo” để ghép nhiều sản phẩm thành một bộ.'}</div>`}
+    </section>
     ${S.products.length && S.presets.length ? `
     <div class="card" style="margin-top:20px">
       <h3>Bảng giá thành theo cách đóng gói</h3>
