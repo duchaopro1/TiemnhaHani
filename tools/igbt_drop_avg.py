@@ -90,10 +90,12 @@ def main():
     print(f"Drop tren {a.detect}: {det[k]:.3f} -> {det[k+1]:.3f} "
           f"(t={t0:.3f}s -> {time[k+1]:.3f}s), tim thay {len(drops)} drop >= {a.threshold}")
     print(f"Cua so: [{time[idx[0]]:.3f}s, {time[idx[-1]]:.3f}s], {len(idx)} sample\n")
+    print(f"{'Signal':<24}{'Mean':>10}{'Max':>10}{'t(Max)':>11}")
     for s in SIGNALS:
         vals = [data[s][i] for i in idx]
-        print(f"{s:<24} mean = {sum(vals)/len(vals):.4f}   (min {min(vals):.3f}, max {max(vals):.3f})")
-
+        m = max(vals)
+        t_max = time[idx[vals.index(m)]]
+        print(f"{s:<24}{sum(vals)/len(vals):>10.4f}{m:>10.4f}{t_max:>10.3f}s")
 
 if __name__ == "__main__":
     main()
