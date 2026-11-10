@@ -751,9 +751,9 @@ function openOrderFormNow(existing, restored) {
     l.picks = Array.from({ length: units }, (_, u) => parts.map((c, i) => (c.variantId ? '' : l.picks?.[u]?.[i] || '')));
     const open = parts.map((c, i) => [c, i]).filter(([c]) => !c.variantId && hasVariants(product(c.productId)));
     if (!open.length) return '';
-    return `<div class="combo-picks"><b class="small">Chọn loại cho từng combo</b>${l.picks.map((unit, u) => `<div class="combo-pick">
+    return `<div class="combo-picks"><b class="small">Chọn loại cho từng combo${parts.some((c) => c.random) ? ' <span class="muted">(món 🎲 ngẫu nhiên không bắt buộc)</span>' : ''}</b>${l.picks.map((unit, u) => `<div class="combo-pick">
       <span class="small muted">Combo ${u + 1}</span>
-      ${open.map(([c, i]) => { const pp = product(c.productId); return `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="${esc(pp.name)} cho combo ${u + 1}"><option value="">— ${esc(pp.name)} —</option>${pp.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === unit[i] ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</select>`; }).join('')}
+      ${open.map(([c, i]) => { const pp = product(c.productId); return `<select data-pick-u="${u}" data-pick-i="${i}" aria-label="${esc(pp.name)} cho combo ${u + 1}"><option value="">${c.random ? `🎲 ${esc(pp.name)}: ngẫu nhiên (có thể chọn sau)` : `— ${esc(pp.name)} —`}</option>${pp.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === unit[i] ? 'selected' : ''}>${esc(v.name)} (còn ${vStock(pp.id, v.id)})</option>`).join('')}</select>`; }).join('')}
     </div>`).join('')}</div>`;
   };
 
@@ -1028,7 +1028,7 @@ function openOrderFormNow(existing, restored) {
           for (const l of items) {
             const combo = product(l.productId);
             if (!isCombo(combo)) continue;
-            const missing = comboParts(combo).map((c, i) => [c, i]).filter(([c]) => !c.variantId && hasVariants(product(c.productId)))
+            const missing = comboParts(combo).map((c, i) => [c, i]).filter(([c]) => !c.variantId && !c.random && hasVariants(product(c.productId)))
               .find(([, i]) => (l.picks || []).some((unit) => !unit?.[i]) || !(l.picks || []).length);
             if (missing) return notify(`Chọn loại "${product(missing[0].productId).name}" cho từng "${combo.name}"`);
           }
@@ -1890,7 +1890,8 @@ function openProductDetail(id) {
             <div class="vcard-num"><span>Giá bán</span><b>${money(r.price)}</b><span class="small ${signCls(profit)}">lãi ${money(profit)}</span></div>
           </div>`;
         }).join('')}
-        ${unassigned ? `<p class="small muted">Còn ${unassigned} cái nhập trước khi chia phân loại (chưa gắn màu). Sửa phiếu nhập để gắn màu.</p>` : ''}
+        ${unassigned > 0 ? `<p class="small muted">Còn ${unassigned} cái nhập trước khi chia phân loại (chưa gắn màu). Sửa phiếu nhập để gắn màu.</p>` : ''}
+        ${unassigned < 0 ? `<p class="small muted">${-unassigned} cái đã xuất theo combo ngẫu nhiên, chưa biết loại nào. Số lượng từng loại ở trên chưa trừ phần này; mở đơn đó để chọn loại thực tế khi biết.</p>` : ''}
       </div>
       ${p.note ? `<p class="small muted">${esc(p.note)}</p>` : ''}
     </div>`,
@@ -1915,7 +1916,7 @@ function openProductDetail(id) {
  */
 function openComboForm(existing) {
   const c = existing ? structuredClone(existing) : { name: '', sku: '', salePrice: 0, note: '', image: '', combo: [], variants: [] };
-  const parts = (c.combo || []).map((x) => ({ productId: x.productId, variantId: x.variantId || '', qty: num(x.qty) || 1 }));
+  const parts = (c.combo || []).map((x) => ({ productId: x.productId, variantId: x.variantId || '', random: !!x.random, qty: num(x.qty) || 1 }));
   if (!parts.length) parts.push({ productId: '', variantId: '', qty: 1 }, { productId: '', variantId: '', qty: 1 });
   const pickable = S.products.filter((p) => !isCombo(p) && p.id !== c.id);
   let busy = 0;
@@ -1944,7 +1945,7 @@ function openComboForm(existing) {
       </div>
       <label class="field">Ghi chú<input name="note" value="${esc(c.note || '')}"></label>
       <div class="summary" id="cb-sum"></div>
-      <p class="small muted">Chỉ cần chọn sản phẩm. Sản phẩm có nhiều loại (màu, chữ…) thì để "Chọn loại khi lên đơn": lúc tạo đơn bạn chọn loại cho từng combo. Combo không nhập kho riêng: giá vốn là tổng giá vốn các sản phẩm bên trong, bán combo trừ kho đúng loại đã chọn.</p>
+      <p class="small muted">Chỉ cần chọn sản phẩm. Sản phẩm có nhiều loại (màu, chữ…) thì để "Chọn loại khi lên đơn" (lúc tạo đơn bạn chọn loại cho từng combo), hoặc "Ngẫu nhiên" nếu loại nào cũng được và không cần chọn. Combo không nhập kho riêng: giá vốn là tổng giá vốn các sản phẩm bên trong, bán combo trừ kho đúng loại đã chọn.</p>
     </form>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="cb-save">Lưu combo</button>`,
     onMount(m) {
@@ -1954,7 +1955,7 @@ function openComboForm(existing) {
           const p = product(x.productId);
           return `<div class="combo-part" data-i="${i}">
             <select data-f="productId" aria-label="Sản phẩm">${options(pickable, x.productId, '— chọn sản phẩm —')}</select>
-            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">Chọn loại khi lên đơn</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>Luôn là ${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
+            ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">Chọn loại khi lên đơn</option><option value="__random" ${x.random ? 'selected' : ''}>Ngẫu nhiên (không cần chọn)</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>Luôn là ${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
             <input type="number" min="1" step="1" data-f="qty" value="${num(x.qty)}" aria-label="Số lượng" title="Số lượng trong 1 combo">
             <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ">✕</button>
           </div>`;
@@ -1973,7 +1974,8 @@ function openComboForm(existing) {
         if (row) {
           const x = parts[+row.dataset.i], f = e.target.dataset.f;
           x[f] = f === 'qty' ? num(e.target.value) : e.target.value;
-          if (f === 'productId') { x.variantId = ''; drawParts(); }
+          if (f === 'variantId') { x.random = x.variantId === '__random'; if (x.random) x.variantId = ''; }
+          if (f === 'productId') { x.variantId = ''; x.random = false; drawParts(); }
         }
         sync();
       });
@@ -1998,7 +2000,7 @@ function openComboForm(existing) {
         const d = formData(form);
         await store.upsert('products', {
           ...c, name: d.name.trim(), salePrice: num(d.salePrice), note: (d.note || '').trim(), baseCost: 0, variants: [],
-          combo: filled.map((x) => ({ productId: x.productId, variantId: x.variantId || '', qty: Math.max(1, Math.round(num(x.qty))) })),
+          combo: filled.map((x) => ({ productId: x.productId, variantId: x.variantId || '', ...(x.random && !x.variantId ? { random: true } : {}), qty: Math.max(1, Math.round(num(x.qty))) })),
         });
         m.close();
         toast('Đã lưu combo 🎁');
@@ -2035,7 +2037,7 @@ function openComboDetail(id) {
       <div class="vcards">
         ${rows.map((r) => `<div class="vcard ${r.sets === limit && limit <= 0 ? 'low' : ''}">
           ${thumb(variantOf(r.x.productId, r.x.variantId)?.image || r.part?.image, r.part?.name, '')}
-          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo${r.part && hasVariants(r.part) && !r.x.variantId ? ' · chọn loại khi lên đơn' : ''}</span></div>
+          <div class="vcard-name"><b>${esc(r.part ? itemLabel(r.x.productId, r.x.variantId) : '(sản phẩm đã xoá)')}</b><span class="muted small">× ${r.x.qty} mỗi combo${r.part && hasVariants(r.part) && !r.x.variantId ? (r.x.random ? ' · ngẫu nhiên' : ' · chọn loại khi lên đơn') : ''}</span></div>
           <div class="vcard-num"><span>Kho có</span><b>${r.have}</b>${r.sets === limit ? '<span class="chip warn">giới hạn</span>' : ''}</div>
           <div class="vcard-num"><span>Đủ cho</span><b>${r.sets} bộ</b></div>
         </div>`).join('')}

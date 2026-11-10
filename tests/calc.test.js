@@ -527,3 +527,34 @@ test('combo chọn loại khi lên đơn: mỗi combo một lựa chọn riêng,
   const { short } = orderShortages(big);
   assert.deepEqual(short[0].lines.map((l) => [l.productId, l.variantId, l.need, l.have, l.short]), [['chu', 'A', 3, 2, 1]]);
 });
+
+test('combo có món ngẫu nhiên: không cần chọn loại, trừ ở mức sản phẩm; nếu chọn thì trừ đúng loại', () => {
+  const imp = (itemId, variantId, qty) => ({ kind: 'product', itemId, variantId, qty, unitCost: 1000, extraFee: 0 });
+  const state = {
+    products: [
+      { id: 'cup', name: 'Cúp', variants: [{ id: 'do' }, { id: 'xanh' }] },
+      { id: 'moc', name: 'Móc ngẫu nhiên', variants: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }, { id: 'm4' }] },
+      { id: 'box', name: 'Box 1', salePrice: 1, combo: [{ productId: 'cup', variantId: '', qty: 1 }, { productId: 'moc', variantId: '', random: true, qty: 1 }] },
+    ],
+    packaging: [],
+    imports: [imp('cup', 'do', 5), imp('cup', 'xanh', 5), imp('moc', 'm1', 3), imp('moc', 'm2', 3), imp('moc', 'm3', 3), imp('moc', 'm4', 3)],
+    orders: [],
+  };
+  const combos = comboMap(state.products);
+  assert.equal(comboParts(state.products[2])[1].random, true);
+  // không chọn móc: trừ ở mức sản phẩm, cúp trừ theo loại đã chọn
+  const line = { productId: 'box', qty: 2, price: 1, picks: [['do', ''], ['xanh', '']] };
+  const lines = expandLine(line, combos);
+  assert.deepEqual(lines.map((l) => [l.productId, l.variantId, l.qty]).sort(), [['cup', 'do', 1], ['cup', 'xanh', 1], ['moc', '', 2]].sort());
+  const st = stockLevels({ ...state, orders: [{ id: 'o', code: 'A', date: '2026-11-01', status: 'pending', items: [line] }] });
+  assert.equal(st.products.moc, 10); // 12 - 2
+  assert.equal(st.variants['moc:m1'], 3); // chưa biết loại nào: không loại nào bị trừ
+  assert.equal(st.variants['cup:do'], 4);
+  // chọn thật loại móc cho 1 combo thì trừ đúng loại đó
+  const picked = expandLine({ productId: 'box', qty: 2, price: 1, picks: [['do', 'm2'], ['xanh', '']] }, combos);
+  assert.deepEqual(picked.map((l) => [l.productId, l.variantId, l.qty]).sort(), [['cup', 'do', 1], ['cup', 'xanh', 1], ['moc', '', 1], ['moc', 'm2', 1]].sort());
+  // thiếu hàng theo tổng móc (12), không theo từng loại
+  const big = { ...state, orders: [{ id: 'o2', code: 'B', date: '2026-11-01', status: 'pending', items: [{ productId: 'box', qty: 13, price: 1, picks: Array.from({ length: 13 }, () => ['do', '']) }] }] };
+  const { short } = orderShortages(big);
+  assert.deepEqual(short[0].lines.map((l) => [l.productId, l.variantId, l.short]).sort(), [['cup', 'do', 8], ['moc', '', 1]].sort());
+});

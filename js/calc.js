@@ -106,7 +106,8 @@ export function costTable(state) {
 }
 
 /**
- * A combo is a product made of other products: `combo: [{ productId, variantId?, qty }]`. It is sold
+ * A combo is a product made of other products: `combo: [{ productId, variantId?, random?, qty }]`. A part
+ * with `random` is a surprise pick among the product's variants: it needs no choice on the order. It is sold
  * like any product, but its cost and stock come from its parts. Parts must not be combos themselves.
  */
 export const comboParts = (p) => (p?.combo || []).filter((c) => c.productId && num(c.qty) > 0);
