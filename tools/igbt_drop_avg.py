@@ -57,6 +57,37 @@ def pick_file():
     return path
 
 
+def analyze(path, window=1.0, threshold=1.0, detect=SIGNALS[0], pick="first"):
+    """Tra ve dict: info ve drop/cua so va list hang (signal, mean, max, t_max). Loi -> ValueError."""
+    time, data, _, _ = load(path)
+    det = data.get(detect)
+    if det is None:
+        raise ValueError(f"detect phai la 1 trong {SIGNALS}")
+    drops = find_drops(det, threshold)
+    if not drops:
+        steps = min(det[k + 1] - det[k] for k in range(len(det) - 1))
+        raise ValueError(f"Khong tim thay drop >= {threshold}. Buoc giam lon nhat: {steps:.3f}. Thu giam threshold.")
+    if pick == "first":
+        k = drops[0]
+    elif pick == "last":
+        k = drops[-1]
+    else:
+        k = min(drops, key=lambda i: det[i + 1] - det[i])
+    t0 = time[k]
+    idx = [i for i, t in enumerate(time) if t0 - window <= t <= t0]
+    rows = []
+    for s in SIGNALS:
+        vals = [data[s][i] for i in idx]
+        m = max(vals)
+        rows.append((s, sum(vals) / len(vals), m, time[idx[vals.index(m)]]))
+    return {
+        "detect": detect, "v_before": det[k], "v_after": det[k + 1],
+        "t_drop": t0, "t_after": time[k + 1], "n_drops": len(drops),
+        "t_start": time[idx[0]], "t_end": time[idx[-1]], "n_samples": len(idx),
+        "rows": rows,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("file", nargs="?", help="file .tsv (bo trong -> mo hop thoai chon file)")
@@ -67,35 +98,17 @@ def main():
     a = ap.parse_args()
     if not a.file:
         a.file = pick_file()
-
-    time, data, _, _ = load(a.file)
-    det = data.get(a.detect)
-    if det is None:
-        sys.exit(f"--detect phai la 1 trong {SIGNALS}")
-
-    drops = find_drops(det, a.threshold)
-    if not drops:
-        steps = min(det[k + 1] - det[k] for k in range(len(det) - 1))
-        sys.exit(f"Khong tim thay drop >= {a.threshold}. Buoc giam lon nhat: {steps:.3f}. Thu giam --threshold.")
-
-    if a.pick == "first":
-        k = drops[0]
-    elif a.pick == "last":
-        k = drops[-1]
-    else:
-        k = min(drops, key=lambda i: det[i + 1] - det[i])
-
-    t0 = time[k]
-    idx = [i for i, t in enumerate(time) if t0 - a.window <= t <= t0]
-    print(f"Drop tren {a.detect}: {det[k]:.3f} -> {det[k+1]:.3f} "
-          f"(t={t0:.3f}s -> {time[k+1]:.3f}s), tim thay {len(drops)} drop >= {a.threshold}")
-    print(f"Cua so: [{time[idx[0]]:.3f}s, {time[idx[-1]]:.3f}s], {len(idx)} sample\n")
+    try:
+        r = analyze(a.file, a.window, a.threshold, a.detect, a.pick)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"Drop tren {r['detect']}: {r['v_before']:.3f} -> {r['v_after']:.3f} "
+          f"(t={r['t_drop']:.3f}s -> {r['t_after']:.3f}s), tim thay {r['n_drops']} drop >= {a.threshold}")
+    print(f"Cua so: [{r['t_start']:.3f}s, {r['t_end']:.3f}s], {r['n_samples']} sample\n")
     print(f"{'Signal':<24}{'Mean':>10}{'Max':>10}{'t(Max)':>11}")
-    for s in SIGNALS:
-        vals = [data[s][i] for i in idx]
-        m = max(vals)
-        t_max = time[idx[vals.index(m)]]
-        print(f"{s:<24}{sum(vals)/len(vals):>10.4f}{m:>10.4f}{t_max:>10.3f}s")
+    for s, mean, m, tm in r["rows"]:
+        print(f"{s:<24}{mean:>10.4f}{m:>10.4f}{tm:>10.3f}s")
+
 
 if __name__ == "__main__":
     main()
