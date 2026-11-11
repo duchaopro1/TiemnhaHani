@@ -170,7 +170,7 @@ function render() {
       <button type="button" class="live-btn" id="live-btn" data-action="refresh-now" hidden></button>
       ${shortages.short.length ? `<button type="button" class="short-btn" data-action="show-short" title="Xem các đơn đang thiếu hàng">⚠ ${shortages.short.length} đơn thiếu hàng</button>` : ''}
     </header>
-    <main>${pages[tab]()}</main>`;
+    <main class="${tab === 'orders' ? 'wide' : ''}">${pages[tab]()}</main>`;
   updateSyncBadge({ pending: store.pending, error: store.lastError });
   updateLiveBadge(store.liveInfo());
   fitRevenueTable();
@@ -688,7 +688,8 @@ function pageOrders() {
       <span class="muted small" style="margin-left:auto">${list.length} đơn · DT ${money(agg.revenue)} · Lãi <b class="${signCls(agg.profit)}">${money(agg.profit)}</b></span>
     </div>
     <div class="card table-wrap">
-      ${list.length ? `<table>
+      ${list.length ? `<table class="orders-table">
+        <colgroup><col style="width:80px"><col style="width:84px"><col style="width:130px"><col><col style="width:84px"><col style="width:84px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
         <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody>${list.map(orderRow).join('')}</tbody>
       </table>` : '<div class="empty">Chưa có đơn nào. Bấm “＋ Thêm đơn” hoặc nhập file Shopee.</div>'}

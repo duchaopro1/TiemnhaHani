@@ -637,3 +637,14 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .quick-name { display: flex; flex-direction: column; min-width: 0; }
 .quick-row input { text-align: center; font-weight: 700; }
 .quick-sum { min-height: 22px; }
+
+/* orders table: the product column takes the room, the number columns stay narrow */
+.orders-table { table-layout: fixed; width: 100%; min-width: 1060px; }
+.orders-table th, .orders-table td { padding-left: 8px; padding-right: 8px; overflow-wrap: anywhere; }
+.orders-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }
+.orders-table td.num { white-space: normal; }
+.orders-table .chip { white-space: nowrap; }
+.orders-table .st-btn { min-width: 0; width: 100%; padding: 5px 8px; font-size: 12px; gap: 4px; }
+
+/* the orders table can use a wider page on big screens */
+main.wide { max-width: min(1560px, 100%); }
