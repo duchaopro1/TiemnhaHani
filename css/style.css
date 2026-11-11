@@ -676,3 +676,11 @@ main.wide { max-width: min(1560px, 100%); }
 .cat-move { display: inline-flex; flex-direction: column; }
 .cat-move .icon-btn { padding: 1px 8px; line-height: 1.2; font-size: 13px; }
 .cat-move .icon-btn:disabled { opacity: .3; cursor: default; }
+
+/* categories that are no longer sold */
+.ptile.ended { filter: grayscale(.85); opacity: .72; }
+.ptile.ended:hover { filter: grayscale(.4); opacity: 1; }
+.cat-ended { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.cat-ended input { width: auto; margin: 0; }
+.cat-row { grid-template-columns: auto 1fr auto auto auto; }
+.psec-title .chip { font-size: 12px; vertical-align: middle; }

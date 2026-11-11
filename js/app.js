@@ -142,6 +142,12 @@ const categoryList = () => {
   }
   return out;
 };
+/**
+ * A category can be marked "hết bán" (no longer sold): its products stay on the products page but are left out
+ * when an order is made. Until the shop picks which categories those are, one named "Hết bán" counts as such.
+ */
+const isEndedCat = (name) => (settings.endedCategories ? settings.endedCategories.includes(name) : normalize(name) === 'het ban');
+const isEndedProduct = (p) => !isCombo(p) && !!(p?.group || '').trim() && isEndedCat(p.group.trim());
 const catLabel = (k) => (k === CAT_COMBO ? 'Combo' : k === CAT_NONE ? 'Chưa phân danh mục' : k);
 /** Every category key in use, in display order: named ones, then products with none, then combos. */
 const categoryKeys = () => [...categoryList(), ...(S.products.some((p) => catKey(p) === CAT_NONE) ? [CAT_NONE] : []), ...(S.products.some(isCombo) ? [CAT_COMBO] : [])];
@@ -232,7 +238,7 @@ window.addEventListener('resize', fitRevenueTable);
  * `onAdd({ product, rows: [{ variantId, qty }] })` gets the variants with a quantity.
  */
 function openQuickAdd(onAdd) {
-  const prods = S.products.filter((p) => !isCombo(p) && hasVariants(p));
+  const prods = S.products.filter((p) => !isCombo(p) && hasVariants(p) && !isEndedProduct(p));
   if (!prods.length) return notify('Chưa có sản phẩm nào có nhiều loại (màu, chữ…).');
   let pid = ui.quickProduct && prods.some((p) => p.id === ui.quickProduct) ? ui.quickProduct : prods[0].id;
   const qty = {}; // variantId -> quantity typed
@@ -595,7 +601,7 @@ function pageDashboard() {
   const maxRev = Math.max(1, ...Object.values(agg.byPlatform).map((p) => p.revenue));
   const top = Object.entries(agg.byProduct).sort((a, b) => b[1].profit - a[1].profit).slice(0, 8);
   // Products with variants are checked colour by colour, others by their total.
-  const lowP = S.products.filter((p) => !isCombo(p)).flatMap((p) => (hasVariants(p)
+  const lowP = S.products.filter((p) => !isCombo(p) && !isEndedProduct(p)).flatMap((p) => (hasVariants(p)
     ? p.variants.filter((v) => vStock(p.id, v.id) <= lowOf(p)).map((v) => ({ p, v, n: vStock(p.id, v.id) }))
     : num(stock.products[p.id]) <= lowOf(p) ? [{ p, n: num(stock.products[p.id]) }] : []));
   const lowK = S.packaging.filter((k) => num(stock.packaging[k.id]) <= lowOf(k));
@@ -893,7 +899,7 @@ function openOrderFormNow(existing, restored) {
     <div class="line" data-line="${i}">
       <div class="field">
         <label class="field">Sản phẩm
-          ${hasCatPicker() ? `<select data-f="cat" aria-label="Danh mục sản phẩm"><option value="">— chọn danh mục —</option>${categoryKeys().map((k) => `<option value="${esc(k)}" ${k === lineCat(l) ? 'selected' : ''}>${esc(catLabel(k))}</option>`).join('')}</select>` : ''}
+          ${hasCatPicker() ? `<select data-f="cat" aria-label="Danh mục sản phẩm"><option value="">— chọn danh mục —</option>${categoryKeys().filter((k) => k === lineCat(l) || !(k !== CAT_NONE && k !== CAT_COMBO && isEndedCat(k))).map((k) => `<option value="${esc(k)}" ${k === lineCat(l) ? 'selected' : ''}>${esc(catLabel(k))}</option>`).join('')}</select>` : ''}
           ${needsCategory(l)
             ? '<select data-f="productId" disabled aria-label="Sản phẩm"><option value="">— chọn danh mục trước —</option></select>'
             : `<select data-f="productId">${productOptionsHtml(lineCat(l) ? S.products.filter((q) => catKey(q) === lineCat(l) || q.id === l.productId) : S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>`}
@@ -2063,23 +2069,25 @@ function pageProducts() {
         : `<div class="card empty">${S.products.some((p) => !isCombo(p)) ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
     </section>`;
     }
-    const keys = [...categoryList(), CAT_NONE];
+    const named = categoryList();
+    // categories no longer sold go to the bottom of the page, after the products with no category
+    const keys = [...named.filter((k) => !isEndedCat(k)), CAT_NONE, ...named.filter(isEndedCat)];
     return keys.map((k) => {
       const inCat = plain.filter((p) => catKey(p) === k);
       const total = S.products.filter((p) => !isCombo(p) && catKey(p) === k).length;
       if (k === CAT_NONE && !inCat.length) return '';
       if (q && !inCat.length) return ''; // searching: hide the categories with no match
       return `<section class="psec" aria-labelledby="psec-${esc(k)}">
-        <h2 class="psec-title" id="psec-${esc(k)}">${esc(catLabel(k))} <span class="psec-count">${inCat.length}</span></h2>
+        <h2 class="psec-title" id="psec-${esc(k)}">${esc(catLabel(k))} <span class="psec-count">${inCat.length}</span>${k !== CAT_NONE && isEndedCat(k) ? ' <span class="chip out" title="Không hiện khi lên đơn mới">Hết bán · ẩn khi lên đơn</span>' : ''}</h2>
         ${inCat.length ? `<div class="ptiles">${inCat.map(tile).join('')}</div>` : `<div class="card empty">${total ? 'Không có sản phẩm khớp tìm kiếm.' : 'Danh mục này chưa có sản phẩm. Mở một sản phẩm, bấm Sửa rồi chọn danh mục.'}</div>`}
       </section>`;
     }).join('');
   };
 
-  const tile = (p) => `<button class="ptile tone-${toneOf(p)}" data-action="open-product" data-id="${p.id}">
+  const tile = (p) => `<button class="ptile tone-${toneOf(p)} ${isEndedProduct(p) ? 'ended' : ''}" data-action="open-product" data-id="${p.id}">
       <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
       <span class="ptile-name">${esc(p.name)}</span>
-      ${tileFlag(p)}
+      ${isEndedProduct(p) ? '' : tileFlag(p)}
       ${isCombo(p) ? `<span class="chip him ptile-combo">Combo · ${comboParts(p).length} món</span>` : ''}
     </button>`;
 
@@ -2361,7 +2369,7 @@ async function moveVariantHistory(productId, moves) {
 
 /** Add, rename and delete categories. Renaming moves the products with it; deleting leaves them without a category. */
 function openCategoryDialog() {
-  const rows = categoryList().map((name) => ({ orig: name, name, gone: false }));
+  const rows = categoryList().map((name) => ({ orig: name, name, gone: false, ended: isEndedCat(name) }));
   const d = document.createElement('dialog');
   d.className = 'confirm wrap-dialog';
   const countOf = (g) => S.products.filter((q) => !isCombo(q) && (q.group || '').trim() === g).length;
@@ -2371,15 +2379,22 @@ function openCategoryDialog() {
       <p class="small muted" style="margin:0 0 10px">Chia sản phẩm theo nhóm (VD: Móc khóa gồm móc khóa in ảnh, chữ cái, ngôi sao). Khi lên đơn bạn chọn danh mục trước, rồi chọn sản phẩm trong danh mục đó. Combo luôn là một danh mục riêng.</p>
       <div class="cat-list">${(() => {
         const shown = rows.map((r, i) => [r, i]).filter(([r]) => !r.gone);
-        return shown.map(([r, i], pos) => `<div class="cat-row"><span class="cat-move"><button type="button" class="icon-btn" data-catup="${i}" title="Đưa lên" aria-label="Đưa ${esc(r.name)} lên" ${pos === 0 ? 'disabled' : ''}>▲</button><button type="button" class="icon-btn" data-catdown="${i}" title="Đưa xuống" aria-label="Đưa ${esc(r.name)} xuống" ${pos === shown.length - 1 ? 'disabled' : ''}>▼</button></span><input data-cat="${i}" value="${esc(r.name)}" aria-label="Tên danh mục"><span class="small muted">${r.orig ? `${countOf(r.orig)} sản phẩm` : 'mới'}</span><button type="button" class="icon-btn del" data-catdel="${i}" title="Xoá danh mục (sản phẩm giữ lại, chưa phân danh mục)">🗑</button></div>`).join('') || '<div class="empty">Chưa có danh mục nào.</div>';
+        return shown.map(([r, i], pos) => `<div class="cat-row"><span class="cat-move"><button type="button" class="icon-btn" data-catup="${i}" title="Đưa lên" aria-label="Đưa ${esc(r.name)} lên" ${pos === 0 ? 'disabled' : ''}>▲</button><button type="button" class="icon-btn" data-catdown="${i}" title="Đưa xuống" aria-label="Đưa ${esc(r.name)} xuống" ${pos === shown.length - 1 ? 'disabled' : ''}>▼</button></span><input data-cat="${i}" value="${esc(r.name)}" aria-label="Tên danh mục"><span class="small muted">${r.orig ? `${countOf(r.orig)} sản phẩm` : 'mới'}</span><label class="cat-ended" title="Sản phẩm trong danh mục này không hiện khi lên đơn mới"><input type="checkbox" data-catend="${i}" ${r.ended ? 'checked' : ''}> Hết bán</label><button type="button" class="icon-btn del" data-catdel="${i}" title="Xoá danh mục (sản phẩm giữ lại, chưa phân danh mục)">🗑</button></div>`).join('') || '<div class="empty">Chưa có danh mục nào.</div>';
       })()}</div>
-      <button type="button" class="btn ghost sm" id="cat-add" style="margin-top:8px">＋ Thêm danh mục</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn ghost sm" id="cat-add">＋ Thêm danh mục</button>${rows.some((r) => !r.gone && r.ended) ? '' : '<button type="button" class="btn ghost sm" id="cat-add-ended" title="Danh mục để cất sản phẩm không còn bán">＋ Danh mục Hết bán</button>'}</div>
+      <p class="small muted" style="margin:8px 0 0">Tích <b>Hết bán</b> cho danh mục chứa sản phẩm không còn bán: các sản phẩm đó vẫn ở trang Sản phẩm nhưng không hiện khi lên đơn mới.</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn" value="save">Lưu</button></div>`;
   };
   d.addEventListener('input', (e) => { if (e.target.dataset.cat !== undefined) rows[+e.target.dataset.cat].name = e.target.value; });
+  d.addEventListener('change', (e) => { if (e.target.dataset.catend !== undefined) { rows[+e.target.dataset.catend].ended = e.target.checked; draw(); } });
   d.addEventListener('click', (e) => {
-    if (e.target.id === 'cat-add') { rows.push({ orig: '', name: '', gone: false }); draw(); $$('.cat-row input', d).at(-1)?.focus(); return; }
+    if (e.target.id === 'cat-add') { rows.push({ orig: '', name: '', gone: false, ended: false }); draw(); $$('.cat-row input[data-cat]', d).at(-1)?.focus(); return; }
+    if (e.target.id === 'cat-add-ended') {
+      rows.push({ orig: '', name: rows.some((r) => !r.gone && r.name.trim() === 'Hết bán') ? 'Hết bán 2' : 'Hết bán', gone: false, ended: true });
+      draw();
+      return;
+    }
     const del = e.target.closest('[data-catdel]');
     if (del) { rows[+del.dataset.catdel].gone = true; draw(); return; }
     // reorder: swap with the next row still shown (rows deleted in this session are skipped)
@@ -2412,7 +2427,7 @@ function openCategoryDialog() {
       const touched = S.products.filter((q) => !isCombo(q) && ((q.group && renames.has(q.group)) || removed.has(q.group)))
         .map((q) => ({ ...q, group: removed.has(q.group) ? '' : renames.get(q.group) }));
       if (touched.length) await store.upsertMany('products', touched);
-      await store.upsert('meta', { ...settings, categories: live.map((r) => r.name.trim()) });
+      await store.upsert('meta', { ...settings, categories: live.map((r) => r.name.trim()), endedCategories: live.filter((r) => r.ended).map((r) => r.name.trim()) });
       toast('Đã lưu danh mục');
     }
     d.remove();
