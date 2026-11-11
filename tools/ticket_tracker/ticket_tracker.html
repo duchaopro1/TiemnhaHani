@@ -52,7 +52,8 @@ label.chk{display:inline-flex;gap:6px;align-items:center;color:var(--muted);curs
 .stack span{display:block;height:100%}
 .badges{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;min-height:20px}
 .pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--card2);border:1px solid var(--border);color:var(--muted)}
-.pill.urgent{color:#fca5a5;border-color:#7f1d1d;background:#3b1219} .pill.over{color:#fcd34d;border-color:#78350f;background:#2d1f0a}
+.pill.urgent{color:#fca5a5;border-color:#7f1d1d;background:#3b1219} .pill.stale{color:#c4b5fd;border-color:#4c1d95;background:#1e1536}
+.pill.over{color:#fcd34d;border-color:#78350f;background:#2d1f0a}
 /* status bars */
 .sbars{display:grid;gap:6px}
 .sb{display:grid;grid-template-columns:150px 1fr 40px;gap:10px;align-items:center;cursor:pointer;padding:2px 4px;border-radius:6px}
@@ -128,7 +129,8 @@ dialog::backdrop{background:rgba(2,6,23,.7)}
     <div class="members" id="members"></div>
 
     <div class="two">
-      <div class="card"><h2>Open tickets by status <span class="hint">(click to filter)</span></h2><div class="sbars" id="sbars"></div></div>
+      <div class="card"><h2>Open tickets by status <span class="hint">(click to filter)</span></h2><div class="sbars" id="sbars"></div>
+        <h2 style="margin-top:16px">Open tickets by project <span class="hint">(click to filter)</span></h2><div class="sbars" id="pbars"></div></div>
       <div class="card export">
         <h2 style="margin-bottom:8px">Export for chat <span class="hint">&ndash; uses the current filters</span></h2>
         <div class="row">
@@ -138,7 +140,7 @@ dialog::backdrop{background:rgba(2,6,23,.7)}
             <option value="markdown">Markdown table</option>
             <option value="csv">CSV (Excel)</option>
           </select>
-          <label class="chk"><input type="checkbox" id="extra"> add status &amp; priority</label>
+          <label class="chk"><input type="checkbox" id="extra"> add status &amp; project</label>
         </div>
         <textarea id="preview" readonly spellcheck="false"></textarea>
         <div class="row" style="margin:10px 0 0">
@@ -166,6 +168,10 @@ dialog::backdrop{background:rgba(2,6,23,.7)}
     <div>
       <div class="hint" style="margin-bottom:6px">Columns (auto-detected from the CSV header &ndash; change if wrong)</div>
       <div class="grid2" id="colmap"></div>
+    </div>
+    <div>
+      <div class="hint" style="margin-bottom:6px">Display names &ndash; Jira exports usernames. One per line: <code>username = Full name</code> (saved in this browser)</div>
+      <textarea id="names" rows="5" style="width:100%" placeholder="nhannn4 = Nguyen Ngoc Nhan&#10;toannd32 = Nguyen Duc Toan"></textarea>
     </div>
     <div>
       <div class="hint" style="margin-bottom:6px">Statuses that count as <b>open</b> (untick the ones that mean finished)</div>
@@ -213,11 +219,13 @@ const FIELDS = {
   due:      {label: "Due date",     names: ["due date", "due", "duedate", "ngày hết hạn", "hạn chót"]},
   type:     {label: "Issue type",   names: ["issue type", "type", "loại vấn đề"]},
   category: {label: "Status category", names: ["status category", "statuscategory"]},
+  project:  {label: "Project",     names: ["project key", "project", "project name", "dự án"]},
+  created:  {label: "Created",     names: ["created", "ngày tạo"]},
 };
 const state = {
   data: null, fileName: "", map: {}, tickets: [], override: store.get("override", {}),
   baseUrl: store.get("baseUrl", "https://tms.vinfast.vn/browse/"),
-  selMembers: new Set(), selStatus: new Set(), q: "", mq: "", showDone: false, sort: {k: "prio", dir: 1},
+  selMembers: new Set(), selStatus: new Set(), selProject: new Set(), names: store.get("names", {}), q: "", mq: "", showDone: false, sort: {k: "prio", dir: 1},
   colors: {}
 };
 const DONE_RE = /^(done|closed|resolved|complete[d]?|cancel+ed|rejected|fixed|verified|released|duplicate|obsolete|won'?t (do|fix)|hoàn thành|đã đóng|đóng|hủy|đã hủy)$/i;
@@ -251,7 +259,7 @@ function loadText(text, name) {
   const rows = parseCSV(text);
   if (rows.length < 2) throw new Error("The file has no data rows.");
   state.data = rows; state.fileName = name; state.map = detect(rows[0]);
-  state.selMembers.clear(); state.selStatus.clear(); state.q = ""; $("#search").value = "";
+  state.selMembers.clear(); state.selStatus.clear(); state.selProject.clear(); state.q = ""; $("#search").value = "";
   build();
   const miss = ["key", "summary", "assignee", "status"].filter(f => state.map[f] == null);
   show(); if (miss.length) openSettings();
@@ -260,11 +268,15 @@ function build() {
   const rows = state.data.slice(1), m = state.map;
   const g = (r, f) => (m[f] != null && r[m[f]] != null ? r[m[f]].trim() : "");
   state.tickets = rows.map(r => {
-    const t = {key: g(r, "key"), summary: g(r, "summary").replace(/\s*[\r\n]+\s*/g, " "), assignee: g(r, "assignee") || "Unassigned",
+    const rawUser = g(r, "assignee");
+    const t = {key: g(r, "key"), summary: g(r, "summary").replace(/\s*[\r\n]+\s*/g, " "), assignee: rawUser ? (state.names[rawUser.toLowerCase()] || rawUser) : "Unassigned",
       status: g(r, "status") || "(no status)", priority: g(r, "priority"), type: g(r, "type"),
-      due: parseDate(g(r, "due")), cat: g(r, "category")};
+      due: parseDate(g(r, "due")), cat: g(r, "category"), project: g(r, "project") || "–", created: parseDate(g(r, "created"))};
+    t.age = t.created ? Math.max(0, Math.floor((today() - t.created) / 864e5)) : null;
     t.rank = prank(t.priority); return t;
   }).filter(t => t.key);
+  state.multiPrio = new Set(state.tickets.map(t => t.priority)).size > 1;
+  if (!state.sortTouched) state.sort = state.multiPrio ? {k: "prio", dir: 1} : {k: "age", dir: -1};
   const sts = [...new Set(state.tickets.map(t => t.status))].sort();
   state.colors = {}; sts.forEach((s, i) => state.colors[s] = PALETTE[i % PALETTE.length]);
   state.doneSet = new Set();
@@ -286,7 +298,8 @@ function baseSet() {
 }
 const byMember = t => !state.selMembers.size || state.selMembers.has(t.assignee);
 const byStatus = t => !state.selStatus.size || state.selStatus.has(t.status);
-const viewSet = () => baseSet().filter(t => byMember(t) && byStatus(t));
+const byProject = t => !state.selProject.size || state.selProject.has(t.project);
+const viewSet = () => baseSet().filter(t => byMember(t) && byStatus(t) && byProject(t));
 
 /* ------------------------------------------------------------------ render */
 function initials(n) { const w = n.trim().split(/\s+/); return (w.length > 1 ? w[0][0] + w[w.length - 1][0] : n.slice(0, 2)).toUpperCase(); }
@@ -295,54 +308,63 @@ function hue(n) { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) %
 function renderKPIs(base, view) {
   const people = new Set(base.map(t => t.assignee));
   const k = [
-    ["Tickets" + (state.selMembers.size || state.selStatus.size ? " (filtered)" : ""), view.length, "var(--accent-hi)"],
+    ["Tickets" + (state.selMembers.size || state.selStatus.size || state.selProject.size ? " (filtered)" : ""), view.length, "var(--accent-hi)"],
     ["Team members", people.size, "var(--info)"],
-    ["Urgent (High+)", view.filter(t => t.rank <= 2).length, "var(--bad)"],
-    ["Overdue", view.filter(isOver).length, "var(--warn)"],
+    state.multiPrio ? ["Urgent (High+)", view.filter(t => t.rank <= 2).length, "var(--bad)"]
+      : ["Stale (> 30 days)", view.filter(t => t.age != null && t.age > 30).length, "var(--bad)"],
+    ["Overdue (past due date)", view.filter(isOver).length, "var(--warn)"],
     ["Unassigned", base.filter(t => t.assignee === "Unassigned").length, "var(--muted)"],
   ];
   $("#kpis").innerHTML = k.map(([l, n, c]) => `<div class="kpi"><i style="background:${c}"></i><div><b>${n}</b><span>${esc(l)}</span></div></div>`).join("");
 }
 function renderMembers(base) {
   const g = new Map();
-  for (const t of base.filter(byStatus)) { if (!g.has(t.assignee)) g.set(t.assignee, []); g.get(t.assignee).push(t); }
+  for (const t of base.filter(t => byStatus(t) && byProject(t))) { if (!g.has(t.assignee)) g.set(t.assignee, []); g.get(t.assignee).push(t); }
   const mq = state.mq.toLowerCase();
   const list = [...g.entries()].filter(([n]) => !mq || n.toLowerCase().includes(mq)).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
   $("#members").innerHTML = list.length ? list.map(([n, ts]) => {
     const cnt = {}; ts.forEach(t => cnt[t.status] = (cnt[t.status] || 0) + 1);
     const seg = Object.entries(cnt).map(([s, c]) => `<span title="${esc(s)}: ${c}" style="width:${c / ts.length * 100}%;background:${state.colors[s]}"></span>`).join("");
-    const urg = ts.filter(t => t.rank <= 2).length, ov = ts.filter(isOver).length;
+    const urg = state.multiPrio ? ts.filter(t => t.rank <= 2).length : 0, ov = ts.filter(isOver).length;
+    const stale = ts.filter(t => t.age != null && t.age > 30).length;
     return `<button class="mcard ${state.selMembers.has(n) ? "sel" : ""}" data-m="${esc(n)}">
       <div class="av" style="background:hsl(${hue(n)} 55% 42%)">${esc(initials(n))}</div>
       <div><div class="mn" title="${esc(n)}">${esc(n)}</div><div class="mc"><b>${ts.length}</b> ticket${ts.length === 1 ? "" : "s"}</div></div>
       <div class="stack">${seg}</div>
-      <div class="badges">${urg ? `<span class="pill urgent">&#9650; ${urg} urgent</span>` : ""}${ov ? `<span class="pill over">&#9200; ${ov} overdue</span>` : ""}</div>
+      <div class="badges">${urg ? `<span class="pill urgent">&#9650; ${urg} urgent</span>` : ""}${ov ? `<span class="pill over">&#9200; ${ov} overdue</span>` : ""}${stale ? `<span class="pill stale">&#8987; ${stale} &gt; 30d</span>` : ""}</div>
     </button>`;
   }).join("") : `<div class="empty card" style="grid-column:1/-1">No members match.</div>`;
 }
-function renderStatus(base) {
-  const sc = {}; base.filter(byMember).forEach(t => sc[t.status] = (sc[t.status] || 0) + 1);
+function bars(id, field, sel, filt) {
+  const sc = {}; state._base.filter(filt).forEach(t => sc[t[field]] = (sc[t[field]] || 0) + 1);
   const ent = Object.entries(sc).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...ent.map(e => e[1]));
-  $("#sbars").innerHTML = ent.length ? ent.map(([s, c]) => `<div class="sb ${state.selStatus.has(s) ? "sel" : ""}" data-s="${esc(s)}">
-    <span class="nm" title="${esc(s)}">${esc(s)}</span><span class="track"><i style="width:${c / max * 100}%;background:${state.colors[s]}"></i></span><span class="n">${c}</span></div>`).join("")
+  $(id).innerHTML = ent.length ? ent.map(([s, c]) => `<div class="sb ${sel.has(s) ? "sel" : ""}" data-v="${esc(s)}">
+    <span class="nm" title="${esc(s)}">${esc(s)}</span><span class="track"><i style="width:${c / max * 100}%;background:${field === "status" ? state.colors[s] : "var(--accent-hi)"}"></i></span><span class="n">${c}</span></div>`).join("")
     : `<div class="empty">No tickets.</div>`;
 }
-const COLS = [["key", "ID"], ["summary", "Summary"], ["assignee", "Assignee"], ["status", "Status"], ["prio", "Priority"], ["due", "Due"]];
+function renderStatus(base) {
+  state._base = base;
+  bars("#sbars", "status", state.selStatus, t => byMember(t) && byProject(t));
+  bars("#pbars", "project", state.selProject, t => byMember(t) && byStatus(t));
+}
+const colsNow = () => [["key", "ID"], ["summary", "Summary"], ["assignee", "Assignee"], ["project", "Project"], ["status", "Status"]]
+  .concat(state.multiPrio ? [["prio", "Priority"]] : [], [["age", "Age (days)"], ["due", "Due"]]);
 function sortSet(a) {
   const {k, dir} = state.sort, cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
-  const val = t => k === "prio" ? t.rank : k === "due" ? (t.due ? +t.due : 9e15) : (t[k] || "").toLowerCase();
+  const val = t => k === "prio" ? t.rank : k === "due" ? (t.due ? +t.due : 9e15) : k === "age" ? (t.age == null ? -1 : t.age) : (t[k] || "").toLowerCase();
   return a.slice().sort((x, y) => dir * cmp(val(x), val(y)) || cmp(x.key, y.key));
 }
 function renderTable(view) {
-  $("#thead").innerHTML = COLS.map(([k, l]) => `<th data-k="${k}">${l}${state.sort.k === k ? (state.sort.dir > 0 ? " &#9650;" : " &#9660;") : ""}</th>`).join("");
+  $("#thead").innerHTML = colsNow().map(([k, l]) => `<th data-k="${k}">${l}${state.sort.k === k ? (state.sort.dir > 0 ? " &#9650;" : " &#9660;") : ""}</th>`).join("");
   const LIM = 500, rows = sortSet(view);
   $("#tbody").innerHTML = rows.slice(0, LIM).map(t => `<tr>
     <td><a href="${esc(link(t))}" target="_blank" rel="noopener">${esc(t.key)}</a></td>
-    <td class="sum">${esc(t.summary)}</td><td>${esc(t.assignee)}</td>
+    <td class="sum">${esc(t.summary)}</td><td>${esc(t.assignee)}</td><td>${esc(t.project)}</td>
     <td><span class="tag" style="background:${state.colors[t.status]}">${esc(t.status)}</span></td>
-    <td class="prio p${Math.round(t.rank)}">${esc(t.priority || "–")}</td>
+    ${state.multiPrio ? `<td class="prio p${Math.round(t.rank)}">${esc(t.priority || "–")}</td>` : ""}
+    <td class="${t.age > 30 ? "over-txt" : ""}">${t.age == null ? "–" : t.age}</td>
     <td class="${isOver(t) ? "over-txt" : ""}">${t.due ? t.due.toLocaleDateString("en-GB") : "–"}${isOver(t) ? " &#9200;" : ""}</td></tr>`).join("")
-    || `<tr><td colspan="6" class="empty">No tickets match the current filters.</td></tr>`;
+    || `<tr><td colspan="8" class="empty">No tickets match the current filters.</td></tr>`;
   $("#tinfo").textContent = `${view.length} ticket${view.length === 1 ? "" : "s"}` + (view.length > LIM ? ` (showing first ${LIM} – export has all)` : "");
 }
 
@@ -350,7 +372,7 @@ function renderTable(view) {
 const link = t => state.baseUrl.replace(/\/*$/, "/") + encodeURIComponent(t.key);
 function exportText(view) {
   const fmt = $("#fmt").value, extra = $("#extra").checked;
-  const ex = t => extra ? ` [${t.status}${t.priority ? " · " + t.priority : ""}]` : "";
+  const ex = t => extra ? ` [${t.status} · ${t.project}${state.multiPrio && t.priority ? " · " + t.priority : ""}]` : "";
   const sorted = view.slice().sort((a, b) => a.assignee.localeCompare(b.assignee) || a.rank - b.rank || a.key.localeCompare(b.key, undefined, {numeric: true}));
   const groups = new Map(); sorted.forEach(t => { if (!groups.has(t.assignee)) groups.set(t.assignee, []); groups.get(t.assignee).push(t); });
   if (!sorted.length) return "";
@@ -365,7 +387,7 @@ function exportText(view) {
     return "| Name | ID | Summary | Link |\n|---|---|---|---|\n" + sorted.map(t => `| ${c(t.assignee)} | ${t.key} | ${c(t.summary + ex(t))} | ${link(t)} |`).join("\n");
   }
   const q = s => '"' + String(s).replace(/"/g, '""') + '"';
-  return ["Name,Ticket ID,Summary,Status,Priority,Link"].concat(sorted.map(t => [t.assignee, t.key, t.summary, t.status, t.priority, link(t)].map(q).join(","))).join("\r\n");
+  return ["Name,Ticket ID,Summary,Project,Status,Priority,Age (days),Link"].concat(sorted.map(t => [t.assignee, t.key, t.summary, t.project, t.status, t.priority, t.age == null ? "" : t.age, link(t)].map(q).join(","))).join("\r\n");
 }
 function renderExport(view) {
   const txt = exportText(view);
@@ -375,7 +397,7 @@ function renderExport(view) {
 }
 
 function render() {
-  const base = baseSet(), view = base.filter(t => byMember(t) && byStatus(t));
+  const base = baseSet(), view = base.filter(t => byMember(t) && byStatus(t) && byProject(t));
   renderKPIs(base, view); renderMembers(base); renderStatus(base); renderTable(view); renderExport(view);
 }
 function show() {
@@ -387,6 +409,7 @@ function show() {
 /* ------------------------------------------------------------------ settings */
 function openSettings() {
   $("#baseUrl").value = state.baseUrl;
+  $("#names").value = Object.entries(state.names).map(([k, v]) => k + " = " + v).join("\n");
   const hdr = state.data[0];
   $("#colmap").innerHTML = Object.entries(FIELDS).map(([f, d]) =>
     `<span>${d.label}</span><select data-f="${f}"><option value="">(none)</option>` +
@@ -397,7 +420,11 @@ function openSettings() {
 }
 $("#dlg").addEventListener("change", e => {
   const t = e.target;
-  if (t.id === "baseUrl") { state.baseUrl = t.value.trim() || "https://tms.vinfast.vn/browse/"; store.set("baseUrl", state.baseUrl); }
+  if (t.id === "names") {
+    state.names = {};
+    t.value.split(/\r?\n/).forEach(l => { const m = l.match(/^\s*([^=]+?)\s*=\s*(.+?)\s*$/); if (m) state.names[m[1].toLowerCase()] = m[2]; });
+    store.set("names", state.names); state.selMembers.clear(); build();
+  } else if (t.id === "baseUrl") { state.baseUrl = t.value.trim() || "https://tms.vinfast.vn/browse/"; store.set("baseUrl", state.baseUrl); }
   else if (t.dataset.f) { state.map[t.dataset.f] = t.value === "" ? null : +t.value; const ov = state.override; build(); refreshStList(); }
   else if (t.dataset.st) { state.override[t.dataset.st] = t.checked ? "open" : "done"; store.set("override", state.override); build(); }
   $("#fileinfo").textContent = `${state.fileName} · ${state.tickets.length} rows`; render();
@@ -424,18 +451,20 @@ $("#members").onclick = e => {
   const b = e.target.closest(".mcard"); if (!b) return; const n = b.dataset.m;
   state.selMembers.has(n) ? state.selMembers.delete(n) : state.selMembers.add(n); render();
 };
-$("#sbars").onclick = e => {
-  const b = e.target.closest(".sb"); if (!b) return; const s = b.dataset.s;
-  state.selStatus.has(s) ? state.selStatus.delete(s) : state.selStatus.add(s); render();
+const barClick = set => e => {
+  const b = e.target.closest(".sb"); if (!b) return; const v = b.dataset.v;
+  set().has(v) ? set().delete(v) : set().add(v); render();
 };
-$("#btnClearSel").onclick = () => { state.selMembers.clear(); state.selStatus.clear(); render(); };
+$("#sbars").onclick = barClick(() => state.selStatus);
+$("#pbars").onclick = barClick(() => state.selProject);
+$("#btnClearSel").onclick = () => { state.selMembers.clear(); state.selStatus.clear(); state.selProject.clear(); render(); };
 $("#search").oninput = e => { state.q = e.target.value; render(); };
 $("#msearch").oninput = e => { state.mq = e.target.value; renderMembers(baseSet()); };
 $("#showDone").onchange = e => { state.showDone = e.target.checked; render(); };
 $("#fmt").onchange = $("#extra").onchange = () => renderExport(viewSet());
 $("#thead").onclick = e => {
   const th = e.target.closest("th"); if (!th) return; const k = th.dataset.k;
-  state.sort = {k, dir: state.sort.k === k ? -state.sort.dir : 1}; renderTable(viewSet());
+  state.sortTouched = true; state.sort = {k, dir: state.sort.k === k ? -state.sort.dir : 1}; renderTable(viewSet());
 };
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1500); }
 $("#btnCopy").onclick = async () => {
