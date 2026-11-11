@@ -128,6 +128,14 @@ const thumb = (ref, name, cls = '') =>
 const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] && !costs.shared[preset[k]] ? num(costs.packaging[preset[k]]) : 0), 0);
 /** Packaging that can go into an order: everything except shared supplies (tape, staples…). */
 const orderPackaging = () => S.packaging.filter((k) => !k.shared);
+/**
+ * Every packaging tool belongs to the shop's own lists: tools for packing a product (one line of an order) and
+ * tools for packing the whole order (outer box or bag). A tool without a choice is in both. A list always
+ * keeps the tool an order already uses, so an old order never shows an empty choice.
+ */
+const USES = { product: 'forProduct', order: 'forOrder' };
+const inUse = (k, use) => k[USES[use]] !== false;
+const toolsFor = (use, current = '') => orderPackaging().filter((k) => inUse(k, use) || k.id === current);
 
 /* ================= routing ================= */
 const TABS = {
@@ -864,7 +872,7 @@ function openOrderFormNow(existing, restored) {
       <label class="field">Bộ đóng gói nhanh
         <select data-f="preset">${options(S.presets, '', '— tự chọn —')}</select>
       </label>
-      ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(orderPackaging(), l[k], '— không —')}</select></label>`).join('')}
+      ${PACK_SLOTS.map((k, j) => `<label class="field">Dụng cụ đóng gói ${j + 1}<select data-f="${k}">${options(toolsFor('product', l[k]), l[k], '— không —')}</select></label>`).join('')}
       <button class="icon-btn del" data-remove-line="${i}" title="Xoá dòng" style="margin-bottom:6px">✕</button>
       <div class="combo-picks-wrap" style="grid-column:1/-1">${picksHtml(l)}</div>
       <div class="tier-note small" style="grid-column:1/-1" hidden></div>
@@ -895,7 +903,7 @@ function openOrderFormNow(existing, restored) {
       <h3 style="margin:18px 0 4px">Đóng gói cả đơn</h3>
       <p class="small muted" style="margin:0 0 8px">Hộp / túi ngoài chứa tất cả sản phẩm của đơn để ship đi. Mỗi đơn dùng 1 cái, không nhân theo số sản phẩm.</p>
       <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
-        ${WRAP_SLOTS.map((k, j) => `<label class="field">Đóng gói cả đơn ${j + 1}<select name="${k}">${options(orderPackaging(), o[k], '— không —')}</select></label>`).join('')}
+        ${WRAP_SLOTS.map((k, j) => `<label class="field">Đóng gói cả đơn ${j + 1}<select name="${k}">${options(toolsFor('order', o[k]), o[k], '— không —')}</select></label>`).join('')}
       </div>
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
@@ -2502,22 +2510,36 @@ function pagePackaging() {
   const supplies = S.packaging.filter((k) => k.shared);
   const spent = (id) => S.imports.filter((x) => x.kind === 'packaging' && x.itemId === id && isReceived(x)).reduce((n, x) => n + num(x.qty) * num(x.unitCost) + num(x.extraFee), 0);
   const bought = (id) => S.imports.filter((x) => x.kind === 'packaging' && x.itemId === id && isReceived(x)).reduce((n, x) => n + num(x.qty), 0);
+  const toolRow = (k) => {
+    const st = num(stock.packaging[k.id]);
+    const adj = num(k.adjust);
+    return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= lowOf(k) ? 'neg' : ''}"><b>${st}</b> ${stockBadge(st, lowOf(k))}${stock.incoming.packaging[k.id] ? `<br><span class="small muted">đang về +${num(stock.incoming.packaging[k.id])}</span>` : ''}${adj ? `<br><span class="small muted">đã chỉnh ${adj > 0 ? '+' : ''}${adj}</span>` : ''}</td>
+      <td style="white-space:nowrap"><button class="btn ghost sm" data-action="adjust-pack" data-id="${k.id}">Chỉnh tồn</button> <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}" title="Sửa">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}" title="Xoá">🗑</button></td></tr>`;
+  };
+  /** One list of tools (for products, or for the whole order) with the button to choose which tools are in it. */
+  const toolCard = (use, all) => {
+    const list = all.filter((k) => inUse(k, use));
+    const forOrder = use === 'order';
+    return `<div class="card table-wrap pk-parts">
+      <div class="pk-head"><h3>${forOrder ? 'Dụng cụ đóng gói đơn hàng' : 'Dụng cụ đóng gói sản phẩm'}</h3>
+        <button class="btn ghost sm" data-action="pick-pack-use" data-use="${use}" title="Chọn dụng cụ nào thuộc danh sách này">⚙ Chọn dụng cụ (${list.length}/${all.length})</button></div>
+      <p class="small muted" style="margin-top:-2px">${forOrder
+        ? 'Hộp / túi ngoài chứa cả đơn để ship. Chỉ những dụng cụ này hiện trong 3 ô “Đóng gói cả đơn” khi lên đơn.'
+        : 'Đóng gói riêng từng sản phẩm (túi, thiệp, nametag…). Chỉ những dụng cụ này hiện trong các ô dụng cụ của từng dòng sản phẩm và trong bộ đóng gói.'}${forOrder ? '' : ' Bấm <b>Chỉnh tồn</b> để sửa số lượng cho khớp thực tế.'}</p>
+      ${list.length ? `<table><thead><tr><th>Tên</th><th class="num">Giá TB / cái</th><th class="num">Tồn</th><th></th></tr></thead><tbody>${list.map(toolRow).join('')}</tbody></table>`
+        : `<div class="empty">${all.length ? 'Chưa chọn dụng cụ nào. Bấm “⚙ Chọn dụng cụ”.' : 'Chưa có dụng cụ nào.'}</div>`}
+    </div>`;
+  };
+  const unassigned = parts.filter((k) => !inUse(k, 'product') && !inUse(k, 'order'));
   return `
     <div class="page-head">
-      <div><h1>Đóng gói</h1><p>Dụng cụ đóng gói chọn trong đơn (hộp, túi, ruy băng…), bộ đóng gói dùng nhanh, và vật tư dùng chung không chọn trong đơn (băng keo, giấy chống sốc, ghim…).</p></div>
+      <div><h1>Đóng gói</h1><p>Dụng cụ đóng gói chia hai nhóm: đóng gói từng sản phẩm và đóng gói cả đơn. Bạn chọn dụng cụ nào thuộc nhóm nào. Thêm vào đó là bộ đóng gói dùng nhanh và vật tư dùng chung không chọn trong đơn (băng keo, giấy chống sốc, ghim…).</p></div>
       <div class="actions"><button class="btn ghost" data-action="new-pack">＋ Dụng cụ</button><button class="btn ghost" data-action="new-shared">＋ Vật tư dùng chung</button><button class="btn pink" data-action="new-preset">＋ Bộ đóng gói</button></div>
     </div>
-    <div class="grid two">
-      <div class="card table-wrap pk-parts">
-        <h3>Dụng cụ đóng gói</h3>
-        <p class="small muted" style="margin-top:-6px">Nhập số lượng ước chừng cũng được. Bấm <b>Chỉnh tồn</b> để sửa lại cho khớp thực tế. Giá nhập và tiền nhập hàng không đổi.</p>
-        ${parts.length ? `<table><thead><tr><th>Tên</th><th class="num">Giá TB / cái</th><th class="num">Tồn</th><th></th></tr></thead><tbody>
-          ${parts.map((k) => {
-            const st = num(stock.packaging[k.id]);
-            const adj = num(k.adjust);
-            return `<tr><td>${esc(k.name)}</td><td class="num">${money(costs.packaging[k.id])}</td><td class="num ${st <= lowOf(k) ? 'neg' : ''}"><b>${st}</b> ${stockBadge(st, lowOf(k))}${stock.incoming.packaging[k.id] ? `<br><span class="small muted">đang về +${num(stock.incoming.packaging[k.id])}</span>` : ''}${adj ? `<br><span class="small muted" title="Đã chỉnh tay so với sổ nhập và đơn hàng">đã chỉnh ${adj > 0 ? '+' : ''}${adj}</span>` : ''}</td>
-            <td style="white-space:nowrap"><button class="btn ghost sm" data-action="adjust-pack" data-id="${k.id}">Chỉnh tồn</button> <button class="icon-btn" data-action="edit-item" data-kind="packaging" data-id="${k.id}">✎</button><button class="icon-btn del" data-action="del-pack" data-id="${k.id}">🗑</button></td></tr>`;
-          }).join('')}</tbody></table>` : '<div class="empty">Chưa có dụng cụ nào.</div>'}
+    <div class="grid pk-grid">
+      <div class="pk-left">
+        ${toolCard('product', parts)}
+        ${toolCard('order', parts)}
       </div>
       <div class="card table-wrap">
         <h3>Bộ đóng gói</h3>
@@ -2526,6 +2548,7 @@ function pagePackaging() {
             <td style="white-space:nowrap"><button class="icon-btn" data-action="edit-preset" data-id="${pr.id}">✎</button><button class="icon-btn del" data-action="del-preset" data-id="${pr.id}">🗑</button></td></tr>`).join('')}
         </tbody></table>` : '<div class="empty">Tạo bộ đóng gói (VD: “Hộp quà cao cấp” = hộp + giấy lót + ruy băng) để chọn nhanh khi lên đơn.</div>'}
       </div>
+      ${unassigned.length ? `<div class="card" style="grid-column:1/-1"><p class="small muted" style="margin:0">Chưa thuộc nhóm nào (không hiện trong ô chọn của đơn): ${unassigned.map((k) => `<b>${esc(k.name)}</b>`).join(', ')}.</p></div>` : ''}
       <div class="card" style="grid-column:1/-1">
         <h3>Vật tư dùng chung</h3>
         <p class="small muted" style="margin-top:-6px">Tiền nhập tính hết vào <b>chi phí vận hành</b>. Không chọn trong đơn. Bấm <b>Ghi đã dùng</b> (hoặc sửa ô điều chỉnh tồn kho) để biết đã xài bao nhiêu, số tiền chi phí không đổi.</p>
@@ -2598,6 +2621,49 @@ function openStockDialog(k, mode = 'count') {
   });
 }
 
+/** Choose which packaging tools belong to a list ("product" or "order"): the tools ticked are offered in the order form. */
+function openPackUseDialog(use) {
+  const all = orderPackaging();
+  if (!all.length) return notify('Chưa có dụng cụ đóng gói nào. Bấm “＋ Dụng cụ” để thêm.');
+  const forOrder = use === 'order';
+  const picked = new Set(all.filter((k) => inUse(k, use)).map((k) => k.id));
+  const d = document.createElement('dialog');
+  d.className = 'confirm wrap-dialog';
+  d.innerHTML = `<div class="modal-body">
+    <h3 style="margin:0 0 6px">⚙ ${forOrder ? 'Dụng cụ đóng gói đơn hàng' : 'Dụng cụ đóng gói sản phẩm'}</h3>
+    <p class="small muted" style="margin:0 0 10px">${forOrder ? 'Tích hộp / túi ngoài dùng cho cả đơn.' : 'Tích dụng cụ dùng để đóng gói từng sản phẩm.'} Một dụng cụ có thể thuộc cả hai nhóm. Chỉ dụng cụ đã tích mới hiện trong ô chọn khi lên đơn.</p>
+    <div class="wrap-list">${all.map((k) => `<label class="wrap-opt"><input type="checkbox" data-w="${esc(k.id)}" ${picked.has(k.id) ? 'checked' : ''}><span>${esc(k.name)}</span><span class="small muted">${money(costs.packaging[k.id])}</span></label>`).join('')}</div>
+    <div class="small" id="wrap-count" style="margin-top:8px"></div>
+  </div>
+  <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn ghost" value="all">Tích tất cả</button><button class="btn ghost" value="none">Bỏ tích hết</button><button class="btn" value="save">Lưu</button></div>`;
+  const count = () => { $('#wrap-count', d).textContent = `Đã chọn ${picked.size} / ${all.length} dụng cụ`; };
+  d.addEventListener('change', (e) => {
+    if (e.target.dataset.w === undefined) return;
+    if (e.target.checked) picked.add(e.target.dataset.w); else picked.delete(e.target.dataset.w);
+    count();
+  });
+  d.addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.value;
+    if (v === 'all' || v === 'none') {
+      picked.clear();
+      if (v === 'all') all.forEach((k) => picked.add(k.id));
+      $$('input[data-w]', d).forEach((i) => { i.checked = picked.has(i.dataset.w); });
+      count();
+    } else if (v) d.close(v);
+  });
+  d.addEventListener('close', async () => {
+    if (d.returnValue === 'save') {
+      const changed = all.filter((k) => inUse(k, use) !== picked.has(k.id)).map((k) => ({ ...k, [USES[use]]: picked.has(k.id) }));
+      if (changed.length) await store.upsertMany('packaging', changed);
+      toast(`Đã lưu: ${picked.size} dụng cụ cho ${forOrder ? 'đóng gói đơn hàng' : 'đóng gói sản phẩm'}`);
+    }
+    d.remove();
+  });
+  document.body.append(d);
+  count();
+  d.showModal();
+}
+
 function openPackForm(existing, init = {}) {
   const k = existing ? { ...existing } : { name: '', baseCost: 0, lowStock: '', adjust: 0, shared: false, ...init };
   openModal({
@@ -2608,6 +2674,9 @@ function openPackForm(existing, init = {}) {
       <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(k.baseCost)}"></label>
       <label class="field">Cảnh báo khi tồn ≤<input type="number" min="0" name="lowStock" value="${esc(k.lowStock ?? '')}" placeholder="${settings.lowStock}"></label>
       <label class="field">Điều chỉnh tồn kho (±)<input type="number" step="any" name="adjust" value="${num(k.adjust)}" title="Số âm = đã dùng hoặc hao, số dương = đếm thấy thêm"></label>
+      <div class="field" id="use-wrap" style="grid-column:1/-1"><span>Dùng cho</span>
+        <label class="check"><input type="checkbox" name="forProduct" ${inUse(k, 'product') ? 'checked' : ''}> Đóng gói sản phẩm (từng dòng trong đơn)</label>
+        <label class="check"><input type="checkbox" name="forOrder" ${inUse(k, 'order') ? 'checked' : ''}> Đóng gói cả đơn (hộp / túi ngoài)</label></div>
       <label class="check sharedcheck" style="grid-column:1/-1"><input type="checkbox" name="shared" ${k.shared ? 'checked' : ''}> <span><b>Vật tư dùng chung</b> (băng keo, giấy chống sốc, ghim…): tiền nhập tính vào chi phí vận hành, không chọn trong đơn hàng.</span></label>
       <p class="small muted" style="grid-column:1/-1;margin:0">Điều chỉnh tồn kho: số <b>âm</b> = đã dùng hoặc hao, số <b>dương</b> = đếm thấy thêm. Việc này không làm đổi số tiền chi phí.</p>
     </form>
@@ -2615,11 +2684,15 @@ function openPackForm(existing, init = {}) {
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="k-save">Lưu</button>`,
     onMount(m) {
       const form = $('#pack-form', m);
+      // shared supplies are never picked in an order, so the two lists do not apply to them
+      const syncShared = () => { $('#use-wrap', m).hidden = form.shared.checked; };
+      form.shared.addEventListener('change', syncShared);
+      syncShared();
       $('[data-close2]', m).onclick = () => m.close();
       $('#k-save', m).onclick = async () => {
         if (!form.reportValidity()) return;
         const d = formData(form);
-        await store.upsert('packaging', { ...k, name: d.name.trim(), baseCost: num(d.baseCost), lowStock: d.lowStock === '' ? null : num(d.lowStock), adjust: num(d.adjust), shared: d.shared === 'on' });
+        await store.upsert('packaging', { ...k, name: d.name.trim(), baseCost: num(d.baseCost), lowStock: d.lowStock === '' ? null : num(d.lowStock), adjust: num(d.adjust), shared: d.shared === 'on', forProduct: d.forProduct === 'on', forOrder: d.forOrder === 'on' });
         m.close();
       };
     },
@@ -2633,7 +2706,7 @@ function openPresetForm(existing) {
     wide: false,
     body: `<form id="preset-form" class="form-grid" style="grid-template-columns:1fr">
       <label class="field">Tên bộ<input name="name" value="${esc(pr.name)}" required placeholder="VD: Gói quà for her"></label>
-      ${PACK_SLOTS.map((s, i) => `<label class="field">Dụng cụ ${i + 1}<select name="${s}">${options(orderPackaging(), pr[s], '— không —')}</select></label>`).join('')}
+      ${PACK_SLOTS.map((s, i) => `<label class="field">Dụng cụ ${i + 1}<select name="${s}">${options(toolsFor('product', pr[s]), pr[s], '— không —')}</select></label>`).join('')}
       <div class="summary"><div><span>Chi phí bộ</span><b id="pr-cost"></b></div></div>
     </form>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="pr-save">Lưu</button>`,
@@ -2963,6 +3036,7 @@ document.addEventListener('click', async (e) => {
       e.preventDefault();
       return btn.dataset.kind === 'packaging' ? openPackForm(pack(id)) : openProductForm(product(id));
     case 'new-pack': return openPackForm();
+    case 'pick-pack-use': return openPackUseDialog(btn.dataset.use);
     case 'new-shared': return openPackForm(undefined, { shared: true });
     case 'use-pack': return openStockDialog(pack(id), 'used');
     case 'adjust-pack': return openStockDialog(pack(id), 'count');
