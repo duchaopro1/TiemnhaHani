@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Ticket Tracker</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#1e293b; --card2:#273449; --border:#334155; --input:#0b1220;
+  --text:#e2e8f0; --muted:#94a3b8; --accent:#6366f1; --accent-hi:#818cf8; --accent-dk:#4f46e5;
+  --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --info:#38bdf8; --purple:#a78bfa;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,-apple-system,Helvetica,Arial,sans-serif}
+a{color:var(--accent-hi);text-decoration:none} a:hover{text-decoration:underline}
+button,input,select,textarea{font:inherit;color:inherit}
+header{background:var(--accent-dk);padding:14px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header .logo{font-size:26px;font-weight:700}
+header h1{margin:0;font-size:18px} header p{margin:0;color:#c7d2fe;font-size:12px}
+header .sp{flex:1}
+.btn{background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:13px;color:var(--text)}
+.btn:hover{background:var(--border)}
+.btn.primary{background:var(--accent);border-color:var(--accent)} .btn.primary:hover{background:var(--accent-hi)}
+.btn.ghost{background:rgba(255,255,255,.12);border-color:transparent;color:#fff} .btn.ghost:hover{background:rgba(255,255,255,.22)}
+main{padding:18px 24px 40px;max-width:1400px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.card h2{margin:0 0 10px;font-size:14px;letter-spacing:.2px}
+.hint{color:var(--muted);font-size:12px}
+input[type=text],input[type=search],select,textarea{background:var(--input);border:1px solid var(--border);border-radius:6px;padding:6px 10px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+/* drop zone */
+#drop{border:2px dashed var(--border);border-radius:14px;padding:56px 20px;text-align:center;margin-top:24px;background:var(--card)}
+#drop.over{border-color:var(--accent-hi);background:var(--card2)}
+#drop .big{font-size:44px} #drop h2{margin:8px 0 4px;font-size:20px}
+#drop ol{display:inline-block;text-align:left;color:var(--muted);margin:14px 0 18px;padding-left:20px}
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.kpi i{display:block;height:3px} .kpi div{padding:10px 14px}
+.kpi b{display:block;font-size:28px;line-height:1.1} .kpi span{color:var(--muted);font-size:12px}
+/* toolbar */
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.bar .grow{flex:1}
+label.chk{display:inline-flex;gap:6px;align-items:center;color:var(--muted);cursor:pointer}
+/* members */
+.members{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.mcard{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:left;cursor:pointer;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:center;color:var(--text)}
+.mcard:hover{border-color:var(--accent-hi)} .mcard.sel{border-color:var(--accent-hi);box-shadow:0 0 0 2px rgba(129,140,248,.35);background:var(--card2)}
+.av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;font-size:14px}
+.mn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .mc{color:var(--muted);font-size:12px} .mc b{color:var(--text);font-size:18px}
+.stack{grid-column:1/-1;display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--input);margin-top:6px}
+.stack span{display:block;height:100%}
+.badges{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;min-height:20px}
+.pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--card2);border:1px solid var(--border);color:var(--muted)}
+.pill.urgent{color:#fca5a5;border-color:#7f1d1d;background:#3b1219} .pill.over{color:#fcd34d;border-color:#78350f;background:#2d1f0a}
+/* status bars */
+.sbars{display:grid;gap:6px}
+.sb{display:grid;grid-template-columns:150px 1fr 40px;gap:10px;align-items:center;cursor:pointer;padding:2px 4px;border-radius:6px}
+.sb:hover{background:var(--card2)} .sb.sel{background:var(--card2);outline:1px solid var(--accent-hi)}
+.sb .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb .track{height:12px;background:var(--input);border-radius:6px;overflow:hidden} .sb .track i{display:block;height:100%;border-radius:6px}
+.sb .n{text-align:right;color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1.3fr;gap:14px;margin-top:14px}
+@media(max-width:1000px){.two{grid-template-columns:1fr}}
+/* table */
+.twrap{max-height:520px;overflow:auto;border-radius:8px;border:1px solid var(--border)}
+table{border-collapse:collapse;width:100%}
+th{position:sticky;top:0;background:var(--card2);color:var(--muted);text-align:left;padding:8px 10px;font-size:12px;cursor:pointer;white-space:nowrap;user-select:none;z-index:1}
+td{padding:7px 10px;border-top:1px solid var(--border);vertical-align:top}
+tbody tr:nth-child(even){background:rgba(39,52,73,.45)} tbody tr:hover{background:var(--card2)}
+td.sum{min-width:320px}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;color:#0b1220;white-space:nowrap}
+.prio{font-weight:600} .p1{color:#f87171}.p2{color:#fb923c}.p3{color:var(--muted)}.p4{color:var(--info)}.p5{color:var(--ok)}
+.over-txt{color:#fcd34d}
+/* export */
+.export{margin-top:0}
+.export .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+#preview{width:100%;height:240px;resize:vertical;font:12px/1.5 Consolas,Menlo,monospace;white-space:pre}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ok);color:#052e16;font-weight:700;padding:8px 18px;border-radius:20px;opacity:0;transition:.25s;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%)}
+/* settings */
+dialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(640px,94vw)}
+dialog::backdrop{background:rgba(2,6,23,.7)}
+.dh{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;display:flex;justify-content:space-between}
+.db{padding:14px 18px;max-height:70vh;overflow:auto;display:grid;gap:14px}
+.grid2{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center}
+.stlist{display:flex;gap:8px;flex-wrap:wrap}
+.stlist label{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:3px 10px;cursor:pointer}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">&#9638;</div>
+  <div><h1>Team Ticket Tracker</h1><p>Open tickets per team member &middot; export a ready-to-paste list for your chat group</p></div>
+  <div class="sp"></div>
+  <span id="fileinfo" class="hint" style="color:#c7d2fe"></span>
+  <button class="btn ghost" id="btnSettings" hidden>&#9881; Settings</button>
+  <button class="btn ghost" id="btnLoad">&#128194; Load CSV</button>
+</header>
+<input type="file" id="file" accept=".csv,.tsv,.txt,text/csv" hidden>
+
+<main>
+  <section id="drop">
+    <div class="big">&#128202;</div>
+    <h2>Drop your Jira export here</h2>
+    <div class="hint">or</div>
+    <p><button class="btn primary" id="btnPick">Choose CSV file</button>
+       <button class="btn" id="btnDemo">Try with demo data</button></p>
+    <ol>
+      <li>In TMS (Jira) open the issue list / filter you want, e.g. <i>assignee in (team) AND resolution = Unresolved</i></li>
+      <li><b>Export</b> &rarr; <b>CSV (Current fields)</b> or <b>CSV (All fields)</b></li>
+      <li>Drop the downloaded file here. Everything stays in your browser &ndash; nothing is uploaded.</li>
+    </ol>
+  </section>
+
+  <section id="dash" hidden>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="bar">
+      <b>Team members</b>
+      <input type="search" id="msearch" placeholder="Find a member&hellip;" style="width:190px">
+      <button class="btn" id="btnClearSel">Clear selection</button>
+      <span class="grow"></span>
+      <input type="search" id="search" placeholder="Search ticket ID or text&hellip;" style="width:260px">
+      <label class="chk"><input type="checkbox" id="showDone"> include closed tickets</label>
+    </div>
+    <div class="members" id="members"></div>
+
+    <div class="two">
+      <div class="card"><h2>Open tickets by status <span class="hint">(click to filter)</span></h2><div class="sbars" id="sbars"></div></div>
+      <div class="card export">
+        <h2 style="margin-bottom:8px">Export for chat <span class="hint">&ndash; uses the current filters</span></h2>
+        <div class="row">
+          <select id="fmt">
+            <option value="grouped">List grouped by person</option>
+            <option value="oneline">One line per ticket (Name | ID | Summary | Link)</option>
+            <option value="markdown">Markdown table</option>
+            <option value="csv">CSV (Excel)</option>
+          </select>
+          <label class="chk"><input type="checkbox" id="extra"> add status &amp; priority</label>
+        </div>
+        <textarea id="preview" readonly spellcheck="false"></textarea>
+        <div class="row" style="margin:10px 0 0">
+          <button class="btn primary" id="btnCopy">&#128203; Copy to clipboard</button>
+          <button class="btn" id="btnDownload">&#11015; Download file</button>
+          <span class="hint" id="expInfo"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="bar" style="margin-bottom:8px"><h2 style="margin:0">Tickets</h2><span class="hint" id="tinfo"></span></div>
+      <div class="twrap"><table><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <div class="dh"><span>Settings</span><button class="btn" id="dlgClose">Close</button></div>
+  <div class="db">
+    <div>
+      <div class="hint" style="margin-bottom:6px">Task link = base URL + ticket ID</div>
+      <div class="grid2"><span>Base URL</span><input type="text" id="baseUrl"></div>
+    </div>
+    <div>
+      <div class="hint" style="margin-bottom:6px">Columns (auto-detected from the CSV header &ndash; change if wrong)</div>
+      <div class="grid2" id="colmap"></div>
+    </div>
+    <div>
+      <div class="hint" style="margin-bottom:6px">Statuses that count as <b>open</b> (untick the ones that mean finished)</div>
+      <div class="stlist" id="stlist"></div>
+    </div>
+  </div>
+</dialog>
+<div id="toast">Copied!</div>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("ttk_" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("ttk_" + k, JSON.stringify(v)); } catch (e) {} }
+};
+
+/* ------------------------------------------------------------------ CSV */
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const nl = text.search(/\r|\n/);
+  const first = nl > 0 ? text.slice(0, nl) : text;
+  const d = [",", ";", "\t"].map(c => [c, first.split(c).length - 1]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === d) { row.push(f); f = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(f); f = ""; rows.push(row); row = []; }
+    else f += c;
+  }
+  if (f !== "" || row.length) { row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ""));
+}
+
+/* ------------------------------------------------------------------ model */
+const FIELDS = {
+  key:      {label: "Ticket ID *",  names: ["issue key", "key", "ticket id", "id ticket", "mã ticket", "khóa vấn đề"]},
+  summary:  {label: "Summary *",    names: ["summary", "title", "subject", "tóm tắt", "tiêu đề"]},
+  assignee: {label: "Assignee *",   names: ["assignee", "assigned to", "owner", "người được giao", "người thực hiện"]},
+  status:   {label: "Status *",     names: ["status", "trạng thái"]},
+  priority: {label: "Priority",     names: ["priority", "mức độ ưu tiên", "độ ưu tiên"]},
+  due:      {label: "Due date",     names: ["due date", "due", "duedate", "ngày hết hạn", "hạn chót"]},
+  type:     {label: "Issue type",   names: ["issue type", "type", "loại vấn đề"]},
+  category: {label: "Status category", names: ["status category", "statuscategory"]},
+};
+const state = {
+  data: null, fileName: "", map: {}, tickets: [], override: store.get("override", {}),
+  baseUrl: store.get("baseUrl", "https://tms.vinfast.vn/browse/"),
+  selMembers: new Set(), selStatus: new Set(), q: "", mq: "", showDone: false, sort: {k: "prio", dir: 1},
+  colors: {}
+};
+const DONE_RE = /^(done|closed|resolved|complete[d]?|cancel+ed|rejected|fixed|verified|released|duplicate|obsolete|won'?t (do|fix)|hoàn thành|đã đóng|đóng|hủy|đã hủy)$/i;
+const MON = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+const PALETTE = ["#38bdf8","#a78bfa","#f59e0b","#22c55e","#f472b6","#fb923c","#2dd4bf","#facc15","#818cf8","#f87171"];
+
+function parseDate(s) {
+  if (!s) return null; let m;
+  if ((m = s.match(/^(\d{1,2})\/([A-Za-z]{3})[a-z]*\/(\d{2,4})/)) && MON[m[2].toLowerCase()] != null) { let y = +m[3]; if (y < 100) y += 2000; return new Date(y, MON[m[2].toLowerCase()], +m[1]); }
+  if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return new Date(+m[1], +m[2] - 1, +m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/))) return new Date(+m[3], +m[2] - 1, +m[1]);
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+function prank(p) {
+  p = (p || "").toLowerCase();
+  if (/blocker|highest|critical|urgent|\bp0\b|\bp1\b|khẩn/.test(p)) return 1;
+  if (/lowest|trivial|\bp5\b/.test(p)) return 5;
+  if (/high|major|\bp2\b|cao/.test(p)) return 2;
+  if (/low|minor|\bp4\b|thấp/.test(p)) return 4;
+  if (/medium|normal|\bp3\b|trung/.test(p)) return 3;
+  return p ? 3 : 3.5;
+}
+function detect(headers) {
+  const low = headers.map(h => h.trim().toLowerCase()), m = {};
+  for (const [f, def] of Object.entries(FIELDS)) {
+    for (const n of def.names) { const i = low.indexOf(n); if (i >= 0) { m[f] = i; break; } }
+  }
+  return m;
+}
+function loadText(text, name) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) throw new Error("The file has no data rows.");
+  state.data = rows; state.fileName = name; state.map = detect(rows[0]);
+  state.selMembers.clear(); state.selStatus.clear(); state.q = ""; $("#search").value = "";
+  build();
+  const miss = ["key", "summary", "assignee", "status"].filter(f => state.map[f] == null);
+  show(); if (miss.length) openSettings();
+}
+function build() {
+  const rows = state.data.slice(1), m = state.map;
+  const g = (r, f) => (m[f] != null && r[m[f]] != null ? r[m[f]].trim() : "");
+  state.tickets = rows.map(r => {
+    const t = {key: g(r, "key"), summary: g(r, "summary").replace(/\s*[\r\n]+\s*/g, " "), assignee: g(r, "assignee") || "Unassigned",
+      status: g(r, "status") || "(no status)", priority: g(r, "priority"), type: g(r, "type"),
+      due: parseDate(g(r, "due")), cat: g(r, "category")};
+    t.rank = prank(t.priority); return t;
+  }).filter(t => t.key);
+  const sts = [...new Set(state.tickets.map(t => t.status))].sort();
+  state.colors = {}; sts.forEach((s, i) => state.colors[s] = PALETTE[i % PALETTE.length]);
+  state.doneSet = new Set();
+  for (const t of state.tickets) {
+    const ov = state.override[t.status];
+    const def = t.cat ? /^done$/i.test(t.cat) : DONE_RE.test(t.status);
+    if (ov === "done" || (ov !== "open" && def)) state.doneSet.add(t.status);
+  }
+}
+const isOpen = t => !state.doneSet.has(t.status);
+const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+const isOver = t => t.due && isOpen(t) && t.due < today();
+
+/* base set: open filter + text search */
+function baseSet() {
+  const q = state.q.toLowerCase();
+  return state.tickets.filter(t => (state.showDone || isOpen(t)) &&
+    (!q || (t.key + " " + t.summary + " " + t.assignee).toLowerCase().includes(q)));
+}
+const byMember = t => !state.selMembers.size || state.selMembers.has(t.assignee);
+const byStatus = t => !state.selStatus.size || state.selStatus.has(t.status);
+const viewSet = () => baseSet().filter(t => byMember(t) && byStatus(t));
+
+/* ------------------------------------------------------------------ render */
+function initials(n) { const w = n.trim().split(/\s+/); return (w.length > 1 ? w[0][0] + w[w.length - 1][0] : n.slice(0, 2)).toUpperCase(); }
+function hue(n) { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+
+function renderKPIs(base, view) {
+  const people = new Set(base.map(t => t.assignee));
+  const k = [
+    ["Tickets" + (state.selMembers.size || state.selStatus.size ? " (filtered)" : ""), view.length, "var(--accent-hi)"],
+    ["Team members", people.size, "var(--info)"],
+    ["Urgent (High+)", view.filter(t => t.rank <= 2).length, "var(--bad)"],
+    ["Overdue", view.filter(isOver).length, "var(--warn)"],
+    ["Unassigned", base.filter(t => t.assignee === "Unassigned").length, "var(--muted)"],
+  ];
+  $("#kpis").innerHTML = k.map(([l, n, c]) => `<div class="kpi"><i style="background:${c}"></i><div><b>${n}</b><span>${esc(l)}</span></div></div>`).join("");
+}
+function renderMembers(base) {
+  const g = new Map();
+  for (const t of base.filter(byStatus)) { if (!g.has(t.assignee)) g.set(t.assignee, []); g.get(t.assignee).push(t); }
+  const mq = state.mq.toLowerCase();
+  const list = [...g.entries()].filter(([n]) => !mq || n.toLowerCase().includes(mq)).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  $("#members").innerHTML = list.length ? list.map(([n, ts]) => {
+    const cnt = {}; ts.forEach(t => cnt[t.status] = (cnt[t.status] || 0) + 1);
+    const seg = Object.entries(cnt).map(([s, c]) => `<span title="${esc(s)}: ${c}" style="width:${c / ts.length * 100}%;background:${state.colors[s]}"></span>`).join("");
+    const urg = ts.filter(t => t.rank <= 2).length, ov = ts.filter(isOver).length;
+    return `<button class="mcard ${state.selMembers.has(n) ? "sel" : ""}" data-m="${esc(n)}">
+      <div class="av" style="background:hsl(${hue(n)} 55% 42%)">${esc(initials(n))}</div>
+      <div><div class="mn" title="${esc(n)}">${esc(n)}</div><div class="mc"><b>${ts.length}</b> ticket${ts.length === 1 ? "" : "s"}</div></div>
+      <div class="stack">${seg}</div>
+      <div class="badges">${urg ? `<span class="pill urgent">&#9650; ${urg} urgent</span>` : ""}${ov ? `<span class="pill over">&#9200; ${ov} overdue</span>` : ""}</div>
+    </button>`;
+  }).join("") : `<div class="empty card" style="grid-column:1/-1">No members match.</div>`;
+}
+function renderStatus(base) {
+  const sc = {}; base.filter(byMember).forEach(t => sc[t.status] = (sc[t.status] || 0) + 1);
+  const ent = Object.entries(sc).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...ent.map(e => e[1]));
+  $("#sbars").innerHTML = ent.length ? ent.map(([s, c]) => `<div class="sb ${state.selStatus.has(s) ? "sel" : ""}" data-s="${esc(s)}">
+    <span class="nm" title="${esc(s)}">${esc(s)}</span><span class="track"><i style="width:${c / max * 100}%;background:${state.colors[s]}"></i></span><span class="n">${c}</span></div>`).join("")
+    : `<div class="empty">No tickets.</div>`;
+}
+const COLS = [["key", "ID"], ["summary", "Summary"], ["assignee", "Assignee"], ["status", "Status"], ["prio", "Priority"], ["due", "Due"]];
+function sortSet(a) {
+  const {k, dir} = state.sort, cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+  const val = t => k === "prio" ? t.rank : k === "due" ? (t.due ? +t.due : 9e15) : (t[k] || "").toLowerCase();
+  return a.slice().sort((x, y) => dir * cmp(val(x), val(y)) || cmp(x.key, y.key));
+}
+function renderTable(view) {
+  $("#thead").innerHTML = COLS.map(([k, l]) => `<th data-k="${k}">${l}${state.sort.k === k ? (state.sort.dir > 0 ? " &#9650;" : " &#9660;") : ""}</th>`).join("");
+  const LIM = 500, rows = sortSet(view);
+  $("#tbody").innerHTML = rows.slice(0, LIM).map(t => `<tr>
+    <td><a href="${esc(link(t))}" target="_blank" rel="noopener">${esc(t.key)}</a></td>
+    <td class="sum">${esc(t.summary)}</td><td>${esc(t.assignee)}</td>
+    <td><span class="tag" style="background:${state.colors[t.status]}">${esc(t.status)}</span></td>
+    <td class="prio p${Math.round(t.rank)}">${esc(t.priority || "–")}</td>
+    <td class="${isOver(t) ? "over-txt" : ""}">${t.due ? t.due.toLocaleDateString("en-GB") : "–"}${isOver(t) ? " &#9200;" : ""}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">No tickets match the current filters.</td></tr>`;
+  $("#tinfo").textContent = `${view.length} ticket${view.length === 1 ? "" : "s"}` + (view.length > LIM ? ` (showing first ${LIM} – export has all)` : "");
+}
+
+/* ------------------------------------------------------------------ export */
+const link = t => state.baseUrl.replace(/\/*$/, "/") + encodeURIComponent(t.key);
+function exportText(view) {
+  const fmt = $("#fmt").value, extra = $("#extra").checked;
+  const ex = t => extra ? ` [${t.status}${t.priority ? " · " + t.priority : ""}]` : "";
+  const sorted = view.slice().sort((a, b) => a.assignee.localeCompare(b.assignee) || a.rank - b.rank || a.key.localeCompare(b.key, undefined, {numeric: true}));
+  const groups = new Map(); sorted.forEach(t => { if (!groups.has(t.assignee)) groups.set(t.assignee, []); groups.get(t.assignee).push(t); });
+  if (!sorted.length) return "";
+  if (fmt === "grouped") {
+    const d = new Date().toLocaleDateString("en-GB");
+    return `Open tickets – ${d} (${sorted.length})\n\n` + [...groups].map(([n, ts]) =>
+      `${n} – ${ts.length} ticket${ts.length === 1 ? "" : "s"}\n` + ts.map((t, i) => `${i + 1}. ${t.key} – ${t.summary}${ex(t)}\n   ${link(t)}`).join("\n")).join("\n\n");
+  }
+  if (fmt === "oneline") return sorted.map(t => `${t.assignee} | ${t.key} | ${t.summary}${ex(t)} | ${link(t)}`).join("\n");
+  if (fmt === "markdown") {
+    const c = s => String(s).replace(/\|/g, "\\|").replace(/\n/g, " ");
+    return "| Name | ID | Summary | Link |\n|---|---|---|---|\n" + sorted.map(t => `| ${c(t.assignee)} | ${t.key} | ${c(t.summary + ex(t))} | ${link(t)} |`).join("\n");
+  }
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  return ["Name,Ticket ID,Summary,Status,Priority,Link"].concat(sorted.map(t => [t.assignee, t.key, t.summary, t.status, t.priority, link(t)].map(q).join(","))).join("\r\n");
+}
+function renderExport(view) {
+  const txt = exportText(view);
+  $("#preview").value = txt || "(no tickets match the current filters)";
+  const names = new Set(view.map(t => t.assignee)).size;
+  $("#expInfo").textContent = `${view.length} ticket${view.length === 1 ? "" : "s"} · ${names} ${names === 1 ? "person" : "people"}`;
+}
+
+function render() {
+  const base = baseSet(), view = base.filter(t => byMember(t) && byStatus(t));
+  renderKPIs(base, view); renderMembers(base); renderStatus(base); renderTable(view); renderExport(view);
+}
+function show() {
+  $("#drop").hidden = true; $("#dash").hidden = false; $("#btnSettings").hidden = false;
+  $("#fileinfo").textContent = `${state.fileName} · ${state.tickets.length} rows`;
+  render();
+}
+
+/* ------------------------------------------------------------------ settings */
+function openSettings() {
+  $("#baseUrl").value = state.baseUrl;
+  const hdr = state.data[0];
+  $("#colmap").innerHTML = Object.entries(FIELDS).map(([f, d]) =>
+    `<span>${d.label}</span><select data-f="${f}"><option value="">(none)</option>` +
+    hdr.map((h, i) => `<option value="${i}" ${state.map[f] === i ? "selected" : ""}>${esc(h)}${hdr.indexOf(h) !== i ? " (#" + (i + 1) + ")" : ""}</option>`).join("") + `</select>`).join("");
+  const sts = [...new Set(state.tickets.map(t => t.status))].sort();
+  $("#stlist").innerHTML = sts.map(s => `<label><input type="checkbox" data-st="${esc(s)}" ${state.doneSet.has(s) ? "" : "checked"}> ${esc(s)}</label>`).join("");
+  $("#dlg").showModal();
+}
+$("#dlg").addEventListener("change", e => {
+  const t = e.target;
+  if (t.id === "baseUrl") { state.baseUrl = t.value.trim() || "https://tms.vinfast.vn/browse/"; store.set("baseUrl", state.baseUrl); }
+  else if (t.dataset.f) { state.map[t.dataset.f] = t.value === "" ? null : +t.value; const ov = state.override; build(); refreshStList(); }
+  else if (t.dataset.st) { state.override[t.dataset.st] = t.checked ? "open" : "done"; store.set("override", state.override); build(); }
+  $("#fileinfo").textContent = `${state.fileName} · ${state.tickets.length} rows`; render();
+});
+function refreshStList() {
+  const sts = [...new Set(state.tickets.map(t => t.status))].sort();
+  $("#stlist").innerHTML = sts.map(s => `<label><input type="checkbox" data-st="${esc(s)}" ${state.doneSet.has(s) ? "" : "checked"}> ${esc(s)}</label>`).join("");
+}
+$("#dlgClose").onclick = () => $("#dlg").close();
+
+/* ------------------------------------------------------------------ events */
+function readFile(f) {
+  const r = new FileReader();
+  r.onload = () => { try { loadText(r.result, f.name); } catch (e) { alert(e.message); } };
+  r.readAsText(f, "utf-8");
+}
+$("#btnLoad").onclick = $("#btnPick").onclick = () => $("#file").click();
+$("#file").onchange = e => { if (e.target.files[0]) readFile(e.target.files[0]); e.target.value = ""; };
+["dragover", "dragenter"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.remove("over"); }));
+document.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+$("#btnSettings").onclick = openSettings;
+$("#members").onclick = e => {
+  const b = e.target.closest(".mcard"); if (!b) return; const n = b.dataset.m;
+  state.selMembers.has(n) ? state.selMembers.delete(n) : state.selMembers.add(n); render();
+};
+$("#sbars").onclick = e => {
+  const b = e.target.closest(".sb"); if (!b) return; const s = b.dataset.s;
+  state.selStatus.has(s) ? state.selStatus.delete(s) : state.selStatus.add(s); render();
+};
+$("#btnClearSel").onclick = () => { state.selMembers.clear(); state.selStatus.clear(); render(); };
+$("#search").oninput = e => { state.q = e.target.value; render(); };
+$("#msearch").oninput = e => { state.mq = e.target.value; renderMembers(baseSet()); };
+$("#showDone").onchange = e => { state.showDone = e.target.checked; render(); };
+$("#fmt").onchange = $("#extra").onchange = () => renderExport(viewSet());
+$("#thead").onclick = e => {
+  const th = e.target.closest("th"); if (!th) return; const k = th.dataset.k;
+  state.sort = {k, dir: state.sort.k === k ? -state.sort.dir : 1}; renderTable(viewSet());
+};
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1500); }
+$("#btnCopy").onclick = async () => {
+  const txt = $("#preview").value;
+  try { await navigator.clipboard.writeText(txt); }
+  catch (e) { const p = $("#preview"); p.select(); document.execCommand("copy"); p.setSelectionRange(0, 0); }
+  toast("Copied to clipboard!");
+};
+$("#btnDownload").onclick = () => {
+  const csv = $("#fmt").value === "csv", txt = $("#preview").value;
+  const blob = new Blob([csv ? "﻿" + txt : txt], {type: "text/plain;charset=utf-8"});
+  const a = document.createElement("a"), d = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  a.href = URL.createObjectURL(blob); a.download = `tickets_${d}.${csv ? "csv" : $("#fmt").value === "markdown" ? "md" : "txt"}`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+/* demo data */
+$("#btnDemo").onclick = () => {
+  const names = ["Nguyễn Văn An", "Trần Thị Bình", "Lê Hoàng Cường", "Phạm Minh Đức", "Hoàng Thu Hà"];
+  const sts = ["Open", "In Progress", "In Review", "Blocked", "Done"], prios = ["Highest", "High", "Medium", "Low"];
+  const sums = ["Fix CAN timeout on inverter", "Update calibration dataset for B-sample", "IGBT temperature derating review", "XCP measurement missing signal", "Merge A2L for new SW release", "Investigate DBC temp spikes", "Add unit test for torque limiter", "Coolant sensor plausibility check"];
+  const rows = [["Summary", "Issue key", "Issue Type", "Status", "Priority", "Assignee", "Due Date"]];
+  for (let i = 0; i < 46; i++) {
+    const due = new Date(Date.now() + ((i % 9) - 3) * 864e5);
+    rows.push([sums[i % sums.length] + " #" + (i + 1), "VF-" + (1200 + i), "Task", sts[(i * 7) % 5], prios[(i * 3) % 4],
+      i % 11 === 0 ? "" : names[(i * 5 + (i >> 2)) % 5], `${due.getDate()}/${Object.keys(MON)[due.getMonth()][0].toUpperCase() + Object.keys(MON)[due.getMonth()].slice(1)}/${String(due.getFullYear()).slice(2)}`]);
+  }
+  loadText(rows.map(r => r.map(c => '"' + c + '"').join(",")).join("\n"), "demo-data.csv");
+};
+</script>
+</body>
+</html>
