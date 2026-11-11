@@ -886,12 +886,17 @@ function openOrderFormNow(existing, restored) {
 
   /** The category shown on a line: the one picked on it, else the one of its product, else all. */
   const lineCat = (l) => (l.cat !== undefined ? l.cat : l.productId && product(l.productId) ? catKey(product(l.productId)) : '');
+  const hasCatPicker = () => categoryList().length > 0 || S.products.some(isCombo);
+  /** With categories the products are not listed until a category is chosen (a Shopee line still to be mapped is the exception). */
+  const needsCategory = (l) => hasCatPicker() && !lineCat(l) && !l.productId && !l.productName;
   const lineHtml = (l, i) => `
     <div class="line" data-line="${i}">
       <div class="field">
         <label class="field">Sản phẩm
-          ${categoryList().length || S.products.some(isCombo) ? `<select data-f="cat" aria-label="Danh mục sản phẩm"><option value="">Tất cả danh mục</option>${categoryKeys().map((k) => `<option value="${esc(k)}" ${k === lineCat(l) ? 'selected' : ''}>${esc(catLabel(k))}</option>`).join('')}</select>` : ''}
-          <select data-f="productId">${productOptionsHtml(lineCat(l) ? S.products.filter((q) => catKey(q) === lineCat(l) || q.id === l.productId) : S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>
+          ${hasCatPicker() ? `<select data-f="cat" aria-label="Danh mục sản phẩm"><option value="">— chọn danh mục —</option>${categoryKeys().map((k) => `<option value="${esc(k)}" ${k === lineCat(l) ? 'selected' : ''}>${esc(catLabel(k))}</option>`).join('')}</select>` : ''}
+          ${needsCategory(l)
+            ? '<select data-f="productId" disabled aria-label="Sản phẩm"><option value="">— chọn danh mục trước —</option></select>'
+            : `<select data-f="productId">${productOptionsHtml(lineCat(l) ? S.products.filter((q) => catKey(q) === lineCat(l) || q.id === l.productId) : S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>`}
         </label>
         ${hasVariants(product(l.productId)) ? `<select data-f="variantId" aria-label="Phân loại">
           <option value="">— chọn phân loại —</option>
@@ -1118,7 +1123,7 @@ function openOrderFormNow(existing, restored) {
         if (f === 'cat') {
           // choosing a category narrows the products offered; a product of another category is cleared
           l.cat = e.target.value;
-          if (l.cat && l.productId && catKey(product(l.productId)) !== l.cat) { l.productId = ''; l.variantId = ''; l.picks = []; l.priceManual = false; }
+          if (l.productId && catKey(product(l.productId)) !== l.cat) { l.productId = ''; l.variantId = ''; l.picks = []; l.priceManual = false; }
           $(`[data-line="${i}"]`, m).outerHTML = lineHtml(l, i);
           drawMeta(i);
           applyTiers();
