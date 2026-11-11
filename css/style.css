@@ -650,3 +650,5 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 main.wide { max-width: min(1560px, 100%); }
 
 .orders-table th:nth-child(5) { white-space: nowrap; }
+
+.orders-table .track-btn { white-space: nowrap; word-break: normal; overflow-wrap: normal; }

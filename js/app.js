@@ -689,7 +689,7 @@ function pageOrders() {
     </div>
     <div class="card table-wrap">
       ${list.length ? `<table class="orders-table">
-        <colgroup><col style="width:80px"><col style="width:84px"><col style="width:130px"><col><col style="width:112px"><col style="width:84px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
+        <colgroup><col style="width:80px"><col style="width:84px"><col style="width:130px"><col><col style="width:112px"><col style="width:158px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
         <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody>${list.map(orderRow).join('')}</tbody>
       </table>` : '<div class="empty">Chưa có đơn nào. Bấm “＋ Thêm đơn” hoặc nhập file Shopee.</div>'}
