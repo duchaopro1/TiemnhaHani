@@ -128,14 +128,6 @@ const thumb = (ref, name, cls = '') =>
 const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] && !costs.shared[preset[k]] ? num(costs.packaging[preset[k]]) : 0), 0);
 /** Packaging that can go into an order: everything except shared supplies (tape, staples…). */
 const orderPackaging = () => S.packaging.filter((k) => !k.shared);
-/**
- * Packaging offered for "Đóng gói cả đơn": only the ones the shop picked in settings (all of them when none is picked),
- * plus the one an order already has, so an old order never shows an empty choice.
- */
-const wrapList = (current = '') => {
-  const picked = settings.wrapItems || [];
-  return picked.length ? orderPackaging().filter((k) => picked.includes(k.id) || k.id === current) : orderPackaging();
-};
 
 /* ================= routing ================= */
 const TABS = {
@@ -198,49 +190,6 @@ function fitRevenueTable() {
   box.style.maxHeight = `${Math.max(240, window.innerHeight - top - 84)}px`;
 }
 window.addEventListener('resize', fitRevenueTable);
-
-/** Pick the packaging offered in "Đóng gói cả đơn" (saved in the shared settings; none picked = all offered). */
-function openWrapConfig(after) {
-  const list = orderPackaging();
-  if (!list.length) return notify('Chưa có dụng cụ đóng gói nào. Thêm ở trang Đóng gói.');
-  const picked = new Set((settings.wrapItems || []).filter((id) => list.some((k) => k.id === id)));
-  const d = document.createElement('dialog');
-  d.className = 'confirm wrap-dialog';
-  d.innerHTML = `<div class="modal-body">
-    <h3 style="margin:0 0 6px">⚙ Dụng cụ cho "Đóng gói cả đơn"</h3>
-    <p class="small muted" style="margin:0 0 10px">Tích những dụng cụ bạn hay dùng làm hộp / túi ngoài. Chỉ các dụng cụ này hiện trong 3 ô chọn. Không tích gì thì hiện tất cả.</p>
-    <div class="wrap-list">${list.map((k) => `<label class="wrap-opt"><input type="checkbox" data-w="${esc(k.id)}" ${picked.has(k.id) ? 'checked' : ''}><span>${esc(k.name)}</span><span class="small muted">${money(costs.packaging[k.id])}</span></label>`).join('')}</div>
-    <div class="small" id="wrap-count" style="margin-top:8px"></div>
-  </div>
-  <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn ghost" value="all">Tích tất cả</button><button class="btn ghost" value="none">Bỏ tích hết</button><button class="btn" value="save">Lưu</button></div>`;
-  const count = () => { $('#wrap-count', d).textContent = picked.size ? `Đã chọn ${picked.size} / ${list.length} dụng cụ` : 'Chưa chọn: sẽ hiện tất cả dụng cụ'; };
-  d.addEventListener('change', (e) => {
-    if (e.target.dataset.w === undefined) return;
-    if (e.target.checked) picked.add(e.target.dataset.w); else picked.delete(e.target.dataset.w);
-    count();
-  });
-  d.addEventListener('click', (e) => {
-    const v = e.target.closest('button')?.value;
-    if (v === 'all' || v === 'none') {
-      picked.clear();
-      if (v === 'all') list.forEach((k) => picked.add(k.id));
-      $$('input[data-w]', d).forEach((i) => { i.checked = picked.has(i.dataset.w); });
-      count();
-    } else if (v) d.close(v);
-  });
-  d.addEventListener('close', async () => {
-    if (d.returnValue === 'save') {
-      await store.upsert('meta', { ...settings, wrapItems: [...picked] });
-      derive();
-      after?.();
-      toast(picked.size ? `Đã lưu ${picked.size} dụng cụ cho đóng gói cả đơn` : 'Đã bỏ danh sách: hiện tất cả dụng cụ');
-    }
-    d.remove();
-  });
-  document.body.append(d);
-  count();
-  d.showModal();
-}
 
 /**
  * Quick entry of an order: choose a product that has variants and type a quantity next to each variant.
@@ -943,10 +892,10 @@ function openOrderFormNow(existing, restored) {
       <div id="dup-warn" role="alert" hidden></div>
       <button type="button" class="btn ghost sm" id="add-line">＋ Thêm sản phẩm</button>
       <button type="button" class="btn ghost sm" id="quick-add" title="Chọn một sản phẩm rồi nhập số lượng của nhiều loại cùng lúc">⚡ Nhập nhanh nhiều loại</button>
-      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:18px 0 4px"><h3 style="margin:0">Đóng gói cả đơn</h3><button type="button" class="link-btn" id="wrap-config" title="Chọn những dụng cụ sẽ hiện trong 3 ô bên dưới">⚙ Chọn dụng cụ hiển thị${(settings.wrapItems || []).length ? ` (${settings.wrapItems.length})` : ''}</button></div>
+      <h3 style="margin:18px 0 4px">Đóng gói cả đơn</h3>
       <p class="small muted" style="margin:0 0 8px">Hộp / túi ngoài chứa tất cả sản phẩm của đơn để ship đi. Mỗi đơn dùng 1 cái, không nhân theo số sản phẩm.</p>
       <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
-        ${WRAP_SLOTS.map((k, j) => `<label class="field">Đóng gói cả đơn ${j + 1}<select name="${k}">${options(wrapList(o[k]), o[k], '— không —')}</select></label>`).join('')}
+        ${WRAP_SLOTS.map((k, j) => `<label class="field">Đóng gói cả đơn ${j + 1}<select name="${k}">${options(orderPackaging(), o[k], '— không —')}</select></label>`).join('')}
       </div>
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
@@ -1183,15 +1132,6 @@ function openOrderFormNow(existing, restored) {
         applyTiers();
       });
       $('#add-line', m).onclick = () => { o.items.push(blankLine()); drawLines(); };
-      // which packaging the three "Đóng gói cả đơn" boxes offer: the shop's own short list
-      $('#wrap-config', m).onclick = () => openWrapConfig(() => {
-        WRAP_SLOTS.forEach((k) => {
-          const sel = form.elements[k], cur = sel.value;
-          sel.innerHTML = options(wrapList(cur), cur, '— không —');
-        });
-        const n = (settings.wrapItems || []).length;
-        $('#wrap-config', m).textContent = `⚙ Chọn dụng cụ hiển thị${n ? ` (${n})` : ''}`;
-      });
       // Quick entry: pick a product once, type a quantity for each of its variants, get one line per variant.
       $('#quick-add', m).onclick = () => openQuickAdd(({ product: qp, rows }) => {
         o.items = o.items.filter((l) => l.productId || l.productName); // the empty starter line goes away
