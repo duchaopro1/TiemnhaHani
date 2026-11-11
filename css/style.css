@@ -665,3 +665,9 @@ main.wide { max-width: min(1560px, 100%); }
 
 .pk-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); align-items: start; }
 @media (max-width: 900px) { .pk-grid { grid-template-columns: 1fr; } }
+
+/* categories */
+.cat-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
+.cat-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; }
+.cat-row input { min-width: 0; }
+.line select[data-f="cat"] { margin-bottom: 4px; font-size: 13px; }

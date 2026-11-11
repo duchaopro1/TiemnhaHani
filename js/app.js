@@ -99,7 +99,7 @@ function derive() {
   costs = costTable(S);
   stock = stockLevels(S);
   shortages = orderShortages(S);
-  settings = { id: 'settings', shopeeMap: {}, lowStock: 5, laborPerOrder: DEFAULT_LABOR, ...(store.get('meta', 'settings') || {}) };
+  settings = { id: 'settings', shopeeMap: {}, lowStock: 5, laborPerOrder: DEFAULT_LABOR, categories: [], ...(store.get('meta', 'settings') || {}) };
 }
 const product = (id) => store.get('products', id);
 const pack = (id) => store.get('packaging', id);
@@ -128,6 +128,34 @@ const thumb = (ref, name, cls = '') =>
 const presetCost = (preset) => PACK_SLOTS.reduce((s, k) => s + (preset?.[k] && !costs.shared[preset[k]] ? num(costs.packaging[preset[k]]) : 0), 0);
 /** Packaging that can go into an order: everything except shared supplies (tape, staples…). */
 const orderPackaging = () => S.packaging.filter((k) => !k.shared);
+
+/* ---- product categories (danh mục): a product has one `group`; combos form their own category ---- */
+const CAT_COMBO = '__combo', CAT_NONE = '__none';
+/** The category key of a product: its group name, "__combo" for a combo, "__none" when it has none. */
+const catKey = (p) => (isCombo(p) ? CAT_COMBO : (p?.group || '').trim() || CAT_NONE);
+/** The shop's categories in its own order, then any group name found on products but not listed yet. */
+const categoryList = () => {
+  const out = [...(settings.categories || [])];
+  for (const p of S.products) {
+    const g = isCombo(p) ? '' : (p.group || '').trim();
+    if (g && !out.includes(g)) out.push(g);
+  }
+  return out;
+};
+const catLabel = (k) => (k === CAT_COMBO ? 'Combo' : k === CAT_NONE ? 'Chưa phân danh mục' : k);
+/** Every category key in use, in display order: named ones, then products with none, then combos. */
+const categoryKeys = () => [...categoryList(), ...(S.products.some((p) => catKey(p) === CAT_NONE) ? [CAT_NONE] : []), ...(S.products.some(isCombo) ? [CAT_COMBO] : [])];
+/**
+ * <option>s of products. With categories the products are grouped under them (optgroup), so a long list reads
+ * as "móc khóa → in ảnh, chữ cái, ngôi sao". Without any category it stays a flat list.
+ */
+function productOptionsHtml(list, selected, empty) {
+  const opt = (arr) => arr.map((q) => `<option value="${esc(q.id)}" ${q.id === selected ? 'selected' : ''}>${esc(q.name)}</option>`).join('');
+  const head = empty === undefined ? '' : `<option value="">${empty}</option>`;
+  if (!categoryList().length) return head + opt(list);
+  const groups = categoryKeys().map((k) => [k, list.filter((q) => catKey(q) === k)]).filter(([, arr]) => arr.length);
+  return head + groups.map(([k, arr]) => `<optgroup label="${esc(catLabel(k))}">${opt(arr)}</optgroup>`).join('');
+}
 /**
  * Every packaging tool belongs to the shop's own lists: tools for packing a product (one line of an order) and
  * tools for packing the whole order (outer box or bag). A tool without a choice is in both. A list always
@@ -214,7 +242,7 @@ function openQuickAdd(onAdd) {
     const p = product(pid);
     d.innerHTML = `<div class="modal-body">
       <h3 style="margin:0 0 8px">⚡ Nhập nhanh nhiều loại</h3>
-      <label class="field">Sản phẩm<select id="qk-product">${prods.map((x) => `<option value="${esc(x.id)}" ${x.id === pid ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="field">Sản phẩm<select id="qk-product">${productOptionsHtml(prods, pid)}</select></label>
       <div class="quick-grid" role="group" aria-label="Số lượng từng loại">${p.variants.map((v) => {
         const have = vStock(p.id, v.id);
         return `<label class="quick-row ${num(qty[v.id]) > 0 ? 'on' : ''}" data-v="${esc(v.id)}">
@@ -856,11 +884,14 @@ function openOrderFormNow(existing, restored) {
     </div>`).join('')}</div>`;
   };
 
+  /** The category shown on a line: the one picked on it, else the one of its product, else all. */
+  const lineCat = (l) => (l.cat !== undefined ? l.cat : l.productId && product(l.productId) ? catKey(product(l.productId)) : '');
   const lineHtml = (l, i) => `
     <div class="line" data-line="${i}">
       <div class="field">
         <label class="field">Sản phẩm
-          <select data-f="productId">${options(S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>
+          ${categoryList().length || S.products.some(isCombo) ? `<select data-f="cat" aria-label="Danh mục sản phẩm"><option value="">Tất cả danh mục</option>${categoryKeys().map((k) => `<option value="${esc(k)}" ${k === lineCat(l) ? 'selected' : ''}>${esc(catLabel(k))}</option>`).join('')}</select>` : ''}
+          <select data-f="productId">${productOptionsHtml(lineCat(l) ? S.products.filter((q) => catKey(q) === lineCat(l) || q.id === l.productId) : S.products, l.productId, l.productId ? undefined : (l.productName ? `⚠ ${esc(l.productName)}` : '— chọn sản phẩm —'))}</select>
         </label>
         ${hasVariants(product(l.productId)) ? `<select data-f="variantId" aria-label="Phân loại">
           <option value="">— chọn phân loại —</option>
@@ -1084,8 +1115,18 @@ function openOrderFormNow(existing, restored) {
           l.picks[+e.target.dataset.pickU][+e.target.dataset.pickI] = e.target.value;
           return;
         }
+        if (f === 'cat') {
+          // choosing a category narrows the products offered; a product of another category is cleared
+          l.cat = e.target.value;
+          if (l.cat && l.productId && catKey(product(l.productId)) !== l.cat) { l.productId = ''; l.variantId = ''; l.picks = []; l.priceManual = false; }
+          $(`[data-line="${i}"]`, m).outerHTML = lineHtml(l, i);
+          drawMeta(i);
+          applyTiers();
+          return;
+        }
         if (f === 'productId') {
           l.productId = e.target.value;
+          l.cat = l.productId ? catKey(product(l.productId)) : l.cat;
           l.variantId = '';
           l.picks = [];
           const p = product(l.productId);
@@ -1182,7 +1223,7 @@ function openOrderFormNow(existing, restored) {
         if (ctl.saving) return;
         if (!form.reportValidity()) return;
         Object.assign(o, readHeader());
-        const items = o.items.filter((l) => l.productId || l.productName).map(({ preset, ...l }) => l);
+        const items = o.items.filter((l) => l.productId || l.productName).map(({ preset, cat, ...l }) => l);
         if (!items.length) return toast('Chọn ít nhất 1 sản phẩm');
         const noVariant = items.find((l) => hasVariants(product(l.productId)) && !l.variantId);
         if (noVariant && !existing) return notify(`Chọn phân loại (màu, size…) cho "${product(noVariant.productId).name}"`);
@@ -2007,6 +2048,28 @@ function pageProducts() {
   const list = S.products.filter((p) => !q || normalize([p.name, p.sku, ...(p.variants || []).flatMap((v) => [v.name, v.sku])].join(' ')).includes(q));
   const plain = list.filter((p) => !isCombo(p));
   const combos = list.filter(isCombo);
+  const hasCats = categoryList().length > 0;
+  /** Products grouped by category; with no category yet it is one plain "Sản phẩm" area. */
+  const sections = () => {
+    if (!hasCats) {
+      return `<section class="psec" aria-labelledby="psec-products">
+      <h2 class="psec-title" id="psec-products">Sản phẩm <span class="psec-count">${plain.length}</span></h2>
+      ${plain.length ? `<div class="ptiles">${plain.map(tile).join('')}</div>`
+        : `<div class="card empty">${S.products.some((p) => !isCombo(p)) ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
+    </section>`;
+    }
+    const keys = [...categoryList(), CAT_NONE];
+    return keys.map((k) => {
+      const inCat = plain.filter((p) => catKey(p) === k);
+      const total = S.products.filter((p) => !isCombo(p) && catKey(p) === k).length;
+      if (k === CAT_NONE && !inCat.length) return '';
+      if (q && !inCat.length) return ''; // searching: hide the categories with no match
+      return `<section class="psec" aria-labelledby="psec-${esc(k)}">
+        <h2 class="psec-title" id="psec-${esc(k)}">${esc(catLabel(k))} <span class="psec-count">${inCat.length}</span></h2>
+        ${inCat.length ? `<div class="ptiles">${inCat.map(tile).join('')}</div>` : `<div class="card empty">${total ? 'Không có sản phẩm khớp tìm kiếm.' : 'Danh mục này chưa có sản phẩm. Mở một sản phẩm, bấm Sửa rồi chọn danh mục.'}</div>`}
+      </section>`;
+    }).join('');
+  };
 
   const tile = (p) => `<button class="ptile tone-${toneOf(p)}" data-action="open-product" data-id="${p.id}">
       <span class="ptile-img">${thumb(p.image, p.name, 'xl')}</span>
@@ -2018,17 +2081,13 @@ function pageProducts() {
   return `
     <div class="page-head">
       <div><h1>Sản phẩm</h1><p>Bấm vào sản phẩm để xem các phân loại, số lượng tồn và giá bán.</p></div>
-      <div class="actions"><button class="btn" data-action="new-combo" title="Ghép nhiều sản phẩm có sẵn thành một combo">🎁 Tạo combo</button><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
+      <div class="actions"><button class="btn ghost" data-action="manage-cats" title="Thêm, đổi tên, xoá danh mục sản phẩm">🗂 Danh mục</button><button class="btn" data-action="new-combo" title="Ghép nhiều sản phẩm có sẵn thành một combo">🎁 Tạo combo</button><button class="btn pink" data-action="new-product">＋ Sản phẩm</button></div>
     </div>
     <div class="toolbar">
       <input type="search" id="product-q" placeholder="Tìm tên, SKU, màu…" value="${esc(ui.products.q)}">
-      <span class="muted small" style="margin-left:auto">${plain.length} sản phẩm · ${combos.length} combo</span>
+      <span class="muted small" style="margin-left:auto">${plain.length} sản phẩm${hasCats ? ` · ${categoryList().length} danh mục` : ''} · ${combos.length} combo</span>
     </div>
-    <section class="psec" aria-labelledby="psec-products">
-      <h2 class="psec-title" id="psec-products">Sản phẩm <span class="psec-count">${plain.length}</span></h2>
-      ${plain.length ? `<div class="ptiles">${plain.map(tile).join('')}</div>`
-        : `<div class="card empty">${S.products.some((p) => !isCombo(p)) ? 'Không có sản phẩm khớp tìm kiếm.' : 'Chưa có sản phẩm. Bấm “＋ Sản phẩm” để thêm, kèm ảnh và các phân loại.'}</div>`}
-    </section>
+    ${sections()}
     <section class="psec" aria-labelledby="psec-combos">
       <h2 class="psec-title" id="psec-combos">Combo <span class="psec-count">${combos.length}</span></h2>
       ${combos.length ? `<div class="ptiles">${combos.map(tile).join('')}</div>`
@@ -2147,7 +2206,7 @@ function openComboForm(existing) {
         $('#cb-parts', m).innerHTML = parts.map((x, i) => {
           const p = product(x.productId);
           return `<div class="combo-part" data-i="${i}">
-            <select data-f="productId" aria-label="Sản phẩm"><option value="">— chọn sản phẩm —</option><option value="__pool" ${x.isPool ? 'selected' : ''}>🎲 Ngẫu nhiên giữa nhiều sản phẩm…</option>${pickable.map((q) => `<option value="${esc(q.id)}" ${q.id === x.productId ? 'selected' : ''}>${esc(q.name)}</option>`).join('')}</select>
+            <select data-f="productId" aria-label="Sản phẩm"><option value="">— chọn sản phẩm —</option><option value="__pool" ${x.isPool ? 'selected' : ''}>🎲 Ngẫu nhiên giữa nhiều sản phẩm…</option>${productOptionsHtml(pickable, x.productId)}</select>
             ${p && hasVariants(p) ? `<select data-f="variantId" aria-label="Phân loại"><option value="">Chọn loại khi lên đơn</option><option value="__random" ${x.random ? 'selected' : ''}>Ngẫu nhiên (không cần chọn)</option>${p.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === x.variantId ? 'selected' : ''}>Luôn là ${esc(v.name)}</option>`).join('')}</select>` : '<span></span>'}
             <input type="number" min="1" step="1" data-f="qty" value="${num(x.qty)}" aria-label="Số lượng" title="Số lượng trong 1 combo">
             <button type="button" class="icon-btn del" data-rm="${i}" title="Bỏ">✕</button>
@@ -2295,6 +2354,51 @@ async function moveVariantHistory(productId, moves) {
   if (orders.length) await store.upsertMany('orders', orders);
 }
 
+/** Add, rename and delete categories. Renaming moves the products with it; deleting leaves them without a category. */
+function openCategoryDialog() {
+  const rows = categoryList().map((name) => ({ orig: name, name, gone: false }));
+  const d = document.createElement('dialog');
+  d.className = 'confirm wrap-dialog';
+  const countOf = (g) => S.products.filter((q) => !isCombo(q) && (q.group || '').trim() === g).length;
+  const draw = () => {
+    d.innerHTML = `<div class="modal-body">
+      <h3 style="margin:0 0 6px">🗂 Danh mục sản phẩm</h3>
+      <p class="small muted" style="margin:0 0 10px">Chia sản phẩm theo nhóm (VD: Móc khóa gồm móc khóa in ảnh, chữ cái, ngôi sao). Khi lên đơn bạn chọn danh mục trước, rồi chọn sản phẩm trong danh mục đó. Combo luôn là một danh mục riêng.</p>
+      <div class="cat-list">${rows.map((r, i) => (r.gone ? '' : `<div class="cat-row"><input data-cat="${i}" value="${esc(r.name)}" aria-label="Tên danh mục"><span class="small muted">${r.orig ? `${countOf(r.orig)} sản phẩm` : 'mới'}</span><button type="button" class="icon-btn del" data-catdel="${i}" title="Xoá danh mục (sản phẩm giữ lại, chưa phân danh mục)">🗑</button></div>`)).join('') || '<div class="empty">Chưa có danh mục nào.</div>'}</div>
+      <button type="button" class="btn ghost sm" id="cat-add" style="margin-top:8px">＋ Thêm danh mục</button>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn" value="save">Lưu</button></div>`;
+  };
+  d.addEventListener('input', (e) => { if (e.target.dataset.cat !== undefined) rows[+e.target.dataset.cat].name = e.target.value; });
+  d.addEventListener('click', (e) => {
+    if (e.target.id === 'cat-add') { rows.push({ orig: '', name: '', gone: false }); draw(); $$('.cat-row input', d).at(-1)?.focus(); return; }
+    const del = e.target.closest('[data-catdel]');
+    if (del) { rows[+del.dataset.catdel].gone = true; draw(); return; }
+    const v = e.target.closest('button')?.value;
+    if (v === 'save') {
+      const names = rows.filter((r) => !r.gone).map((r) => r.name.trim()).filter(Boolean);
+      if (new Set(names).size !== names.length) return toast('Hai danh mục không được trùng tên');
+      d.close('save');
+    } else if (v) d.close(v);
+  });
+  d.addEventListener('close', async () => {
+    if (d.returnValue === 'save') {
+      const live = rows.filter((r) => !r.gone && r.name.trim());
+      const renames = new Map(live.filter((r) => r.orig && r.orig !== r.name.trim()).map((r) => [r.orig, r.name.trim()]));
+      const removed = new Set(rows.filter((r) => r.orig && (r.gone || !r.name.trim())).map((r) => r.orig));
+      const touched = S.products.filter((q) => !isCombo(q) && ((q.group && renames.has(q.group)) || removed.has(q.group)))
+        .map((q) => ({ ...q, group: removed.has(q.group) ? '' : renames.get(q.group) }));
+      if (touched.length) await store.upsertMany('products', touched);
+      await store.upsert('meta', { ...settings, categories: live.map((r) => r.name.trim()) });
+      toast('Đã lưu danh mục');
+    }
+    d.remove();
+  });
+  document.body.append(d);
+  draw();
+  d.showModal();
+}
+
 function openProductForm(existing) {
   const p = existing ? structuredClone(existing) : { name: '', sku: '', category: 'her', salePrice: 0, baseCost: 0, defaultPreset: '', lowStock: '', adjust: 0, note: '', image: '', variants: [] };
   p.variants ||= [];
@@ -2324,6 +2428,8 @@ function openProductForm(existing) {
         </div>
         <div class="form-grid" style="grid-template-columns:1fr 1fr">
           <label class="field" style="grid-column:1/-1">Tên sản phẩm<input name="name" value="${esc(p.name)}" required placeholder="VD: Cúp pha lê mini"></label>
+          <label class="field" style="grid-column:1/-1">Danh mục<select name="group" id="p-group"><option value="">— chưa phân danh mục —</option>${categoryList().map((g) => `<option value="${esc(g)}" ${g === (p.group || '') ? 'selected' : ''}>${esc(g)}</option>`).join('')}<option value="__new">＋ Danh mục mới…</option></select></label>
+          <label class="field" id="p-group-new" style="grid-column:1/-1" hidden>Tên danh mục mới<input name="groupNew" placeholder="VD: Móc khóa"></label>
           <label class="field" style="grid-column:1/-1">SKU (trùng SKU trên Shopee)<input name="sku" value="${esc(p.sku)}"></label>
           <label class="field">Giá bán<input type="number" min="0" step="1000" name="salePrice" value="${num(p.salePrice)}" title="Giá chung; mỗi phân loại có thể đặt giá riêng bên dưới"></label>
           <label class="field">Giá gốc (khi chưa có phiếu nhập)<input type="number" min="0" step="100" name="baseCost" value="${num(p.baseCost)}"></label>
@@ -2360,6 +2466,7 @@ function openProductForm(existing) {
     onMount(m) {
       const form = $('#product-form', m);
       let busy = 0;
+      form.group.addEventListener('change', () => { $('#p-group-new', m).hidden = form.group.value !== '__new'; if (form.group.value === '__new') form.groupNew.focus(); });
 
       const drawVariants = () => {
         $('#adjust-wrap', m).hidden = p.variants.length > 0;
@@ -2456,6 +2563,9 @@ function openProductForm(existing) {
         if (busy) return toast('Đang tải ảnh, chờ chút…');
         if (!form.reportValidity()) return;
         const d = formData(form);
+        let group = d.group === '__new' ? (d.groupNew || '').trim() : d.group;
+        if (d.group === '__new' && !group) return toast('Nhập tên cho danh mục mới');
+        if (group && !categoryList().includes(group)) await store.upsert('meta', { ...settings, categories: [...(settings.categories || []), group] });
         if (moves.length) await moveVariantHistory(p.id, moves);
         if (releasedFromCombos.size) {
           const fixed = S.products.filter((c) => comboParts(c).some((x) => x.productId === p.id && releasedFromCombos.has(x.variantId)))
@@ -2463,7 +2573,7 @@ function openProductForm(existing) {
           if (fixed.length) await store.upsertMany('products', fixed);
         }
         await store.upsert('products', {
-          ...p, name: d.name.trim(), category: p.category || 'other', sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
+          ...p, name: d.name.trim(), category: p.category || 'other', group, sku: d.sku.trim(), salePrice: num(d.salePrice), baseCost: num(d.baseCost),
           defaultPreset: d.defaultPreset, lowStock: d.lowStock === '' ? null : num(d.lowStock),
           adjust: p.variants.length ? num(p.adjust) : num(d.adjust), note: d.note.trim(),
           variants: p.variants.map((v) => ({ ...v, name: v.name.trim(), sku: (v.sku || '').trim(), price: num(v.price) })),
@@ -3031,6 +3141,7 @@ document.addEventListener('click', async (e) => {
     case 'del-import': return confirmDel('imports', 'Xoá phiếu nhập này? Tồn kho và giá vốn sẽ tính lại.');
     case 'new-product': return openProductForm();
     case 'new-combo': return openComboForm();
+    case 'manage-cats': return openCategoryDialog();
     case 'open-product': return isCombo(product(id)) ? openComboDetail(id) : openProductDetail(id);
     case 'edit-item':
       e.preventDefault();
