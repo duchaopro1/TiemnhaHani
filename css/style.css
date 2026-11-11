@@ -671,3 +671,8 @@ main.wide { max-width: min(1560px, 100%); }
 .cat-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; }
 .cat-row input { min-width: 0; }
 .line select[data-f="cat"] { margin-bottom: 4px; font-size: 13px; }
+
+.cat-row { grid-template-columns: auto 1fr auto auto; }
+.cat-move { display: inline-flex; flex-direction: column; }
+.cat-move .icon-btn { padding: 1px 8px; line-height: 1.2; font-size: 13px; }
+.cat-move .icon-btn:disabled { opacity: .3; cursor: default; }

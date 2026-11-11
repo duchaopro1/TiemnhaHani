@@ -2364,7 +2364,10 @@ function openCategoryDialog() {
     d.innerHTML = `<div class="modal-body">
       <h3 style="margin:0 0 6px">🗂 Danh mục sản phẩm</h3>
       <p class="small muted" style="margin:0 0 10px">Chia sản phẩm theo nhóm (VD: Móc khóa gồm móc khóa in ảnh, chữ cái, ngôi sao). Khi lên đơn bạn chọn danh mục trước, rồi chọn sản phẩm trong danh mục đó. Combo luôn là một danh mục riêng.</p>
-      <div class="cat-list">${rows.map((r, i) => (r.gone ? '' : `<div class="cat-row"><input data-cat="${i}" value="${esc(r.name)}" aria-label="Tên danh mục"><span class="small muted">${r.orig ? `${countOf(r.orig)} sản phẩm` : 'mới'}</span><button type="button" class="icon-btn del" data-catdel="${i}" title="Xoá danh mục (sản phẩm giữ lại, chưa phân danh mục)">🗑</button></div>`)).join('') || '<div class="empty">Chưa có danh mục nào.</div>'}</div>
+      <div class="cat-list">${(() => {
+        const shown = rows.map((r, i) => [r, i]).filter(([r]) => !r.gone);
+        return shown.map(([r, i], pos) => `<div class="cat-row"><span class="cat-move"><button type="button" class="icon-btn" data-catup="${i}" title="Đưa lên" aria-label="Đưa ${esc(r.name)} lên" ${pos === 0 ? 'disabled' : ''}>▲</button><button type="button" class="icon-btn" data-catdown="${i}" title="Đưa xuống" aria-label="Đưa ${esc(r.name)} xuống" ${pos === shown.length - 1 ? 'disabled' : ''}>▼</button></span><input data-cat="${i}" value="${esc(r.name)}" aria-label="Tên danh mục"><span class="small muted">${r.orig ? `${countOf(r.orig)} sản phẩm` : 'mới'}</span><button type="button" class="icon-btn del" data-catdel="${i}" title="Xoá danh mục (sản phẩm giữ lại, chưa phân danh mục)">🗑</button></div>`).join('') || '<div class="empty">Chưa có danh mục nào.</div>';
+      })()}</div>
       <button type="button" class="btn ghost sm" id="cat-add" style="margin-top:8px">＋ Thêm danh mục</button>
     </div>
     <div class="modal-foot"><button class="btn ghost" value="close">Huỷ</button><button class="btn" value="save">Lưu</button></div>`;
@@ -2374,6 +2377,21 @@ function openCategoryDialog() {
     if (e.target.id === 'cat-add') { rows.push({ orig: '', name: '', gone: false }); draw(); $$('.cat-row input', d).at(-1)?.focus(); return; }
     const del = e.target.closest('[data-catdel]');
     if (del) { rows[+del.dataset.catdel].gone = true; draw(); return; }
+    // reorder: swap with the next row still shown (rows deleted in this session are skipped)
+    const move = e.target.closest('[data-catup], [data-catdown]');
+    if (move && !move.disabled) {
+      const i = +(move.dataset.catup ?? move.dataset.catdown), step = move.dataset.catup !== undefined ? -1 : 1;
+      let j = i + step;
+      while (rows[j] && rows[j].gone) j += step;
+      if (rows[j]) {
+        [rows[i], rows[j]] = [rows[j], rows[i]];
+        const keep = d.scrollTop;
+        draw();
+        d.scrollTop = keep;
+        d.querySelector(`[data-cat${step < 0 ? 'up' : 'down'}="${j}"]:not(:disabled)`)?.focus();
+      }
+      return;
+    }
     const v = e.target.closest('button')?.value;
     if (v === 'save') {
       const names = rows.filter((r) => !r.gone).map((r) => r.name.trim()).filter(Boolean);
