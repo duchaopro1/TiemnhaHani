@@ -817,7 +817,7 @@ function orderRow(o) {
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
-    <td class="small"><div class="items">${items}</div>${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
+    <td class="small"><div class="items">${items}</div>${(o.items || []).length ? `<div class="order-total">Tổng: <b>${(o.items || []).reduce((n, l) => n + num(l.qty), 0)}</b> sản phẩm${(o.items || []).length > 1 ? ` <span class="muted">· ${o.items.length} dòng</span>` : ''}</div>` : ''}${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
     <td class="num">${money(s.gross)}${s.discount ? `<br><span class="small muted">− giảm giá ${money(s.discount)}</span>` : ''}</td>
     <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
     <td class="num"><b>${money(orderPayment(costs, o).total)}</b>${payInfo(o)}</td>

@@ -684,3 +684,6 @@ main.wide { max-width: min(1560px, 100%); }
 .cat-ended input { width: auto; margin: 0; }
 .cat-row { grid-template-columns: auto 1fr auto auto auto; }
 .psec-title .chip { font-size: 12px; vertical-align: middle; }
+
+/* total quantity of an order */
+.order-total { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: 13px; }
