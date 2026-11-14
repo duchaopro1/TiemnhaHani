@@ -623,7 +623,14 @@ function openStageOrders(id, colKey, vk) {
     const r = e.target.closest('[data-order]');
     if (r) { open = r.dataset.order; d.close(); } else if (e.target.value) d.close();
   });
-  d.addEventListener('close', () => { d.remove(); if (open) openOrderForm(store.get('orders', open)); });
+  d.addEventListener('close', async () => {
+    d.remove();
+    if (!open) return;
+    // the list comes back once the order is closed, redrawn so a changed status or quantity shows
+    await openOrderForm(store.get('orders', open));
+    if (!modal.open) openStageOrders(id, colKey, vk); // the draft prompt was dismissed: no form opened
+    else EventTarget.prototype.addEventListener.call(modal, 'close', () => openStageOrders(id, colKey, vk), { once: true });
+  });
   document.body.append(d);
   d.showModal();
 }
