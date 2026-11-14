@@ -377,7 +377,9 @@ test('trang doanh thu: chỉ đơn hoàn thành, tổng đơn / doanh thu / chi 
   assert.equal(r.fee, 8000);
   assert.equal(r.cost, 40000 + 5000 + 30000 + 8000); // chưa gồm tiền công
   assert.equal(r.before, 190000 - r.cost); // lợi nhuận trước tiền công
-  assert.equal(r.profit, r.before - 10000); // lợi nhuận sau tiền công
+  assert.equal(r.pieces, 2);
+  assert.equal(r.labor, 20000); // 2 sản phẩm × 10.000
+  assert.equal(r.profit, r.before - 20000); // lợi nhuận sau tiền công
   assert.equal(total.profit, r.profit);
   assert.equal(total.before, r.before);
   // khách trả ship: tổng đơn = hàng + ship - giảm giá, ship không phải chi phí của shop
@@ -385,7 +387,14 @@ test('trang doanh thu: chỉ đơn hoàn thành, tổng đơn / doanh thu / chi 
   assert.equal(c.total, 200000 + 30000 - 10000);
   assert.equal(c.ship, 0);
   assert.equal(c.shipFee, 30000); // phí ship vẫn hiện dù khách trả
-  assert.equal(c.profit, 190000 - (40000 + 5000 + 8000 + 10000));
+  assert.equal(c.profit, 190000 - (40000 + 5000 + 8000 + 20000)); // tiền công 2 sản phẩm × 10.000
+  // tiền công tính theo số sản phẩm của đơn, cộng qua nhiều dòng; mức công 0 thì không tốn
+  const multi = { ...done, items: [{ productId: 'A', qty: 2, price: 100000 }, { productId: 'A', qty: 3, price: 100000 }] };
+  const m = completedRevenue(costs, [multi, { ...done, id: 'o9' }], 5000);
+  assert.equal(m.rows.map((x) => x.labor).sort((x, y) => x - y).join(), '10000,25000');
+  assert.equal(m.total.labor, 35000);
+  assert.equal(m.total.pieces, 7);
+  assert.equal(completedRevenue(costs, [multi], 0).rows[0].labor, 0);
 });
 
 test('sản phẩm theo giai đoạn: gom số lượng theo trạng thái, tách từng phân loại, bỏ đơn huỷ / trả', () => {

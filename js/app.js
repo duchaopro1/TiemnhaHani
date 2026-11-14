@@ -475,7 +475,8 @@ function periodRange() {
 /** Finished orders one by one: what the customer paid, every cost taken out, and what is left. */
 function pageRevenue() {
   const [from, to, periodLabel] = periodRange();
-  const labor = num(settings.laborPerOrder);
+  // pay per product; the figure the shop set before it was per order is kept as the starting rate
+  const labor = num(settings.laborPerItem ?? settings.laborPerOrder);
   const { rows, total } = completedRevenue(costs, S.orders.filter((o) => o.date >= from && o.date <= to), labor);
   const cur = thisMonth();
   const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
@@ -511,8 +512,8 @@ function pageRevenue() {
       <div class="card kpi-card"><div class="label">Lợi nhuận sau công${total.revenue ? ` · ${margin}%` : ''}</div><div class="value ${profitCls(total.profit)}">${money(total.profit)}</div></div>
     </div>
     <div class="toolbar">
-      <label class="field inline">Tiền công mỗi đơn <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
-      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Lợi nhuận sau công = lợi nhuận − tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
+      <label class="field inline">Tiền công mỗi sản phẩm <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
+      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Tiền công = tiền công mỗi sản phẩm × số sản phẩm trong đơn. Lợi nhuận sau công = lợi nhuận − tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
     </div>
     <div class="card table-wrap rev-wrap">
       ${rows.length ? `<table class="rev-table">
@@ -525,7 +526,7 @@ function pageRevenue() {
         <tbody>${rows.map((r) => `<tr>
           <td>${fmtDate(r.order.date)}</td>
           <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="plat-tag ${esc(r.order.platform)}">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
-          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}${cell(r.labor)}${cell(r.profit, `strong ${profitCls(r.profit)}`)}
+          ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}<td class="num" title="${r.pieces} sản phẩm × ${money(labor)}">${money(r.labor)}<br><span class="small muted">${r.pieces} sp</span></td>${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
           <td colspan="2"><b>Tổng ${total.orders} đơn</b></td>
@@ -3283,7 +3284,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
-  if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerOrder: Math.max(0, num(t.value)) });
+  if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerItem: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { await importShopeeFile(t.files[0]); t.value = ''; }
   if (t.id === 'restore-file' && t.files[0]) {
     try {

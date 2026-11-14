@@ -397,7 +397,7 @@ export function findDuplicateOrders(orders, draft) {
   return out.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || ''));
 }
 
-/** Fixed pay for packing one order, in dong; the shop can change it on the revenue page. */
+/** Pay for packing one product (one piece sold), in dong; the shop can change it on the revenue page. */
 export const DEFAULT_LABOR = 10000;
 
 /**
@@ -406,21 +406,23 @@ export const DEFAULT_LABOR = 10000;
  *   revenue  = goods - discount
  *   shipFee  = the order's shipping fee, whoever pays it; `ship` is only the part the shop pays
  *   cost     = product cost + packaging + shipping the shop pays + platform fee
+ *   labor    = pay per product x pieces in the order (a combo counts as the pieces sold, not its parts)
  *   before   = revenue - cost                (profit before labor)
  *   profit   = before - labor                (profit after labor)
  * Operating costs (shared supplies) are not per order and are not in these rows.
  */
-export function completedRevenue(costs, orders, labor = DEFAULT_LABOR) {
+export function completedRevenue(costs, orders, laborPerItem = DEFAULT_LABOR) {
   const rows = [];
-  const total = { orders: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, shipFee: 0, ship: 0, fee: 0, cost: 0, before: 0, labor: 0, profit: 0 };
+  const total = { orders: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, shipFee: 0, ship: 0, fee: 0, cost: 0, before: 0, labor: 0, profit: 0, pieces: 0 };
   for (const order of orders) {
     if (order.status !== 'done') continue;
     const s = orderSummary(costs, order);
+    const pieces = (order.items || []).reduce((n, l) => n + num(l.qty), 0);
     const row = {
-      order,
+      order, pieces,
       total: orderPayment(costs, order).total,
       gross: s.gross, discount: s.discount, revenue: s.revenue,
-      product: s.product, packaging: s.packaging, shipFee: num(order.shipFee), ship: s.ship, fee: s.fee, labor: num(labor),
+      product: s.product, packaging: s.packaging, shipFee: num(order.shipFee), ship: s.ship, fee: s.fee, labor: num(laborPerItem) * pieces,
     };
     row.cost = row.product + row.packaging + row.ship + row.fee;
     row.before = row.revenue - row.cost;
