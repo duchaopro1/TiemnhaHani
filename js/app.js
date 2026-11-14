@@ -540,6 +540,12 @@ function pageRevenue() {
  * Zeros are a faint dot so the eye only stops on real numbers. Rows with nothing left to do are
  * hidden unless asked for; each product with variants opens into one row per variant.
  */
+const STAGE_COLS = () => [
+  { k: 'pending', label: 'Đang chờ', from: ['pending', 'designed'], title: 'Chờ xử lý + Đã thiết kế' },
+  { k: 'packed', label: STATUSES.packed, from: ['packed'] },
+  { k: 'shipping', label: STATUSES.shipping, from: ['shipping'] },
+  { k: 'done', label: STATUSES.done, from: ['done'] },
+];
 function stagesChart(orders) {
   const q = stageQuantities(orders);
   const todo = (c) => c.pending + c.designed + c.packed + c.shipping; // everything not finished yet
@@ -549,15 +555,11 @@ function stagesChart(orders) {
     .sort((a, b) => todo(q[b].total) - todo(q[a].total) || q[b].sum - q[a].sum);
   const hidden = all.length - ids.length;
   // "Chờ xử lý" and "Đã thiết kế" are one column: both mean the order is waiting to be packed.
-  const COLS = [
-    { k: 'pending', label: 'Đang chờ', from: ['pending', 'designed'], title: 'Chờ xử lý + Đã thiết kế' },
-    { k: 'packed', label: STATUSES.packed, from: ['packed'] },
-    { k: 'shipping', label: STATUSES.shipping, from: ['shipping'] },
-    { k: 'done', label: STATUSES.done, from: ['done'] },
-  ];
+  const COLS = STAGE_COLS();
   const colOf = (c, col) => col.from.reduce((n, k) => n + c[k], 0);
   const colSum = Object.fromEntries(COLS.map((col) => [col.k, ids.reduce((n, id) => n + colOf(q[id].total, col), 0)]));
-  const cells = (c) => COLS.map((col) => { const n = colOf(c, col); return `<td class="num stg-c ${n ? `has st-${col.k}` : 'zero'} ${col.k === 'done' ? 'fin' : ''}">${n ? `<b>${n}</b>` : '·'}</td>`; }).join('');
+  // a number opens the list of orders behind it (vk = a variant row; absent = the whole product)
+  const cells = (c, id, vk) => COLS.map((col) => { const n = colOf(c, col); return `<td class="num stg-c ${n ? `has st-${col.k}` : 'zero'} ${col.k === 'done' ? 'fin' : ''}">${n ? `<button type="button" class="stg-num" data-action="stage-orders" data-id="${esc(id)}" data-col="${col.k}"${vk === undefined ? '' : ` data-vk="${esc(vk)}"`} title="Xem các đơn có sản phẩm này">${n}</button>` : '·'}</td>`; }).join('');
 
   return `<section class="card" style="margin-top:16px" aria-labelledby="stg-title">
     <div class="stboard-head">
@@ -579,15 +581,51 @@ function stagesChart(orders) {
         const sum = (c) => Object.values(c).reduce((x, y) => x + y, 0);
         return `<tr class="stg-main">
           <td><span class="item">${thumb(p?.image, p?.name, 'sm')}<span><b>${esc(p?.name || '(đã xoá)')}</b>${canOpen ? `<br><button type="button" class="link-btn" data-action="toggle-stages" data-id="${esc(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾ Ẩn từng phân loại' : '▸ Xem từng phân loại'}</button>` : ''}</span></span></td>
-          ${cells(r.total)}
+          ${cells(r.total, id)}
         </tr>${open ? vKeys.sort((a, b) => todo(r.variants[b]) - todo(r.variants[a]) || sum(r.variants[b]) - sum(r.variants[a])).map((vk) => `<tr class="stg-sub">
           <td><span class="stg-vname">${esc(variantOf(id, vk)?.name || 'Chưa chọn phân loại')}</span></td>
-          ${cells(r.variants[vk])}
+          ${cells(r.variants[vk], id, vk)}
         </tr>`).join('') : ''}`;
       }).join('')}</tbody>
       <tfoot><tr><td><b>Tổng</b></td>${COLS.map((col) => `<td class="num stg-c ${col.k === 'done' ? 'fin' : ''} ${colSum[col.k] ? '' : 'zero'}">${colSum[col.k] ? `<b>${colSum[col.k]}</b>` : '·'}</td>`).join('')}</tr></tfoot>
     </table></div>` : `<div class="empty">${all.length ? 'Không còn sản phẩm nào đang dang dở.' : 'Chưa có đơn nào đang xử lý trong thời gian này.'}</div>`}
   </section>`;
+}
+
+/** The orders behind one number of the stage table: same period, same statuses, lines of that product (and variant). */
+function openStageOrders(id, colKey, vk) {
+  const col = STAGE_COLS().find((c) => c.k === colKey);
+  if (!col) return;
+  const [from, to] = periodRange();
+  const p = product(id);
+  const rows = S.orders
+    .filter((o) => o.date >= from && o.date <= to && col.from.includes(o.status))
+    .map((o) => ({ o, qty: (o.items || []).filter((l) => l.productId === id && (vk === undefined || (l.variantId || '') === vk)).reduce((n, l) => n + num(l.qty), 0) }))
+    .filter((r) => r.qty > 0)
+    .sort((a, b) => (a.o.date || '').localeCompare(b.o.date || '') || (a.o.code || '').localeCompare(b.o.code || ''));
+  const total = rows.reduce((n, r) => n + r.qty, 0);
+  const name = `${p?.name || '(đã xoá)'}${vk === undefined ? '' : ` · ${variantOf(id, vk)?.name || 'Chưa chọn phân loại'}`}`;
+  const d = document.createElement('dialog');
+  d.className = 'confirm stage-dialog';
+  d.innerHTML = `<div class="modal-body">
+    <h3 style="margin:0 0 4px">${esc(name)}</h3>
+    <p class="small muted" style="margin:0 0 10px">${esc(col.label)}: <b>${total}</b> sản phẩm trong ${rows.length} đơn. Bấm một đơn để mở.</p>
+    <div class="stage-list">${rows.map(({ o, qty }) => `<button type="button" class="stage-row" data-order="${esc(o.id)}">
+      <span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span>
+      <span><b>${esc(o.code || '—')}</b> <span class="muted small">${esc(o.customer || '')} · ${fmtDate(o.date)}</span></span>
+      <span class="chip st-${o.status}">${esc(STATUSES[o.status] || o.status)}</span>
+      <span class="num"><b>×${qty}</b></span>
+    </button>`).join('') || '<div class="empty">Không có đơn nào.</div>'}</div>
+  </div>
+  <div class="modal-foot"><button class="btn ghost" value="close">Đóng</button></div>`;
+  let open = '';
+  d.addEventListener('click', (e) => {
+    const r = e.target.closest('[data-order]');
+    if (r) { open = r.dataset.order; d.close(); } else if (e.target.value) d.close();
+  });
+  d.addEventListener('close', () => { d.remove(); if (open) openOrderForm(store.get('orders', open)); });
+  document.body.append(d);
+  d.showModal();
 }
 
 function pageDashboard() {
@@ -3163,6 +3201,7 @@ document.addEventListener('click', async (e) => {
     case 'edit-import': return openImportForm(store.get('imports', id));
     case 'show-short': return showShortDialog();
     case 'copy-tracking': return copyText(btn.dataset.text);
+    case 'stage-orders': return openStageOrders(id, btn.dataset.col, btn.dataset.vk);
     case 'toggle-stages': ui.stages[id] = !ui.stages[id]; return render();
     case 'new-parcel': return openParcelForm();
     case 'edit-group': return openGroupEdit(btn.dataset.ids.split(','));
