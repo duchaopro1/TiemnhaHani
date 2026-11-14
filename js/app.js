@@ -1337,16 +1337,29 @@ function openOrderFormNow(existing, restored) {
 }
 
 /* ---------- Shopee import ---------- */
+let xlsxLoading = null;
+/** The Excel reader comes from a CDN. A failed download is tried once more (a slow network is the usual cause) and not remembered. */
 async function loadXLSX() {
   if (window.XLSX) return window.XLSX;
-  await new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('Không tải được thư viện đọc Excel (kiểm tra mạng).'));
-    document.head.append(s);
-  });
-  return window.XLSX;
+  xlsxLoading ||= (async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve;
+          s.onerror = () => { s.remove(); reject(new Error('Không tải được thư viện đọc Excel (kiểm tra mạng).')); };
+          document.head.append(s);
+        });
+        if (window.XLSX) return window.XLSX;
+      } catch (e) {
+        if (attempt) throw e;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    throw new Error('Không tải được thư viện đọc Excel (kiểm tra mạng).');
+  })().finally(() => { xlsxLoading = null; });
+  return xlsxLoading;
 }
 
 /** Which product (and variant) a Shopee order line is: remembered choice, then SKU, then name. */
@@ -1382,7 +1395,8 @@ const listingOptions = (selected) => S.products.map((p) =>
 async function importShopeeFile(file) {
   try {
     const XLSX = await loadXLSX();
-    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    // A .csv is text (UTF-8): read as bytes it comes out with broken accents and the "Mã đơn hàng" column is not found.
+    const wb = /\.csv$/i.test(file.name || '') ? XLSX.read(await file.text(), { type: 'string' }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
     const parsed = rowsToOrders(rows);
     if (!parsed.length) return toast('File không có đơn hàng nào');
@@ -1454,7 +1468,18 @@ async function commitShopee(parsed) {
     });
     return o;
   });
-  await store.upsertMany('orders', docs);
+  const isNew = new Set(docs.filter((d) => !existing.has(d.code)).map((d) => d.code));
+  try {
+    await store.upsertMany('orders', docs, { quiet: true });
+  } catch (err) {
+    if (!err.failed) throw err;
+    // Some orders did not go through. The ones that did are kept; importing the same file again only
+    // adds the missing ones (an order is recognised by its Shopee code), it never duplicates.
+    const lost = new Set(err.failed.map((d) => d.code));
+    added = [...isNew].filter((c) => !lost.has(c)).length;
+    updated = docs.length - err.failed.length - added;
+    return notify(`Đã lưu ${docs.length - err.failed.length}/${docs.length} đơn Shopee (thêm ${added}, cập nhật ${updated}). ${err.failed.length} đơn chưa lưu được: ${describeError(err).text}. Bấm nhập lại đúng file này để lưu nốt các đơn còn thiếu. Đơn đã lưu chỉ được cập nhật, không bị trùng.`);
+  }
   toast(`Shopee: thêm ${added} đơn, cập nhật ${updated} đơn`);
 }
 
@@ -3285,7 +3310,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
   if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerItem: Math.max(0, num(t.value)) });
-  if (t.id === 'shopee-file' && t.files[0]) { await importShopeeFile(t.files[0]); t.value = ''; }
+  if (t.id === 'shopee-file' && t.files[0]) { const f = t.files[0]; t.value = ''; await importShopeeFile(f); } // cleared first: choosing the same file again must fire a new change
   if (t.id === 'restore-file' && t.files[0]) {
     try {
       const backup = JSON.parse(await t.files[0].text());

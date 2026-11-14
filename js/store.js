@@ -198,7 +198,7 @@ class FirebaseStore extends BaseStore {
 
 // Shared store of a Claude artifact page (the `db` capability): realtime, kept server-side,
 // shared by everyone the page is shared with.
-class ArtifactStore extends BaseStore {
+export class ArtifactStore extends BaseStore {
   mode = 'artifact';
   constructor(db) {
     super();
@@ -292,17 +292,24 @@ class ArtifactStore extends BaseStore {
       this.emitLive();
     }
   }
-  /** Run a platform call; a dropped connection (`unavailable`) is retried once after a short pause. */
+  /**
+   * Run a platform call. A dropped connection (`unavailable`) and a write refused for load
+   * (`resource_exhausted`, e.g. too many writes at once during a big import) are temporary: they are
+   * retried a few times with a growing pause. Anything else (full database, bad data) cannot succeed on retry.
+   */
   async send(fn) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (err?.code !== 'unavailable') throw err;
-      await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 500));
-      return fn();
+    const base = this.retryBase ?? 400;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if ((err?.code !== 'unavailable' && err?.code !== 'resource_exhausted') || attempt >= 4) throw err;
+        if (err.code === 'resource_exhausted') this.throttledUntil = Date.now() + 60000; // too many at once: go one by one for a while
+        await new Promise((resolve) => setTimeout(resolve, base * 2 ** attempt + Math.random() * base));
+      }
     }
   }
-  async write(coll, doc) {
+  async write(coll, doc, { quiet = false } = {}) {
     doc.id ||= uid();
     doc.updatedAt = Date.now();
     this.writeSeq += 1;
@@ -315,7 +322,7 @@ class ArtifactStore extends BaseStore {
       // The server did not take it: don't leave an order on screen that was never saved.
       if (before) this.data[coll].set(doc.id, before); else this.data[coll].delete(doc.id);
       this.emit();
-      this.onError?.(err);
+      if (!quiet) this.onError?.(err);
       throw err;
     }
     return doc;
@@ -325,12 +332,30 @@ class ArtifactStore extends BaseStore {
     this.emit();
     return out;
   }
-  async upsertMany(coll, docs) {
-    // A few writes in flight at a time keeps big Shopee imports quick without hitting rate limits.
+  /**
+   * Save many documents, a few at a time. One that fails does not stop the others: when the round is over
+   * and some failed, this throws an error carrying `failed` (the documents), `saved` (how many went through)
+   * and the `code` of the first failure. The failure is reported once, not once per document, unless `quiet`
+   * (the caller reports it itself).
+   */
+  async upsertMany(coll, docs, { quiet = false } = {}) {
     const queue = [...docs];
-    const worker = async () => { while (queue.length) await this.write(coll, queue.shift()); };
-    await Promise.all(Array.from({ length: 4 }, worker));
+    const failed = [];
+    let first = null;
+    const worker = async (_, idx) => {
+      while (queue.length) {
+        if (idx > 0 && Date.now() < (this.throttledUntil || 0)) return; // the server asked us to slow down: one writer only
+        const doc = queue.shift();
+        try { await this.write(coll, doc, { quiet: true }); } catch (err) { failed.push(doc); first ||= err; }
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, (_, i) => worker(null, i)));
     this.emit();
+    if (failed.length) {
+      const err = Object.assign(new Error(first?.message || 'Không lưu được'), { code: first?.code, failed, saved: docs.length - failed.length });
+      if (!quiet) this.onError?.(err);
+      throw err;
+    }
   }
   async remove(coll, id) {
     const before = this.data[coll].get(id);
