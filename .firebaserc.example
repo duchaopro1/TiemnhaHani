@@ -1,0 +1,11 @@
+{
+  "projects": { "default": "ten-du-an-firebase-cua-ban" },
+  "targets": {
+    "ten-du-an-firebase-cua-ban": {
+      "hosting": {
+        "admin": ["ten-du-an-quan-ly"],
+        "shop": ["ten-du-an-cua-hang"]
+      }
+    }
+  }
+}

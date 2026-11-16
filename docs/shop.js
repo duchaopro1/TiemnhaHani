@@ -1,6 +1,7 @@
 // Hani web shop (for customers): browse the catalog, fill a cart, then send the order to the shop as a chat message.
 // The catalog is a file (catalog.json) the shop exports from its admin app; nothing here talks to a server.
 import { priceCart, buildOrderMessage, unitPrice, money } from './lib/shoporder.js';
+import { live, watchCatalog, sendOrder } from './lib/backend.js';
 
 const CART_KEY = 'hani-shop-cart-v1';
 const $ = (s, el = document) => el.querySelector(s);
@@ -222,15 +223,18 @@ function openCheckout() {
       <label class="f"><span>Địa chỉ nhận hàng <small>(số nhà, đường, phường/xã, quận/huyện, tỉnh/thành)</small></span><textarea class="in" name="address" autocomplete="street-address" required>${esc(info.address || '')}</textarea></label>
       <label class="f"><span>Tài khoản Instagram / Threads của bạn <small>(để shop nhận ra bạn trong chat)</small></span><input class="in" name="account" placeholder="@tên_tài_khoản" value="${esc(info.account || '')}"></label>
       <label class="f"><span>Ghi chú cho shop <small>(không bắt buộc)</small></span><textarea class="in" name="note" maxlength="500"></textarea></label>
+      <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
       <p class="err" id="err" role="alert"></p>
       <div class="sum"><div class="total"><span>Tổng cộng (gồm ship ${money(r.ship)})</span><span>${money(r.total)}</span></div></div>
     </form>
-    <div class="sheet-foot"><button type="submit" form="co" class="btn pink">Tạo tin nhắn đặt hàng</button><button type="button" class="btn ghost" data-back>← Quay lại giỏ hàng</button></div>`);
+    <div class="sheet-foot"><button type="submit" form="co" class="btn pink" id="co-go">${live ? 'Gửi đơn cho shop' : 'Tạo tin nhắn đặt hàng'}</button><button type="button" class="btn ghost" data-back>← Quay lại giỏ hàng</button></div>`);
   const form = $('#co', sheet);
   sheet.onclick = (e) => { if (e.target.closest('[data-close]')) closeSheet(); if (e.target.closest('[data-back]')) openCart(); };
   sheet.onchange = null;
-  form.onsubmit = (e) => {
+  let sending = false;
+  form.onsubmit = async (e) => {
     e.preventDefault();
+    if (sending) return;
     const d = Object.fromEntries(new FormData(form).entries());
     const phone = String(d.phone || '').replace(/[\s.\-()]/g, '');
     const bad = !d.name.trim() ? 'Bạn nhập họ tên người nhận nhé.'
@@ -239,24 +243,42 @@ function openCheckout() {
     if (bad) { $('#err', sheet).textContent = bad; return; }
     const customer = { name: d.name.trim(), phone, address: d.address.trim().replace(/\s*\n\s*/g, ', '), account: d.account.trim(), note: d.note.trim() };
     try { localStorage.setItem(INFO_KEY, JSON.stringify({ name: customer.name, phone, address: customer.address, account: customer.account })); } catch { /* optional */ }
-    openResult(buildOrderMessage(priceCart(cart, catalog), customer, catalog.shop.name || 'Hani'));
+    const priced = priceCart(cart, catalog);
+    const message = buildOrderMessage(priced, customer, catalog.shop.name || 'Hani');
+    if (!live) return openResult(message, 'manual');
+    // the order goes straight to the shop; the message stays as a back-up the customer can still send
+    sending = true;
+    const go = $('#co-go', sheet);
+    go.disabled = true;
+    go.textContent = 'Đang gửi…';
+    let state = 'sent';
+    if (!d.website) { // a filled hidden box means a robot: pretend it worked, send nothing
+      try {
+        await sendOrder({ createdAt: Date.now(), message, total: priced.total, status: 'new', source: 'web', items: priced.lines.map((l) => ({ pid: l.pid, vid: l.vid || '', qty: l.qty })), customer: { name: customer.name, phone: customer.phone, address: customer.address, account: customer.account, note: customer.note } });
+      } catch { state = 'failed'; }
+    }
+    if (state === 'sent') { cart = []; save(); drawBar(); }
+    openResult(message, state);
   };
 }
 
 /* ---------------- result: the message to send ---------------- */
-function openResult(message) {
+function openResult(message, state = 'manual') {
   const { instagram, threads } = catalog.shop;
+  const sent = state === 'sent';
   openSheet(`
-    <div class="sheet-head"><h2>Gửi đơn cho shop</h2><button type="button" class="x" data-close aria-label="Đóng">✕</button></div>
+    <div class="sheet-head"><h2>${sent ? '✓ Shop đã nhận đơn của bạn' : 'Gửi đơn cho shop'}</h2><button type="button" class="x" data-close aria-label="Đóng">✕</button></div>
     <div class="sheet-body">
-      <ol class="steps"><li>Bấm <b>Sao chép tin nhắn</b>.</li><li>Mở chat với shop${instagram || threads ? ' (nút bên dưới)' : ''} rồi <b>dán</b> và gửi.</li><li>Shop sẽ xác nhận đơn, tình trạng hàng và cách thanh toán với bạn.</li></ol>
+      ${sent ? `<p>Cảm ơn bạn! Shop sẽ liên hệ xác nhận đơn, tình trạng hàng và cách thanh toán. Bạn có thể gửi thêm tin nhắn bên dưới cho shop nếu muốn được trả lời nhanh hơn.</p>`
+        : state === 'failed' ? `<p class="err" role="alert">Chưa gửi được đơn tự động (kiểm tra mạng rồi thử lại, hoặc gửi bằng tin nhắn như dưới đây).</p>` : ''}
+      ${sent ? '' : `<ol class="steps"><li>Bấm <b>Sao chép tin nhắn</b>.</li><li>Mở chat với shop${instagram || threads ? ' (nút bên dưới)' : ''} rồi <b>dán</b> và gửi.</li><li>Shop sẽ xác nhận đơn, tình trạng hàng và cách thanh toán với bạn.</li></ol>`}
       <textarea class="msg" id="msg" readonly>${esc(message)}</textarea>
     </div>
     <div class="sheet-foot">
-      <button type="button" class="btn pink" id="copy">Sao chép tin nhắn</button>
+      <button type="button" class="btn ${sent ? 'ghost' : 'pink'}" id="copy">${sent ? 'Sao chép tin nhắn (dự phòng)' : 'Sao chép tin nhắn'}</button>
       ${instagram ? `<a class="btn" id="ig" href="https://ig.me/m/${encodeURIComponent(instagram)}" target="_blank" rel="noopener">Mở chat Instagram @${esc(instagram)}</a>` : ''}
       ${threads ? `<a class="btn ghost" href="https://www.threads.net/@${encodeURIComponent(threads)}" target="_blank" rel="noopener">Mở Threads @${esc(threads)}</a>` : ''}
-      <button type="button" class="btn ghost" id="done">Đã gửi xong, xoá giỏ hàng</button>
+      ${sent ? '<button type="button" class="btn ghost" data-close>Đóng</button>' : '<button type="button" class="btn ghost" id="done">Đã gửi xong, xoá giỏ hàng</button>'}
     </div>`);
   sheet.onchange = null;
   sheet.onclick = async (e) => {
@@ -282,7 +304,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'q') { view.q = e.target.value; view.focusQ = true; render(); }
 });
 
-async function start() {
+/** From the file catalog.json (the shop exports it by hand). */
+async function startFromFile() {
   try {
     const res = await fetch('catalog.json', { cache: 'no-cache' });
     if (!res.ok) throw new Error(res.status);
@@ -293,5 +316,26 @@ async function start() {
   }
   cart = load().filter((l) => l && byId(l.pid) && num(l.qty) > 0);
   render();
+}
+
+/** Live from the shared database: products and stock follow the shop's inventory as it changes. */
+function startLive() {
+  let first = true;
+  return new Promise((resolve) => {
+    watchCatalog((c) => {
+      catalog = c;
+      if (first) { first = false; cart = load().filter((l) => l && byId(l.pid) && num(l.qty) > 0); } else cart = cart.filter((l) => byId(l.pid));
+      save();
+      render();
+      if (!sheet.open) drawBar();
+      resolve(true);
+    }, () => resolve(false)).catch(() => resolve(false));
+    setTimeout(() => resolve(first ? false : true), 8000); // the database did not answer in time
+  });
+}
+
+async function start() {
+  if (live && (await startLive())) return;
+  await startFromFile(); // no database configured, or it could not be reached
 }
 start();

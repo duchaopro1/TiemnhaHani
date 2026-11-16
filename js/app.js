@@ -6,7 +6,7 @@ import {
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
 import { describeError } from './errors.js';
-import { buildCatalog, onShop, COMBO_LABEL } from './catalog.js';
+import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
 import { parseOrderMessage } from './shoporder.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
@@ -210,7 +210,7 @@ function render() {
       <span class="logo">hani</span>
       <span class="tag">món quà nho nhỏ, kỉ niệm "to đùng"</span>
       <nav class="tabs">
-        ${Object.entries(TABS).map(([k, v]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${v}</button>`).join('')}
+        ${Object.entries(TABS).map(([k, v]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${v}${k === 'orders' && webInbox().length ? ` <span class="tab-n" title="Đơn mới từ cửa hàng web">${webInbox().length}</span>` : ''}</button>`).join('')}
       </nav>
       <span class="sync" title="${MODES[store.mode].title}">
         <i class="dot ${MODES[store.mode].dot}"></i>${esc(MODES[store.mode].label())}
@@ -772,6 +772,7 @@ function pageOrders() {
       <div class="actions">
         <label class="btn ghost">⬆ Nhập file Shopee<input type="file" id="shopee-file" accept=".xlsx,.xls,.csv" hidden></label>
         <button class="btn ghost" data-action="paste-order" title="Dán tin đặt hàng khách gửi từ cửa hàng web để tạo đơn">📥 Dán đơn từ khách</button>
+        ${store.mode === 'firebase' ? `<button class="btn ${webInbox().length ? 'pink' : 'ghost'}" data-action="web-orders" title="Đơn khách đặt thẳng trên cửa hàng web">📬 Đơn từ web${webInbox().length ? ` (${webInbox().length})` : ''}</button>` : ''}
         <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng</button>
         <button class="btn pink" data-action="new-order">＋ Thêm đơn</button>
       </div>
@@ -1344,6 +1345,10 @@ function openOrderFormNow(existing, restored) {
         writeDraft(); // the draft holds the final state while the server answers
         try {
           await store.upsert('orders', { ...o, items });
+          if (o.webOrderId) { // came from the web inbox: that entry is done
+            const w = store.get('shopOrders', o.webOrderId);
+            if (w && w.status === 'new') store.upsert('shopOrders', { ...w, status: 'imported', orderCode: o.code }).catch(() => {});
+          }
           clearTimeout(ctl.timer);
           deleteDraft(key);
           ctl.saving = false;
@@ -2980,6 +2985,17 @@ function openPresetForm(existing) {
 const DEFAULT_SHOP_URL = 'https://duchaopro1.github.io/tiemnhahani/';
 const shopUrl = () => (settings.shopUrl || '').trim() || DEFAULT_SHOP_URL;
 
+/** Status of the live sync: the shop's documents follow the inventory by themselves. */
+function shopLiveCard() {
+  const st = ui.shopSync;
+  const state = !st ? 'Sắp cập nhật…' : st.state === 'error' ? `<span class="neg">Chưa cập nhật được: ${esc(st.text)}</span>`
+    : `<span class="pos">✓ Cửa hàng đã khớp với kho</span> <span class="muted">(${st.count} sản phẩm${st.wrote ? `, vừa ghi ${st.wrote} thay đổi` : ''}${st.failed ? `, ${st.failed} ảnh không tải được` : ''}, lúc ${new Date(st.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})</span>`;
+  return `<p class="small" style="margin:0 0 8px">${state}</p>
+    <label class="check" style="display:flex;gap:8px;align-items:center;width:auto"><input type="checkbox" id="ws-auto" style="width:auto;margin:0" ${settings.shopAuto === false ? '' : 'checked'}> Tự cập nhật cửa hàng khi kho hoặc sản phẩm thay đổi</label>
+    <p style="margin:10px 0 0"><button class="btn pink" data-action="sync-shop-now">⟳ Cập nhật cửa hàng ngay</button></p>
+    <p class="small muted" style="margin:8px 0 0">Mọi thay đổi về giá, tồn kho, ảnh, sản phẩm ẩn / hiện tự lên cửa hàng sau vài giây khi trang quản lý đang mở. Đơn khách đặt trên cửa hàng về mục <b>📬 Đơn từ web</b> ở trang Đơn hàng.</p>`;
+}
+
 function pageWebshop() {
   const open = { ...settings, shopHidden: [] };
   const list = S.products.filter((p) => onShop(p, open));
@@ -3011,12 +3027,13 @@ function pageWebshop() {
       <div class="card">
         <h3>Đưa lên web</h3>
         <p class="small" style="margin:0 0 8px">Sẽ hiện <b>${shown.length}</b> / ${list.length} sản phẩm. Sản phẩm trong danh mục <b>Hết bán</b> không bao giờ hiện. Số lượng còn lại là số tồn đang có trừ các đơn đang mở.</p>
-        <button class="btn pink" data-action="export-catalog">⬇ Xuất danh mục cho cửa hàng web</button>
+        ${store.mode === 'firebase' ? shopLiveCard() : `<button class="btn pink" data-action="export-catalog">⬇ Xuất danh mục cho cửa hàng web</button>
+        <p class="small muted" style="margin:8px 0 0">Đang dùng chế độ xuất file. Muốn kho và sản phẩm tự đồng bộ lên cửa hàng, chuyển trang quản lý sang Firebase (xem <b>HUONG-DAN-FIREBASE.md</b>).</p>
         <ol class="small" style="margin:10px 0 0;padding-left:20px;line-height:1.55">
           <li>Bấm nút trên, được file <b>catalog.json</b> (ảnh đã thu nhỏ, <b>không có giá vốn hay thông tin khách</b>).</li>
           <li>Đưa file đó vào thư mục <code>docs/</code> của kho mã trên GitHub, thay file catalog.json cũ (hoặc gửi file cho tôi, tôi cập nhật giúp). Chỉ thư mục này được mở công khai cho khách.</li>
           <li>Mỗi lần đổi giá, đổi mô tả hay tồn kho thay đổi nhiều thì xuất lại.</li>
-        </ol>
+        </ol>`}
         <p class="small muted" style="margin:10px 0 0">Link cửa hàng gửi cho khách: <b>${esc(shopUrl())}</b> <button type="button" class="link-btn" data-action="copy-shop-url">Sao chép</button></p>
       </div>
     </div>
@@ -3026,31 +3043,114 @@ function pageWebshop() {
     </div>`;
 }
 
-/** Make the catalog file: pictures are fetched, shrunk and embedded so the shop page needs nothing else. */
-async function exportCatalog() {
-  const list = S.products.filter((p) => onShop(p, settings));
-  if (!list.length) return notify('Chưa có sản phẩm nào để đưa lên cửa hàng web.');
-  const refs = [...new Set(list.flatMap((p) => [p.image, ...(p.variants || []).map((v) => v.image)]).filter(Boolean))];
+const shrunk = new Map(); // picture reference + size -> small data URL, so a picture is shrunk once per visit
+const blobToData = (blob) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
+/** The pictures of the products on the shop, shrunk: the product's own at 480px, its variants' at 200px. */
+async function catalogImages(list) {
+  const want = new Map();
+  for (const p of list) if (p.image) want.set(p.image, 480);
+  for (const p of list) for (const v of p.variants || []) if (v.image && !want.has(v.image)) want.set(v.image, 200);
   const images = {};
-  toast(`Đang chuẩn bị ${list.length} sản phẩm và ${refs.length} ảnh…`, 4000);
   let failed = 0;
-  const toData = (blob) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
-  const queue = [...refs];
+  const queue = [...want];
   const worker = async () => {
     while (queue.length) {
-      const ref = queue.shift();
+      const [ref, max] = queue.shift();
+      const key = `${max}|${ref}`;
       try {
-        const res = await fetch(imgSrc(ref));
-        if (!res.ok) throw new Error(res.status);
-        images[ref] = await toData(await resizeImage(await res.blob(), 480));
+        if (!shrunk.has(key)) {
+          const res = await fetch(imgSrc(ref));
+          if (!res.ok) throw new Error(res.status);
+          shrunk.set(key, await blobToData(await resizeImage(await res.blob(), max)));
+        }
+        images[ref] = shrunk.get(key);
       } catch { failed += 1; }
     }
   };
   await Promise.all(Array.from({ length: 4 }, worker));
+  return { images, failed };
+}
+
+/* ---- live sync of the web shop (Firebase): the shop's documents follow products, prices and stock ---- */
+let shopKnown = null, shopBusy = false, shopAgain = false, shopTimer = null;
+function scheduleShopSync() {
+  if (store.mode !== 'firebase' || !store.user || !settings || settings.shopAuto === false) return; // `settings` is not there until the first draw
+  clearTimeout(shopTimer);
+  shopTimer = setTimeout(() => syncShop(), 4000);
+}
+/** Write to the shop what changed since the last time. `force` rewrites every product (and removes stale ones). */
+async function syncShop({ force = false } = {}) {
+  if (store.mode !== 'firebase' || !store.user) return;
+  if (shopBusy) { shopAgain = true; return; }
+  shopBusy = true;
+  try {
+    await store.whenReady();
+    derive();
+    shopKnown ||= await store.readShopKnown();
+    const known = force ? { products: Object.fromEntries(Object.keys(shopKnown.products).map((id) => [id, ''])), info: '' } : shopKnown;
+    const { images, failed } = await catalogImages(S.products.filter((p) => onShop(p, settings)));
+    const catalog = buildCatalog(S, settings, images);
+    const diff = diffCatalog(known, catalog);
+    if (diff.info || diff.products.length || diff.remove.length) await store.publishShop(diff);
+    shopKnown = diff.next;
+    ui.shopSync = { state: 'ok', at: Date.now(), wrote: diff.products.length + diff.remove.length, count: catalog.products.length, failed };
+  } catch (err) {
+    shopKnown = null;
+    ui.shopSync = { state: 'error', text: describeError(err).text };
+  } finally {
+    shopBusy = false;
+    if (currentTab() === 'webshop' && !document.querySelector('dialog[open]') && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) render();
+    if (shopAgain) { shopAgain = false; scheduleShopSync(); }
+  }
+}
+
+/** The orders customers sent from the web shop that nobody has turned into an order yet, oldest first. */
+const webInbox = () => (S.shopOrders || []).filter((o) => o.status === 'new').sort((a, b) => num(a.createdAt) - num(b.createdAt));
+
+/** Make the catalog file: pictures are fetched, shrunk and embedded so the shop page needs nothing else. */
+async function exportCatalog() {
+  const list = S.products.filter((p) => onShop(p, settings));
+  if (!list.length) return notify('Chưa có sản phẩm nào để đưa lên cửa hàng web.');
+  toast(`Đang chuẩn bị ${list.length} sản phẩm…`, 4000);
+  const { images, failed } = await catalogImages(list);
   const catalog = buildCatalog(S, settings, images);
   const json = JSON.stringify(catalog);
   await download('catalog.json', json, 'application/json');
   notify(`Đã xuất catalog.json: ${catalog.products.length} sản phẩm, ${(json.length / 1024 / 1024).toFixed(1)} MB.${failed ? ` ${failed} ảnh không tải được nên sản phẩm đó hiện không có ảnh.` : ''} Đưa file vào thư mục docs/ của kho mã để cập nhật cửa hàng web.`);
+}
+
+/**
+ * Turn a parsed order message into an order for the form: { prefill } or { error }.
+ * `webOrderId` ties the order to its entry in the web inbox, so saving it closes that entry.
+ */
+function prefillFromMessage(r, webOrderId = '') {
+  if (!r.items.length) return { error: 'Không đọc được sản phẩm trong tin này. Tin cần có dòng mã “#HANI …” ở cuối (tin tạo từ cửa hàng web).' };
+  const known = r.items.filter((i) => product(i.pid));
+  if (!known.length) return { error: 'Các sản phẩm trong tin này không còn trong kho của bạn.' };
+  const lost = r.items.length - known.length;
+  const totals = {};
+  for (const i of known) totals[i.pid] = (totals[i.pid] || 0) + i.qty;
+  const items = known.map((i) => {
+    const p = product(i.pid);
+    const v = i.vid ? variantOf(i.pid, i.vid) : null;
+    const pr = store.get('presets', p.defaultPreset);
+    return { ...blankLine(), productId: i.pid, variantId: v ? v.id : '', qty: i.qty, price: tierPrice(p, totals[i.pid], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
+  });
+  const note = [r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`, r.name && `Người nhận: ${r.name}`, r.note && `Khách ghi chú: ${r.note}`, ...r.itemNotes.map((t) => `Ghi chú SP — ${t}`), lost ? `⚠ ${lost} sản phẩm trong tin không còn trong kho, kiểm tra lại với khách.` : ''].filter(Boolean).join('\n');
+  const prefill = { platform: 'instagram', date: today(), customer: r.account || r.name, status: 'pending', note, shipFee: shipFlat(), shipPayer: 'customer', items };
+  if (webOrderId) prefill.webOrderId = webOrderId;
+  return { prefill };
+}
+
+/** Open the order form filled in from a message; asks first when a half-typed new order would be replaced. */
+async function openOrderFromMessage(text, webOrderId = '', closeCurrent = () => {}) {
+  const { prefill, error } = prefillFromMessage(parseOrderMessage(text), webOrderId);
+  if (error) return { error };
+  if (getDraft('new') && !(await ask('Bạn đang có một đơn mới nhập dở. Thay bằng đơn từ tin nhắn này?', 'Thay thế'))) return { cancelled: true };
+  deleteDraft('new');
+  closeCurrent(); // the form and the dialog that started it share one window: close that one before the form opens
+  openOrderFormNow(undefined, prefill);
+  return {};
 }
 
 /** Paste the order message a customer sent from the web shop: it opens a new order already filled in. */
@@ -3066,27 +3166,47 @@ function openPasteOrder() {
       $('#paste-msg', m).focus();
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#paste-go', m).onclick = async () => {
-        const r = parseOrderMessage($('#paste-msg', m).value);
-        const err = $('#paste-err', m);
-        if (!r.items.length) { err.textContent = 'Không đọc được sản phẩm trong tin này. Tin cần có dòng mã “#HANI …” ở cuối (tin tạo từ cửa hàng web).'; return; }
-        const known = r.items.filter((i) => product(i.pid));
-        if (!known.length) { err.textContent = 'Các sản phẩm trong tin này không còn trong kho của bạn.'; return; }
-        const lost = r.items.length - known.length;
-        const totals = {};
-        for (const i of known) totals[i.pid] = (totals[i.pid] || 0) + i.qty;
-        const items = known.map((i) => {
-          const p = product(i.pid);
-          const v = i.vid ? variantOf(i.pid, i.vid) : null;
-          const pr = store.get('presets', p.defaultPreset);
-          return { ...blankLine(), productId: i.pid, variantId: v ? v.id : '', qty: i.qty, price: tierPrice(p, totals[i.pid], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
-        });
-        const note = [r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`, r.name && `Người nhận: ${r.name}`, r.note && `Khách ghi chú: ${r.note}`, ...r.itemNotes.map((t) => `Ghi chú SP — ${t}`), lost ? `⚠ ${lost} sản phẩm trong tin không còn trong kho, kiểm tra lại với khách.` : ''].filter(Boolean).join('\n');
-        const prefill = { platform: 'instagram', date: today(), customer: r.account || r.name, status: 'pending', note, shipFee: shipFlat(), shipPayer: 'customer', items };
-        if (getDraft('new') && !(await ask('Bạn đang có một đơn mới nhập dở. Thay bằng đơn từ tin nhắn này?', 'Thay thế'))) return;
-        deleteDraft('new');
-        m.close();
-        openOrderFormNow(undefined, prefill);
+        const out = await openOrderFromMessage($('#paste-msg', m).value, '', () => m.close());
+        if (out.error) $('#paste-err', m).textContent = out.error;
       };
+    },
+  });
+}
+
+/** Orders customers sent from the web shop: turn one into an order, or set it aside. */
+function openWebOrders() {
+  const list = webInbox();
+  const when = (t) => new Date(num(t)).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  const lines = (o) => (o.items || []).map((i) => `${esc(itemLabel(i.pid, i.vid))} ×${num(i.qty)}`).join(', ');
+  openModal({
+    title: `Đơn từ cửa hàng web${list.length ? ` (${list.length})` : ''}`,
+    wide: false,
+    body: list.length ? `<p class="muted" style="margin-top:0">Khách tự đặt trên cửa hàng web. Bấm <b>Tạo đơn</b> để mở đơn đã điền sẵn, kiểm tra rồi lưu; lưu xong đơn tự rời khỏi danh sách này.</p>
+      <div class="web-list">${list.map((o) => `<div class="web-order" data-wid="${esc(o.id)}">
+        <div class="web-head"><b>${esc(o.customer?.name || '')}</b>${o.customer?.account ? ` <span class="muted">${esc(o.customer.account)}</span>` : ''}<span class="muted small" style="margin-left:auto">${when(o.createdAt)}</span></div>
+        <div class="small">${lines(o) || '—'}</div>
+        <div class="small muted">SĐT ${esc(o.customer?.phone || '')} · ${esc(o.customer?.address || '')}</div>
+        ${o.customer?.note ? `<div class="small">Ghi chú: ${esc(o.customer.note)}</div>` : ''}
+        <div class="web-act"><b>${money(o.total)}</b><span style="flex:1"></span><button class="btn ghost sm" data-web-skip="${esc(o.id)}">Bỏ qua</button><button class="btn sm" data-web-make="${esc(o.id)}">Tạo đơn</button></div>
+      </div>`).join('')}</div>` : '<div class="empty">Chưa có đơn nào từ cửa hàng web.</div>',
+    foot: '<button class="btn ghost" data-close2>Đóng</button>',
+    onMount(m) {
+      $('[data-close2]', m).onclick = () => m.requestClose();
+      m.addEventListener('click', async (e) => {
+        const make = e.target.closest('[data-web-make]');
+        const skip = e.target.closest('[data-web-skip]');
+        if (make) {
+          const o = store.get('shopOrders', make.dataset.webMake);
+          if (!o) return;
+          const out = await openOrderFromMessage(o.message, o.id, () => m.close());
+          if (out.error) notify(out.error);
+        }
+        if (skip && (await ask('Bỏ qua đơn này? Đơn sẽ rời khỏi danh sách (khách không biết).', 'Bỏ qua'))) {
+          const o = store.get('shopOrders', skip.dataset.webSkip);
+          if (o) await store.upsert('shopOrders', { ...o, status: 'skipped' });
+          skip.closest('.web-order').remove();
+        }
+      });
     },
   });
 }
@@ -3423,6 +3543,8 @@ document.addEventListener('click', async (e) => {
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
     case 'export-orders': return openExportDialog();
     case 'paste-order': return openPasteOrder();
+    case 'web-orders': return openWebOrders();
+    case 'sync-shop-now': return syncShop({ force: true }).then(() => { if (ui.shopSync?.state === 'ok') toast('Đã cập nhật cửa hàng web'); else if (ui.shopSync?.state === 'error') notify('Chưa cập nhật được cửa hàng web: ' + ui.shopSync.text); });
     case 'export-catalog': return exportCatalog();
     case 'copy-shop-url': { try { await navigator.clipboard.writeText(shopUrl()); toast('Đã sao chép link cửa hàng'); } catch { notify(shopUrl()); } return; }
     case 'clear-map': return patchSettings({ shopeeMap: {} });
@@ -3458,6 +3580,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
+  if (t.id === 'ws-auto') { await patchSettings({ shopAuto: t.checked }); if (t.checked) scheduleShopSync(); }
   if (t.id === 'ws-name') await patchSettings({ shopName: t.value.trim() });
   if (t.id === 'ws-welcome') await patchSettings({ shopWelcome: t.value.trim() });
   if (t.id === 'ws-ig') await patchSettings({ shopInstagram: t.value.trim().replace(/^@/, '') });
@@ -3513,6 +3636,7 @@ async function boot() {
   store.onLive(updateLiveBadge);
   // Someone else added an order: say so, so a live page doesn't look frozen.
   store.onRemote = (coll, docs) => {
+    if (coll === 'shopOrders') { toast(docs.length === 1 ? `📬 Đơn mới từ cửa hàng web: ${docs[0].customer?.name || ''}` : `📬 Có ${docs.length} đơn mới từ cửa hàng web`, 8000); return; }
     if (coll !== 'orders') return;
     const codes = docs.map((o) => o.code).filter(Boolean);
     toast(docs.length === 1 ? `Có đơn mới${codes[0] ? ': ' + codes[0] : ''}` : `Có ${docs.length} đơn mới`, 4500);
@@ -3520,12 +3644,13 @@ async function boot() {
   store.onLiveError = () => notify('Quyền truy cập trang đã thay đổi. Hãy tải lại trang để tiếp tục.');
   let renderQueued = false;
   store.onChange(() => {
+    scheduleShopSync(); // keep the web shop in step with the inventory (Firebase only)
     if (renderQueued) return;
     renderQueued = true;
     requestAnimationFrame(() => { renderQueued = false; if (!firebaseEnabled || store.user) render(); });
   });
   if (firebaseEnabled) {
-    store.init((user) => (user ? render() : renderLogin())).catch((err) => renderLogin('Không kết nối được Firebase: ' + err.message));
+    store.init((user) => { if (user) { render(); scheduleShopSync(); } else renderLogin(); }).catch((err) => renderLogin('Không kết nối được Firebase: ' + err.message));
   } else {
     await store.init();
     render();

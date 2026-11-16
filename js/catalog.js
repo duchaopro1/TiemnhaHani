@@ -77,3 +77,46 @@ export function buildCatalog(state, settings = {}, images = {}, now = new Date()
     products,
   };
 }
+
+/* ---------------- sync to the shared database (Firebase) ----------------
+ * The web shop reads these documents live: one `shopInfo/main` and one `shopProducts/<id>` per product.
+ * Only what changed is written, so a stock change costs one small write. */
+
+/** A short fingerprint of a JSON value, to tell whether a document changed since it was last written. */
+export function fingerprint(value) {
+  const s = JSON.stringify(value);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return `${(h >>> 0).toString(36)}-${s.length}`;
+}
+
+const DOC_LIMIT = 900_000; // Firestore documents stop at 1 MiB
+
+/** A product document that fits in the database: too many / too big pictures are dropped before the product is. */
+export function fitDoc(p) {
+  if (JSON.stringify(p).length <= DOC_LIMIT) return p;
+  const noVariantPics = { ...p, variants: p.variants.map((v) => ({ ...v, image: '' })) };
+  if (JSON.stringify(noVariantPics).length <= DOC_LIMIT) return noVariantPics;
+  return { ...noVariantPics, image: '' };
+}
+
+/**
+ * What to write so the shop's documents match `catalog`. `known` = { products: { id: fingerprint }, info: fingerprint }
+ * of what is already stored. Returns { info (doc or null), products: [doc], remove: [id], next } where `next` is the
+ * `known` to keep after the writes succeed. Each product document carries its own fingerprint in `_h`.
+ */
+export function diffCatalog(known, catalog) {
+  const base = { ...catalog.shop, categories: catalog.categories };
+  const infoH = fingerprint(base);
+  const info = { ...base, updatedAt: catalog.updatedAt, _h: infoH };
+  const next = { products: {}, info: infoH };
+  const products = [];
+  for (const p of catalog.products) {
+    const doc = fitDoc(p);
+    const h = fingerprint(doc);
+    next.products[p.id] = h;
+    if (known?.products?.[p.id] !== h) products.push({ ...doc, _h: h });
+  }
+  const remove = Object.keys(known?.products || {}).filter((id) => !(id in next.products));
+  return { info: known?.info === infoH ? null : info, products, remove, next };
+}

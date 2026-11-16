@@ -703,3 +703,11 @@ main.wide { max-width: min(1560px, 100%); }
 
 /* web shop admin page */
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+
+/* orders from the web shop */
+.tab-n { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--star); color: #fff; font-size: 12px; line-height: 18px; text-align: center; }
+.web-list { display: grid; gap: 10px; max-height: 60vh; overflow: auto; }
+.web-order { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 4px; background: var(--card); }
+.web-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.web-act { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pos { color: var(--ok); font-weight: 600; }

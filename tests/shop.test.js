@@ -91,3 +91,64 @@ test('tin nhắn đặt hàng: đọc ngược lại đúng sản phẩm, số l
   assert.deepEqual(parseOrderMessage('xin chào shop').items, []);
   assert.equal(parseOrderMessage('').name, '');
 });
+
+import { diffCatalog, fingerprint, fitDoc } from '../js/catalog.js';
+test('đồng bộ cửa hàng: chỉ ghi phần thay đổi, xoá sản phẩm đã ẩn, tồn đổi chỉ ghi 1 sản phẩm', () => {
+  const s = withStock();
+  const c1 = buildCatalog(s, { categories: ['Móc khóa', 'Cúp'], shopName: 'Hani' }, {}, new Date('2026-11-17T00:00:00Z'));
+  const first = diffCatalog({}, c1);
+  assert.equal(first.products.length, 3); // lần đầu: ghi hết
+  assert.ok(first.info);
+  assert.ok(first.products.every((p) => p._h));
+  // không đổi gì: không ghi gì (ngày cập nhật đổi cũng không tính)
+  const c1b = buildCatalog(s, { categories: ['Móc khóa', 'Cúp'], shopName: 'Hani' }, {}, new Date('2026-11-18T00:00:00Z'));
+  const same = diffCatalog(first.next, c1b);
+  assert.deepEqual([same.products.length, same.remove.length, same.info], [0, 0, null]);
+  // bán 1 cúp: chỉ Cúp (và Box 1 là combo chứa cúp) đổi tồn
+  s.orders = [{ id: 'o1', status: 'pending', items: [{ productId: 'cup', variantId: '', qty: 1, price: 1 }] }];
+  const c2 = buildCatalog(s, { categories: ['Móc khóa', 'Cúp'], shopName: 'Hani' });
+  const d2 = diffCatalog(first.next, c2);
+  assert.ok(d2.products.some((p) => p.id === 'cup'));
+  assert.ok(!d2.products.some((p) => p.id === 'kc'));
+  // ẩn Cúp: bị xoá khỏi cửa hàng
+  const c3 = buildCatalog(s, { shopHidden: ['cup'], categories: ['Móc khóa', 'Cúp'], shopName: 'Hani' });
+  assert.ok(diffCatalog(d2.next, c3).remove.includes('cup'));
+  // đổi tên shop: chỉ ghi thông tin chung
+  const c4 = buildCatalog(s, { categories: ['Móc khóa', 'Cúp'], shopName: 'Hani Shop' });
+  const d4 = diffCatalog(d2.next, c4);
+  assert.ok(d4.info && d4.info.name === 'Hani Shop');
+  assert.equal(d4.products.length, 0);
+  assert.equal(fingerprint({ a: 1 }), fingerprint({ a: 1 }));
+  assert.notEqual(fingerprint({ a: 1 }), fingerprint({ a: 2 }));
+});
+
+test('tài liệu quá lớn: bỏ ảnh phân loại trước, rồi mới bỏ ảnh sản phẩm', () => {
+  const big = 'x'.repeat(40_000);
+  const p = { id: 'p', name: 'P', image: 'data:main', variants: Array.from({ length: 30 }, (_, i) => ({ id: 'v' + i, name: 'V' + i, image: big })) };
+  const fit = fitDoc(p);
+  assert.ok(JSON.stringify(fit).length < 900_000);
+  assert.equal(fit.image, 'data:main'); // ảnh chính còn
+  assert.ok(fit.variants.every((v) => v.image === ''));
+  assert.equal(fitDoc({ id: 'q', name: 'Q', image: 'a', variants: [] }).image, 'a'); // nhỏ: giữ nguyên
+});
+
+import { assembleCatalog } from '../docs/lib/backend.js';
+test('cửa hàng web ghép tài liệu từ cơ sở dữ liệu thành catalog: đúng thứ tự danh mục, bỏ mã băm', () => {
+  const info = { name: 'Hani', categories: ['Móc khóa', 'Cúp', 'Combo'], updatedAt: '2026-11-17', _h: 'x', shipFlat: 18000, instagram: 'hani.shop' };
+  const docs = [
+    { id: 'b', name: 'Box 1', category: 'Combo', price: 1, _h: 'a' },
+    { id: 'c', name: 'Cúp', category: 'Cúp', price: 2, _h: 'b' },
+    { id: 'z', name: 'Zebra', category: 'Móc khóa', price: 3 },
+    { id: 'a', name: 'Ảnh', category: 'Móc khóa', price: 4 },
+  ];
+  const c = assembleCatalog(info, docs);
+  assert.deepEqual(c.products.map((p) => p.id), ['a', 'z', 'c', 'b']); // Móc khóa (A trước Z), Cúp, Combo
+  assert.ok(c.products.every((p) => !('_h' in p)));
+  assert.equal(c.shop.shipFlat, 18000);
+  assert.equal(c.shop.instagram, 'hani.shop');
+  assert.ok(!('_h' in c.shop) && !('categories' in c.shop));
+  assert.equal(c.updatedAt, '2026-11-17');
+  // chưa có thông tin gì: vẫn ra catalog rỗng hợp lệ, ship mặc định 15.000
+  const empty = assembleCatalog(undefined, []);
+  assert.deepEqual([empty.products.length, empty.shop.shipFlat, empty.shop.name], [0, 15000, 'Hani']);
+});

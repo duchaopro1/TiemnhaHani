@@ -1,7 +1,15 @@
 {
-  "hosting": {
-    "public": ".",
-    "ignore": ["hani.html", "firebase.json", "firestore.rules", "README.md", "package.json", "tests/**", ".github/**", "**/.*", "**/node_modules/**"]
-  },
+  "hosting": [
+    {
+      "target": "admin",
+      "public": ".",
+      "ignore": ["docs/**", "hani.html", "firebase.json", ".firebaserc", "firestore.rules", "README.md", "HUONG-DAN-FIREBASE.md", "package.json", "tests/**", "tools/**", ".github/**", "**/.*", "**/node_modules/**"]
+    },
+    {
+      "target": "shop",
+      "public": "docs",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    }
+  ],
   "firestore": { "rules": "firestore.rules" }
 }

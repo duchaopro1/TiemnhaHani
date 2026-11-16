@@ -1,7 +1,8 @@
 // Data store: local (this browser only) or Firebase Firestore (shared, realtime).
 import { firebaseConfig, SHOP_ID } from './firebase-config.js';
 
-export const COLLECTIONS = ['products', 'packaging', 'presets', 'imports', 'orders', 'meta'];
+// `shopOrders` = orders customers send from the web shop (Firebase only; stays empty elsewhere).
+export const COLLECTIONS = ['products', 'packaging', 'presets', 'imports', 'orders', 'meta', 'shopOrders'];
 const LOCAL_KEY = 'hani-data-v1';
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2';
 const POLL_MS = 30000; // how long a quiet page waits before asking the server again
@@ -152,8 +153,14 @@ class FirebaseStore extends BaseStore {
       const unsub = this.fs.onSnapshot(
         this.col(c),
         (snap) => {
+          const prev = this.data[c];
+          const first = !this.loaded.has(c);
           this.data[c] = new Map(snap.docs.map((d) => [d.id, { ...d.data(), id: d.id }]));
           this.markLoaded(c);
+          if (!first && c === 'shopOrders') {
+            const added = [...this.data[c].values()].filter((o) => !prev.has(o.id));
+            if (added.length) this.onRemote?.(c, added);
+          }
           this.emit();
         },
         (err) => this.onError?.(err),
@@ -163,6 +170,25 @@ class FirebaseStore extends BaseStore {
   }
   signIn() {
     return this.authLib.signInWithPopup(this.auth, new this.authLib.GoogleAuthProvider());
+  }
+  /** Fingerprints of what the web shop currently shows: { products: { id: _h }, info: _h }. */
+  async readShopKnown() {
+    const col = (n) => this.fs.collection(this.db, 'shops', SHOP_ID, n);
+    const [prods, info] = await Promise.all([this.fs.getDocs(col('shopProducts')), this.fs.getDoc(this.fs.doc(col('shopInfo'), 'main'))]);
+    return { products: Object.fromEntries(prods.docs.map((d) => [d.id, d.data()._h || ''])), info: info.exists() ? info.data()._h || '' : '' };
+  }
+  /** Write what changed for the web shop: { info, products: [doc], remove: [id] } from diffCatalog. */
+  async publishShop(diff) {
+    const col = (n) => this.fs.collection(this.db, 'shops', SHOP_ID, n);
+    const ops = [];
+    if (diff.info) ops.push((b) => b.set(this.fs.doc(col('shopInfo'), 'main'), this.clean(diff.info)));
+    for (const p of diff.products) ops.push((b) => b.set(this.fs.doc(col('shopProducts'), p.id), this.clean(p)));
+    for (const id of diff.remove) ops.push((b) => b.delete(this.fs.doc(col('shopProducts'), id)));
+    for (let i = 0; i < ops.length; i += 400) {
+      const batch = this.fs.writeBatch(this.db);
+      ops.slice(i, i + 400).forEach((f) => f(batch));
+      await this.track(batch.commit());
+    }
   }
   signOut() {
     return this.authLib.signOut(this.auth);
@@ -394,7 +420,7 @@ export async function initStore() {
 
 /** Replace all data with a backup (JSON exported from Cài đặt). */
 export async function restoreBackup(backup) {
-  for (const c of COLLECTIONS) {
+  for (const c of COLLECTIONS.filter((x) => x !== 'shopOrders')) { // a restore never touches orders waiting from the web shop
     for (const id of [...store.data[c].keys()]) await store.remove(c, id);
     if (backup[c]?.length) await store.upsertMany(c, backup[c].map((d) => ({ ...d })));
   }
