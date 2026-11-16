@@ -711,3 +711,8 @@ main.wide { max-width: min(1560px, 100%); }
 .web-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .web-act { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .pos { color: var(--ok); font-weight: 600; }
+
+/* the "Còn lại" (stock left) column of the stage table */
+.stg-table .stg-left { border-left: 2px solid var(--line); background: #fbfdff; }
+.stg-table .stg-left.neg { color: var(--danger); }
+.stg-table th.stg-left { background: var(--blue-soft); }

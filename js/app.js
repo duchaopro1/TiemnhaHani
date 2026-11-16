@@ -566,20 +566,27 @@ function stagesChart(orders) {
   const COLS = STAGE_COLS();
   const colOf = (c, col) => col.from.reduce((n, k) => n + c[k], 0);
   const colSum = Object.fromEntries(COLS.map((col) => [col.k, ids.reduce((n, id) => n + colOf(q[id].total, col), 0)]));
+  // "Còn lại": what is left on the shelf now, the same figure as "Tồn" on the products page (not tied to the period)
+  const remain = (id, vk) => (vk === undefined ? num(stock.products[id]) : vk ? vStock(id, vk) : null);
+  const remainCell = (id, vk) => {
+    const n = remain(id, vk);
+    if (n === null) return '<td class="num stg-c stg-left zero">·</td>';
+    return `<td class="num stg-c stg-left ${n <= lowOf(product(id)) ? 'neg' : ''}" title="${n <= 0 ? 'Đã hết hàng' : `Còn ${n} trong kho`}"><b>${n}</b></td>`;
+  };
   // a number opens the list of orders behind it (vk = a variant row; absent = the whole product)
   const cells = (c, id, vk) => COLS.map((col) => { const n = colOf(c, col); return `<td class="num stg-c ${n ? `has st-${col.k}` : 'zero'} ${col.k === 'done' ? 'fin' : ''}">${n ? `<button type="button" class="stg-num" data-action="stage-orders" data-id="${esc(id)}" data-col="${col.k}"${vk === undefined ? '' : ` data-vk="${esc(vk)}"`} title="Xem các đơn có sản phẩm này">${n}</button>` : '·'}</td>`; }).join('');
 
   return `<section class="card" style="margin-top:16px" aria-labelledby="stg-title">
     <div class="stboard-head">
       <h3 id="stg-title">Sản phẩm theo giai đoạn</h3>
-      <span class="muted small">Số lượng từng sản phẩm ở mỗi giai đoạn: đang chờ (chờ xử lý + đã thiết kế), đã đóng gói, đang giao, hoàn thành. Không tính đơn huỷ / trả hàng</span>
+      <span class="muted small">Số lượng từng sản phẩm ở mỗi giai đoạn: đang chờ (chờ xử lý + đã thiết kế), đã đóng gói, đang giao, hoàn thành. Không tính đơn huỷ / trả hàng. Cột <b>Còn lại</b> là số còn trong kho hiện nay.</span>
     </div>
     <div class="toolbar" style="margin:10px 0">
       <label class="check" style="display:inline-flex;align-items:center;gap:8px;width:auto"><input type="checkbox" id="stg-all" style="width:auto;margin:0" ${ui.stagesAll ? 'checked' : ''}> Hiện cả sản phẩm đã xong hết</label>
       ${hidden ? `<span class="muted small">Đang ẩn ${hidden} sản phẩm không còn việc dang dở</span>` : ''}
     </div>
     ${ids.length ? `<div class="table-wrap"><table class="stg-table">
-      <thead><tr><th>Sản phẩm</th>${COLS.map((col) => `<th class="num ${col.k === 'done' ? 'fin' : ''}"${col.title ? ` title="${esc(col.title)}"` : ''}>${esc(col.label)}</th>`).join('')}</tr></thead>
+      <thead><tr><th>Sản phẩm</th>${COLS.map((col) => `<th class="num ${col.k === 'done' ? 'fin' : ''}"${col.title ? ` title="${esc(col.title)}"` : ''}>${esc(col.label)}</th>`).join('')}<th class="num stg-left" title="Số còn trong kho hiện nay, bằng cột Tồn ở trang Sản phẩm (đã trừ hàng của các đơn đang mở)">Còn lại</th></tr></thead>
       <tbody>${ids.map((id) => {
         const p = product(id);
         const r = q[id];
@@ -589,13 +596,13 @@ function stagesChart(orders) {
         const sum = (c) => Object.values(c).reduce((x, y) => x + y, 0);
         return `<tr class="stg-main">
           <td><span class="item">${thumb(p?.image, p?.name, 'sm')}<span><b>${esc(p?.name || '(đã xoá)')}</b>${canOpen ? `<br><button type="button" class="link-btn" data-action="toggle-stages" data-id="${esc(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾ Ẩn từng phân loại' : '▸ Xem từng phân loại'}</button>` : ''}</span></span></td>
-          ${cells(r.total, id)}
+          ${cells(r.total, id)}${remainCell(id)}
         </tr>${open ? vKeys.sort((a, b) => todo(r.variants[b]) - todo(r.variants[a]) || sum(r.variants[b]) - sum(r.variants[a])).map((vk) => `<tr class="stg-sub">
           <td><span class="stg-vname">${esc(variantOf(id, vk)?.name || 'Chưa chọn phân loại')}</span></td>
-          ${cells(r.variants[vk], id, vk)}
+          ${cells(r.variants[vk], id, vk)}${remainCell(id, vk)}
         </tr>`).join('') : ''}`;
       }).join('')}</tbody>
-      <tfoot><tr><td><b>Tổng</b></td>${COLS.map((col) => `<td class="num stg-c ${col.k === 'done' ? 'fin' : ''} ${colSum[col.k] ? '' : 'zero'}">${colSum[col.k] ? `<b>${colSum[col.k]}</b>` : '·'}</td>`).join('')}</tr></tfoot>
+      <tfoot><tr><td><b>Tổng</b></td>${COLS.map((col) => `<td class="num stg-c ${col.k === 'done' ? 'fin' : ''} ${colSum[col.k] ? '' : 'zero'}">${colSum[col.k] ? `<b>${colSum[col.k]}</b>` : '·'}</td>`).join('')}<td class="num stg-c stg-left"><b>${ids.reduce((n, id) => n + remain(id), 0)}</b></td></tr></tfoot>
     </table></div>` : `<div class="empty">${all.length ? 'Không còn sản phẩm nào đang dang dở.' : 'Chưa có đơn nào đang xử lý trong thời gian này.'}</div>`}
   </section>`;
 }
