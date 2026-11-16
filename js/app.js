@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -905,7 +905,7 @@ async function openOrderForm(existing) {
 function openOrderFormNow(existing, restored) {
   const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
-    shipFee: 0, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, wrap1: '', wrap2: '', wrap3: '', items: [blankLine()],
+    shipFee: SHIP_FLAT, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, wrap1: '', wrap2: '', wrap3: '', items: [blankLine()],
   };
   if (!base.items?.length) base.items = [blankLine()];
   const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
@@ -996,11 +996,20 @@ function openOrderFormNow(existing, restored) {
       <h3 style="margin:18px 0 8px">Phí ship & phí khác</h3>
       <div class="form-grid">
         <label class="field" style="grid-column:1/-1">Mã vận đơn<input name="tracking" value="${esc(o.tracking || '')}" placeholder="VD: SPXVN0123456789 (nhập sau khi gửi hàng cũng được)" autocomplete="off"></label>
-        <label class="field">Phí ship<input type="number" min="0" step="1000" name="shipFee" value="${num(o.shipFee)}"></label>
-        <div class="field"><span>Ai trả ship?</span>
-          <div class="seg" id="ship-payer">
-            <button type="button" data-v="customer" class="${o.shipPayer !== 'shop' ? 'on' : ''}">Khách chịu</button>
-            <button type="button" data-v="shop" class="${o.shipPayer === 'shop' ? 'on' : ''}">Shop chịu</button>
+        <div class="field" style="grid-column:1/-1"><span>Phí ship</span>
+          <div class="seg ship-mode" id="ship-mode">
+            <button type="button" data-v="flat" class="${shipModeOf(o) === 'flat' ? 'on' : ''}">Ship ${money(SHIP_FLAT)}</button>
+            <button type="button" data-v="free" class="${shipModeOf(o) === 'free' ? 'on' : ''}">Freeship <small>(shop chịu ${money(SHIP_FLAT)})</small></button>
+            <button type="button" data-v="other" class="${shipModeOf(o) === 'other' ? 'on' : ''}">Phí ship khác</button>
+          </div>
+        </div>
+        <div class="form-grid" id="ship-other" style="grid-column:1/-1;padding:0" ${shipModeOf(o) === 'other' ? '' : 'hidden'}>
+          <label class="field">Số tiền phí ship<input type="number" min="0" step="1000" name="shipFee" value="${num(o.shipFee)}"></label>
+          <div class="field"><span>Ai trả ship?</span>
+            <div class="seg" id="ship-payer">
+              <button type="button" data-v="customer" class="${o.shipPayer !== 'shop' ? 'on' : ''}">Khách chịu</button>
+              <button type="button" data-v="shop" class="${o.shipPayer === 'shop' ? 'on' : ''}">Shop chịu</button>
+            </div>
           </div>
         </div>
         <label class="field">Giảm giá / voucher shop<input type="number" min="0" step="1000" name="discount" value="${num(o.discount)}"></label>
@@ -1151,14 +1160,19 @@ function openOrderFormNow(existing, restored) {
           ? `<b>⚠ Có thể trùng đơn.</b> ${esc(o.customer)} đang có đơn chưa xử lý xong với cùng sản phẩm:<ul>${list.map((d) => `<li>${esc(dupText(d))}</li>`).join('')}</ul>`
           : '';
       };
+      // flat and freeship are fixed (the flat fee; who pays differs); only "other" uses the typed fee and payer
+      const shipChoice = (d) => {
+        const mode = $('#ship-mode .on', m).dataset.v;
+        if (mode === 'other') return { shipFee: num(d.shipFee), shipPayer: $('#ship-payer .on', m).dataset.v };
+        return { shipFee: SHIP_FLAT, shipPayer: mode === 'free' ? 'shop' : 'customer' };
+      };
       const readHeader = () => {
         const d = formData(form);
         return {
           platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
           wrap1: d.wrap1 || '', wrap2: d.wrap2 || '', wrap3: d.wrap3 || '',
-          shipFee: num(d.shipFee), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
+          ...shipChoice(d), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
-          shipPayer: $('#ship-payer .on', m).dataset.v,
         };
       };
 
@@ -1260,6 +1274,13 @@ function openOrderFormNow(existing, restored) {
         const { total } = orderPayment(costs, o);
         const half = total / 2;
         form.elements.paid.value = v === 'clear' ? '' : v === '0' ? '0' : v === '100' ? String(Math.round(total)) : String(half >= 500 ? Math.round(half / 1000) * 1000 : Math.round(half));
+        drawSummary();
+      };
+      $('#ship-mode', m).onclick = (e) => {
+        const b = e.target.closest('button');
+        if (!b?.dataset.v) return;
+        $$('#ship-mode button', m).forEach((x) => x.classList.toggle('on', x === b));
+        $('#ship-other', m).hidden = b.dataset.v !== 'other';
         drawSummary();
       };
       $('#ship-payer', m).onclick = (e) => {

@@ -695,3 +695,8 @@ main.wide { max-width: min(1560px, 100%); }
 .stage-list { display: grid; gap: 6px; max-height: 55vh; overflow: auto; }
 .stage-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card, #fff); font: inherit; cursor: pointer; }
 .stage-row:hover { background: #f4f8ff; }
+
+/* shipping choice of an order */
+.ship-mode { flex-wrap: wrap; width: fit-content; max-width: 100%; }
+.ship-mode small { font-weight: 400; opacity: .8; }
+#ship-other[hidden] { display: none; }

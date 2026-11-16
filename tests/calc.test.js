@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice, originOf, TRANSIT_BY_ORIGIN } from '../js/calc.js';
+import { SHIP_FLAT, shipModeOf, costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice, originOf, TRANSIT_BY_ORIGIN } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -645,4 +645,21 @@ test('hàng đặt ở Việt Nam chỉ có một giai đoạn "Đang ship về"
   assert.deepEqual(transitHistory(withTransit({}, 'shipping_vn', 5)), []);
   // nhận hàng vẫn bỏ giai đoạn
   assert.equal(withTransit({ transit: 'shipping_vn' }, '').transit, '');
+});
+
+test('lựa chọn phí ship: ship đồng giá / freeship / phí khác', () => {
+  assert.equal(SHIP_FLAT, 15000);
+  assert.equal(shipModeOf({ shipFee: 15000, shipPayer: 'customer' }), 'flat');
+  assert.equal(shipModeOf({ shipFee: 15000 }), 'flat'); // đơn cũ chưa ghi ai trả: khách trả
+  assert.equal(shipModeOf({ shipFee: 15000, shipPayer: 'shop' }), 'free'); // freeship: shop chịu đúng 15.000
+  assert.equal(shipModeOf({ shipFee: 30000, shipPayer: 'customer' }), 'other');
+  assert.equal(shipModeOf({ shipFee: 15000.5, shipPayer: 'customer' }), 'other');
+  assert.equal(shipModeOf({ shipFee: 0, shipPayer: 'shop' }), 'other'); // không có phí ship: giữ nguyên, không ép thành 15.000
+  assert.equal(shipModeOf({}), 'other');
+  // freeship là chi phí của shop, ship đồng giá thì khách trả
+  const s = { products: [{ id: 'A', baseCost: 0 }], packaging: [], imports: [], orders: [] };
+  const c = costTable(s);
+  const item = [{ productId: 'A', qty: 1, price: 100000 }];
+  assert.equal(orderSummary(c, { shipFee: 15000, shipPayer: 'shop', items: item }).ship, 15000);
+  assert.equal(orderSummary(c, { shipFee: 15000, shipPayer: 'customer', items: item }).ship, 0);
 });
