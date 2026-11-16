@@ -663,3 +663,11 @@ test('lựa chọn phí ship: ship đồng giá / freeship / phí khác', () => 
   assert.equal(orderSummary(c, { shipFee: 15000, shipPayer: 'shop', items: item }).ship, 15000);
   assert.equal(orderSummary(c, { shipFee: 15000, shipPayer: 'customer', items: item }).ship, 0);
 });
+
+test('phí ship đồng giá đổi được: so khớp theo mức đang đặt, đơn cũ giữ nguyên số tiền', () => {
+  assert.equal(shipModeOf({ shipFee: 18000, shipPayer: 'customer' }, 18000), 'flat');
+  assert.equal(shipModeOf({ shipFee: 18000, shipPayer: 'shop' }, 18000), 'free');
+  // đơn cũ 15.000 khi mức mới là 18.000: thành "phí khác", số tiền không đổi
+  assert.equal(shipModeOf({ shipFee: 15000, shipPayer: 'customer' }, 18000), 'other');
+  assert.equal(shipModeOf({ shipFee: 0 }, 0), 'flat'); // mức đồng giá 0đ = miễn phí ship cho khách
+});

@@ -113,6 +113,8 @@ const itemLabel = (pid, vid, fallback = '') => {
   return v ? `${p.name} · ${v.name}` : p.name;
 };
 const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
+/** The flat shipping fee set in the settings (a missing or invalid figure falls back to the default). */
+const shipFlat = () => (Number.isFinite(settings.shipFlat) && settings.shipFlat >= 0 ? settings.shipFlat : SHIP_FLAT);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
 /** "Đã hết" when there is none left, "Sắp hết" while at or under the warning level, nothing otherwise. */
 const stockBadge = (n, low) => {
@@ -905,7 +907,7 @@ async function openOrderForm(existing) {
 function openOrderFormNow(existing, restored) {
   const base = existing ? structuredClone(existing) : {
     platform: 'instagram', code: '', date: today(), customer: '', status: 'pending', note: '', card: false,
-    shipFee: SHIP_FLAT, shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, wrap1: '', wrap2: '', wrap3: '', items: [blankLine()],
+    shipFee: shipFlat(), shipPayer: 'customer', tracking: '', discount: 0, platformFee: 0, paid: null, wrap1: '', wrap2: '', wrap3: '', items: [blankLine()],
   };
   if (!base.items?.length) base.items = [blankLine()];
   const o = restored ? Object.assign(structuredClone(base), structuredClone(restored)) : structuredClone(base);
@@ -998,12 +1000,12 @@ function openOrderFormNow(existing, restored) {
         <label class="field" style="grid-column:1/-1">Mã vận đơn<input name="tracking" value="${esc(o.tracking || '')}" placeholder="VD: SPXVN0123456789 (nhập sau khi gửi hàng cũng được)" autocomplete="off"></label>
         <div class="field" style="grid-column:1/-1"><span>Phí ship</span>
           <div class="seg ship-mode" id="ship-mode">
-            <button type="button" data-v="flat" class="${shipModeOf(o) === 'flat' ? 'on' : ''}">Ship ${money(SHIP_FLAT)}</button>
-            <button type="button" data-v="free" class="${shipModeOf(o) === 'free' ? 'on' : ''}">Freeship <small>(shop chịu ${money(SHIP_FLAT)})</small></button>
-            <button type="button" data-v="other" class="${shipModeOf(o) === 'other' ? 'on' : ''}">Phí ship khác</button>
+            <button type="button" data-v="flat" class="${shipModeOf(o, shipFlat()) === 'flat' ? 'on' : ''}">Ship đồng giá ${money(shipFlat())}</button>
+            <button type="button" data-v="free" class="${shipModeOf(o, shipFlat()) === 'free' ? 'on' : ''}">Freeship <small>(shop chịu ${money(shipFlat())})</small></button>
+            <button type="button" data-v="other" class="${shipModeOf(o, shipFlat()) === 'other' ? 'on' : ''}">Phí ship khác</button>
           </div>
         </div>
-        <div class="form-grid" id="ship-other" style="grid-column:1/-1;padding:0" ${shipModeOf(o) === 'other' ? '' : 'hidden'}>
+        <div class="form-grid" id="ship-other" style="grid-column:1/-1;padding:0" ${shipModeOf(o, shipFlat()) === 'other' ? '' : 'hidden'}>
           <label class="field">Số tiền phí ship<input type="number" min="0" step="1000" name="shipFee" value="${num(o.shipFee)}"></label>
           <div class="field"><span>Ai trả ship?</span>
             <div class="seg" id="ship-payer">
@@ -1164,7 +1166,7 @@ function openOrderFormNow(existing, restored) {
       const shipChoice = (d) => {
         const mode = $('#ship-mode .on', m).dataset.v;
         if (mode === 'other') return { shipFee: num(d.shipFee), shipPayer: $('#ship-payer .on', m).dataset.v };
-        return { shipFee: SHIP_FLAT, shipPayer: mode === 'free' ? 'shop' : 'customer' };
+        return { shipFee: shipFlat(), shipPayer: mode === 'free' ? 'shop' : 'customer' };
       };
       const readHeader = () => {
         const d = formData(form);
@@ -2998,6 +3000,8 @@ function pageSettings() {
       <div class="card">
         <h3>Thiết lập</h3>
         <label class="field">Mức cảnh báo tồn kho mặc định<input type="number" min="0" id="set-low" value="${num(settings.lowStock)}"></label>
+        <label class="field" style="margin-top:12px">Phí ship đồng giá (đ)<input type="number" min="0" step="1000" id="set-shipflat" value="${shipFlat()}"></label>
+        <p class="small muted" style="margin:4px 0 0">Dùng cho hai lựa chọn <b>Ship</b> và <b>Freeship</b> khi lên đơn. Chỉ áp cho đơn tạo hoặc sửa sau này: đơn đã lưu giữ nguyên số tiền ship của nó.</p>
         <p class="small muted" style="margin-top:12px">Shopee: đã ghi nhớ ${mapCount} sản phẩm được gắn. ${mapCount ? '<button class="btn ghost sm" data-action="clear-map">Xoá ghi nhớ</button>' : ''}</p>
         ${!S.products.length && !S.orders.length ? '<button class="btn pink" data-action="demo">Nạp dữ liệu mẫu để thử</button>' : ''}
       </div>
@@ -3330,6 +3334,10 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
+  if (t.id === 'set-shipflat') {
+    const v = t.value === '' ? SHIP_FLAT : Math.max(0, Math.round(num(t.value)));
+    await store.upsert('meta', { ...settings, shipFlat: v });
+  }
   if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerItem: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { const f = t.files[0]; t.value = ''; await importShopeeFile(f); } // cleared first: choosing the same file again must fire a new change
   if (t.id === 'restore-file' && t.files[0]) {

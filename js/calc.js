@@ -397,14 +397,14 @@ export function findDuplicateOrders(orders, draft) {
   return out.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || ''));
 }
 
-/** The shop's flat shipping fee, in dong. Most orders use it, so the order form offers it as a choice instead of a number to type. */
+/** The shop's flat shipping fee, in dong, until the shop sets its own in the settings. Most orders use it, so the order form offers it as a choice instead of a number to type. */
 export const SHIP_FLAT = 15000;
 /**
  * Which shipping choice an order is: 'flat' (the flat fee, the customer pays), 'free' (the flat fee, the shop pays:
  * freeship) or 'other' (any other fee, typed in). An order with no fee at all is 'other'.
  */
-export function shipModeOf(order) {
-  if (num(order?.shipFee) !== SHIP_FLAT) return 'other';
+export function shipModeOf(order, flat = SHIP_FLAT) {
+  if (num(order?.shipFee) !== flat) return 'other';
   return order.shipPayer === 'shop' ? 'free' : 'flat';
 }
 
