@@ -169,7 +169,9 @@ class FirebaseStore extends BaseStore {
     }
   }
   signIn() {
-    return this.authLib.signInWithPopup(this.auth, new this.authLib.GoogleAuthProvider());
+    const provider = new this.authLib.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' }); // always ask which Google account, never reuse the last one silently
+    return this.authLib.signInWithPopup(this.auth, provider);
   }
   /** Fingerprints of what the web shop currently shows: { products: { id: _h }, info: _h }. */
   async readShopKnown() {
