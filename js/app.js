@@ -2989,7 +2989,7 @@ function openPresetForm(existing) {
 /* ================= SETTINGS ================= */
 /* ================= WEB SHOP (cửa hàng cho khách) ================= */
 // The web shop is a separate website. Until the shop sets its own address it is the GitHub Pages address of this repository.
-const DEFAULT_SHOP_URL = 'https://duchaopro1.github.io/tiemnhahani/';
+const DEFAULT_SHOP_URL = 'https://tiemnhahani-store.web.app/';
 const shopUrl = () => (settings.shopUrl || '').trim() || DEFAULT_SHOP_URL;
 
 /** Status of the live sync: the shop's documents follow the inventory by themselves. */

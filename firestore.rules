@@ -4,8 +4,8 @@ service cloud.firestore {
     // Danh sách email Google được phép dùng trang quản lý. Thêm email đồng nghiệp vào đây rồi Publish.
     function allowed() {
       return request.auth != null && request.auth.token.email in [
-        'email-chu-shop@gmail.com',
-        'email-dong-nghiep@gmail.com'
+        'tiemnhahani@gmail.com'
+        // thêm email đồng nghiệp ở đây, cách nhau bằng dấu phẩy, vd: 'ten@gmail.com'
       ];
     }
 

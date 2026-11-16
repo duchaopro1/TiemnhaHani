@@ -1,0 +1,11 @@
+{
+  "projects": { "default": "shoptiemnhahani" },
+  "targets": {
+    "shoptiemnhahani": {
+      "hosting": {
+        "admin": ["tiemnhahani-storage"],
+        "shop": ["tiemnhahani-store"]
+      }
+    }
+  }
+}
