@@ -115,6 +115,8 @@ const itemLabel = (pid, vid, fallback = '') => {
   return v ? `${p.name} · ${v.name}` : p.name;
 };
 const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
+/** Save some settings on top of the newest saved copy (not the copy drawn on screen), so two quick changes never overwrite each other. */
+const patchSettings = (patch) => store.upsert('meta', { ...(store.get('meta', 'settings') || settings), ...patch });
 /** The flat shipping fee set in the settings (a missing or invalid figure falls back to the default). */
 const shipFlat = () => (Number.isFinite(settings.shipFlat) && settings.shipFlat >= 0 ? settings.shipFlat : SHIP_FLAT);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
@@ -1460,7 +1462,7 @@ function openMappingDialog(parsed, unmatched) {
           } else if (sel.value) map[key] = sel.value;
         });
         if (newProducts.length) await store.upsertMany('products', newProducts);
-        await store.upsert('meta', { ...settings, shopeeMap: map });
+        await patchSettings({ shopeeMap: map });
         derive();
         m.close();
         await commitShopee(parsed);
@@ -2525,7 +2527,7 @@ function openCategoryDialog() {
       const touched = S.products.filter((q) => !isCombo(q) && ((q.group && renames.has(q.group)) || removed.has(q.group)))
         .map((q) => ({ ...q, group: removed.has(q.group) ? '' : renames.get(q.group) }));
       if (touched.length) await store.upsertMany('products', touched);
-      await store.upsert('meta', { ...settings, categories: live.map((r) => r.name.trim()), endedCategories: live.filter((r) => r.ended).map((r) => r.name.trim()) });
+      await patchSettings({ categories: live.map((r) => r.name.trim()), endedCategories: live.filter((r) => r.ended).map((r) => r.name.trim()) });
       toast('Đã lưu danh mục');
     }
     d.remove();
@@ -2701,7 +2703,7 @@ function openProductForm(existing) {
         const d = formData(form);
         let group = d.group === '__new' ? (d.groupNew || '').trim() : d.group;
         if (d.group === '__new' && !group) return toast('Nhập tên cho danh mục mới');
-        if (group && !categoryList().includes(group)) await store.upsert('meta', { ...settings, categories: [...(settings.categories || []), group] });
+        if (group && !categoryList().includes(group)) await patchSettings({ categories: [...(settings.categories || []), group] });
         if (moves.length) await moveVariantHistory(p.id, moves);
         if (releasedFromCombos.size) {
           const fixed = S.products.filter((c) => comboParts(c).some((x) => x.productId === p.id && releasedFromCombos.has(x.variantId)))
@@ -2974,7 +2976,9 @@ function openPresetForm(existing) {
 
 /* ================= SETTINGS ================= */
 /* ================= WEB SHOP (cửa hàng cho khách) ================= */
-const SHOP_PAGE = 'https://duchaopro1.github.io/tiemnhahani/shop/';
+// The web shop is a separate website. Until the shop sets its own address it is the GitHub Pages address of this repository.
+const DEFAULT_SHOP_URL = 'https://duchaopro1.github.io/tiemnhahani/';
+const shopUrl = () => (settings.shopUrl || '').trim() || DEFAULT_SHOP_URL;
 
 function pageWebshop() {
   const open = { ...settings, shopHidden: [] };
@@ -3001,7 +3005,8 @@ function pageWebshop() {
         <label class="field">Lời chào trên trang<input id="ws-welcome" value="${esc(settings.shopWelcome || '')}" placeholder="VD: Món quà nho nhỏ, kỉ niệm &quot;to đùng&quot;"></label>
         <label class="field">Tài khoản Instagram của shop<input id="ws-ig" value="${esc(settings.shopInstagram || '')}" placeholder="vd: hani.shop (không cần @)"></label>
         <label class="field">Tài khoản Threads của shop<input id="ws-threads" value="${esc(settings.shopThreads || '')}" placeholder="vd: hani.shop (không cần @)"></label>
-        <p class="small muted" style="margin:6px 0 0">Hai tài khoản này tạo nút “Mở chat” cho khách sau khi họ sao chép tin đặt hàng. Phí ship đồng giá lấy từ trang Cài đặt (đang là ${money(shipFlat())}).</p>
+        <label class="field">Địa chỉ website cửa hàng<input id="ws-url" value="${esc(settings.shopUrl || '')}" placeholder="${DEFAULT_SHOP_URL}"></label>
+        <p class="small muted" style="margin:6px 0 0">Hai tài khoản này tạo nút “Mở chat” cho khách sau khi họ sao chép tin đặt hàng. Cửa hàng là một website riêng, không liên kết với trang quản lý này. Phí ship đồng giá lấy từ trang Cài đặt (đang là ${money(shipFlat())}).</p>
       </div>
       <div class="card">
         <h3>Đưa lên web</h3>
@@ -3009,10 +3014,10 @@ function pageWebshop() {
         <button class="btn pink" data-action="export-catalog">⬇ Xuất danh mục cho cửa hàng web</button>
         <ol class="small" style="margin:10px 0 0;padding-left:20px;line-height:1.55">
           <li>Bấm nút trên, được file <b>catalog.json</b> (ảnh đã thu nhỏ, <b>không có giá vốn hay thông tin khách</b>).</li>
-          <li>Đưa file đó vào thư mục <code>shop/</code> của kho mã trên GitHub, thay file catalog.json cũ (hoặc gửi file cho tôi, tôi cập nhật giúp).</li>
+          <li>Đưa file đó vào thư mục <code>docs/</code> của kho mã trên GitHub, thay file catalog.json cũ (hoặc gửi file cho tôi, tôi cập nhật giúp). Chỉ thư mục này được mở công khai cho khách.</li>
           <li>Mỗi lần đổi giá, đổi mô tả hay tồn kho thay đổi nhiều thì xuất lại.</li>
         </ol>
-        <p class="small muted" style="margin:10px 0 0">Link cửa hàng cho khách (sau khi bật GitHub Pages): <b>${SHOP_PAGE}</b></p>
+        <p class="small muted" style="margin:10px 0 0">Link cửa hàng gửi cho khách: <b>${esc(shopUrl())}</b> <button type="button" class="link-btn" data-action="copy-shop-url">Sao chép</button></p>
       </div>
     </div>
     <div class="card table-wrap" style="margin-top:16px">
@@ -3045,7 +3050,7 @@ async function exportCatalog() {
   const catalog = buildCatalog(S, settings, images);
   const json = JSON.stringify(catalog);
   await download('catalog.json', json, 'application/json');
-  notify(`Đã xuất catalog.json: ${catalog.products.length} sản phẩm, ${(json.length / 1024 / 1024).toFixed(1)} MB.${failed ? ` ${failed} ảnh không tải được nên sản phẩm đó hiện không có ảnh.` : ''} Đưa file vào thư mục shop/ của kho mã để cập nhật cửa hàng web.`);
+  notify(`Đã xuất catalog.json: ${catalog.products.length} sản phẩm, ${(json.length / 1024 / 1024).toFixed(1)} MB.${failed ? ` ${failed} ảnh không tải được nên sản phẩm đó hiện không có ảnh.` : ''} Đưa file vào thư mục docs/ của kho mã để cập nhật cửa hàng web.`);
 }
 
 /** Paste the order message a customer sent from the web shop: it opens a new order already filled in. */
@@ -3419,7 +3424,8 @@ document.addEventListener('click', async (e) => {
     case 'export-orders': return openExportDialog();
     case 'paste-order': return openPasteOrder();
     case 'export-catalog': return exportCatalog();
-    case 'clear-map': return store.upsert('meta', { ...settings, shopeeMap: {} });
+    case 'copy-shop-url': { try { await navigator.clipboard.writeText(shopUrl()); toast('Đã sao chép link cửa hàng'); } catch { notify(shopUrl()); } return; }
+    case 'clear-map': return patchSettings({ shopeeMap: {} });
     case 'demo': return loadDemo();
   }
 });
@@ -3452,22 +3458,23 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
-  if (t.id === 'ws-name') await store.upsert('meta', { ...settings, shopName: t.value.trim() });
-  if (t.id === 'ws-welcome') await store.upsert('meta', { ...settings, shopWelcome: t.value.trim() });
-  if (t.id === 'ws-ig') await store.upsert('meta', { ...settings, shopInstagram: t.value.trim().replace(/^@/, '') });
-  if (t.id === 'ws-threads') await store.upsert('meta', { ...settings, shopThreads: t.value.trim().replace(/^@/, '') });
+  if (t.id === 'ws-name') await patchSettings({ shopName: t.value.trim() });
+  if (t.id === 'ws-welcome') await patchSettings({ shopWelcome: t.value.trim() });
+  if (t.id === 'ws-ig') await patchSettings({ shopInstagram: t.value.trim().replace(/^@/, '') });
+  if (t.id === 'ws-url') await patchSettings({ shopUrl: t.value.trim() });
+  if (t.id === 'ws-threads') await patchSettings({ shopThreads: t.value.trim().replace(/^@/, '') });
   if (t.dataset.wshow !== undefined) {
     const hidden = new Set(settings.shopHidden || []);
     if (t.checked) hidden.delete(t.dataset.wshow); else hidden.add(t.dataset.wshow);
-    await store.upsert('meta', { ...settings, shopHidden: [...hidden] });
+    await patchSettings({ shopHidden: [...hidden] });
   }
-  if (t.dataset.wdesc !== undefined) await store.upsert('meta', { ...settings, shopDesc: { ...(settings.shopDesc || {}), [t.dataset.wdesc]: t.value.trim() } });
-  if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
+  if (t.dataset.wdesc !== undefined) await patchSettings({ shopDesc: { ...(settings.shopDesc || {}), [t.dataset.wdesc]: t.value.trim() } });
+  if (t.id === 'set-low') await patchSettings({ lowStock: num(t.value) });
   if (t.id === 'set-shipflat') {
     const v = t.value === '' ? SHIP_FLAT : Math.max(0, Math.round(num(t.value)));
-    await store.upsert('meta', { ...settings, shipFlat: v });
+    await patchSettings({ shipFlat: v });
   }
-  if (t.id === 'set-labor') await store.upsert('meta', { ...settings, laborPerItem: Math.max(0, num(t.value)) });
+  if (t.id === 'set-labor') await patchSettings({ laborPerItem: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { const f = t.files[0]; t.value = ''; await importShopeeFile(f); } // cleared first: choosing the same file again must fire a new change
   if (t.id === 'restore-file' && t.files[0]) {
     try {

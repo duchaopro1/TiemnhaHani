@@ -1,6 +1,6 @@
 // Hani web shop (for customers): browse the catalog, fill a cart, then send the order to the shop as a chat message.
 // The catalog is a file (catalog.json) the shop exports from its admin app; nothing here talks to a server.
-import { priceCart, buildOrderMessage, unitPrice, money } from '../js/shoporder.js';
+import { priceCart, buildOrderMessage, unitPrice, money } from './lib/shoporder.js';
 
 const CART_KEY = 'hani-shop-cart-v1';
 const $ = (s, el = document) => el.querySelector(s);
@@ -59,7 +59,7 @@ function render() {
   $('#shop').innerHTML = `
     <header class="top"><h1>${esc(shop.name || 'Hani')}</h1>${products.length && shop.welcome ? `<p>${esc(shop.welcome)}</p>` : ''}</header>
     ${products.length ? `<div class="wrap"><div class="tools">
-      <input class="search" type="search" id="q" placeholder="Tìm sản phẩm…" value="${esc(view.q)}" aria-label="Tìm sản phẩm" autocomplete="off">
+      <div class="toolrow"><input class="search" type="search" id="q" placeholder="Tìm sản phẩm…" value="${esc(view.q)}" aria-label="Tìm sản phẩm" autocomplete="off"><button type="button" class="hcart" id="hcart" data-cart hidden></button></div>
       ${categories.length > 1 ? `<div class="chips" role="tablist"><button type="button" class="chip ${view.cat ? '' : 'on'}" data-cat="">Tất cả</button>${categories.map((c) => `<button type="button" class="chip ${view.cat === c ? 'on' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}
     </div>${body}</div>` : `<div class="wrap">${body}</div>`}
     ${catalog.updatedAt ? `<p class="fine">Số lượng còn lại cập nhật ngày ${new Date(catalog.updatedAt).toLocaleDateString('vi-VN')}. Shop sẽ xác nhận lại với bạn khi nhận đơn.</p>` : ''}
@@ -73,12 +73,15 @@ function drawBar() {
   const bar = $('#cartbar');
   if (!bar) return;
   const r = priceCart(cart, catalog);
+  const h = $('#hcart');
+  if (h) { h.hidden = !r.lines.length; h.innerHTML = `🛒 Giỏ hàng · ${r.pieces} · <b>${money(r.goods)}</b>`; }
   bar.hidden = !r.lines.length;
   bar.innerHTML = r.lines.length ? `<button type="button" class="btn" data-cart><span>🛒 Giỏ hàng · ${r.pieces} sản phẩm</span><span>${money(r.goods)}</span></button>` : '';
 }
 
 /* ---------------- sheet helpers ---------------- */
-function openSheet(html) {
+function openSheet(html, size = 'mid') {
+  sheet.className = size; // 'wide' for a product (picture beside the choices on a big screen), 'mid' for the rest
   sheet.innerHTML = `<div class="sheet-in">${html}</div>`;
   if (!sheet.open) sheet.showModal();
 }
@@ -103,8 +106,9 @@ function openProduct(id) {
   };
   openSheet(`
     <div class="sheet-head"><h2>${esc(p.name)}</h2><button type="button" class="x" data-close aria-label="Đóng">✕</button></div>
-    <div class="sheet-body">
+    <div class="sheet-body"><div class="pcols">
       <div class="hero">${pic(p.image, p.name)}</div>
+      <div class="pinfo">
       <div class="big-price">${money(fromPrice(p))}${hasVar && fromPrice(p) !== p.price ? '' : ''}</div>
       ${tiers.length ? `<p class="tiers">${tiers.map((t) => `Từ ${t.minQty} cái: <b>${money(t.price)}</b>/cái`).join(' · ')}</p>` : ''}
       ${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}
@@ -116,8 +120,9 @@ function openProduct(id) {
         }).join('')}</div>`
         : `<div class="var ${room('') <= 0 ? 'out' : ''}" style="grid-template-columns:1fr auto"><span><b>Số lượng</b><small>${room('') <= 0 ? 'Hết hàng' : ''}</small></span>${room('') > 0 ? stepper('', 0, room('')) : ''}</div>`}
       <label class="f"><span>Ghi chú cho sản phẩm này <small>(không bắt buộc, vd: tên muốn khắc, màu ưu tiên)</small></span><textarea class="in" id="pnote" maxlength="300"></textarea></label>
+      </div></div>
     </div>
-    <div class="sheet-foot"><button type="button" class="btn pink" id="add" disabled></button></div>`);
+    <div class="sheet-foot"><button type="button" class="btn pink" id="add" disabled></button></div>`, 'wide');
   draw();
   const set = (key, n, input) => {
     const cap = room(key);

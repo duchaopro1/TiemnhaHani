@@ -1,7 +1,7 @@
 // The cart of the web shop and the order message a customer sends to the shop.
 // The message is for people (the shop reads it in a chat) and carries one machine line so the admin page can
 // turn it into an order in one paste. Pure functions, shared by the shop page, the admin page and the tests.
-import { tierPrice } from './calc.js';
+import { tierPrice } from './tier.js';
 
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 export const money = (n) => `${Math.round(num(n)).toLocaleString('vi-VN')}đ`;

@@ -17,7 +17,7 @@ img { display: block; max-width: 100%; }
 .top { background: linear-gradient(180deg, var(--blue-soft), var(--bg)); padding: 20px 16px 8px; text-align: center; }
 .top h1 { margin: 0; font: 800 34px/1.1 var(--font-title); color: var(--blue-deep); letter-spacing: .5px; }
 .top p { margin: 6px auto 0; max-width: 520px; color: var(--muted); }
-.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
 .tools { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); padding: 10px 0 8px; }
 .search { width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); }
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 2px; scrollbar-width: none; }
@@ -28,6 +28,7 @@ img { display: block; max-width: 100%; }
 .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px 0 24px; }
 @media (min-width: 640px) { .grid { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
 @media (min-width: 900px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1180px) { .grid { grid-template-columns: repeat(5, 1fr); } }
 .cat-title { grid-column: 1 / -1; margin: 10px 0 0; font: 800 20px var(--font-title); color: var(--blue-deep); }
 .card { position: relative; display: flex; flex-direction: column; text-align: left; padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--card); overflow: hidden; }
 .card:active { transform: scale(.985); }
@@ -94,3 +95,29 @@ textarea.in { min-height: 70px; resize: vertical; }
 .fine { color: var(--muted); font-size: 13px; text-align: center; padding: 8px 16px 24px; }
 .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; z-index: 30; font-size: 14px; }
 .card .info > span { display: block; }
+
+/* ---- phone and computer: the same shop, laid out for the screen ---- */
+.toolrow { display: flex; gap: 12px; align-items: center; }
+.toolrow .search { flex: 1; min-width: 0; }
+.hcart { display: none; border: 0; border-radius: 999px; padding: 11px 18px; background: var(--star); color: #fff; font-weight: 600; white-space: nowrap; }
+.hcart[hidden] { display: none !important; }
+.hcart b { font-weight: 700; }
+dialog.wide { width: min(940px, calc(100vw - 48px)); }
+dialog.mid { width: min(640px, calc(100vw - 24px)); }
+.pcols { display: grid; gap: 4px; }
+.card { transition: transform .12s ease, box-shadow .12s ease; }
+@media (hover: hover) { .card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px #1479c41f; } .btn:hover { filter: brightness(1.05); } .chip:hover:not(.on) { background: var(--blue-soft); } }
+.card:focus-visible, .chip:focus-visible, .btn:focus-visible, .x:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+@media (min-width: 760px) {
+  .top { padding-top: 36px; padding-bottom: 14px; }
+  .top h1 { font-size: 46px; }
+  .pcols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+  .pcols .hero { position: sticky; top: 0; margin-bottom: 0; aspect-ratio: 1; }
+}
+@media (min-width: 900px) {
+  body { padding-bottom: 32px; }
+  .cartbar { display: none !important; } /* the cart button sits next to the search box instead */
+  .hcart:not([hidden]) { display: inline-block; }
+  .toast { bottom: 32px; }
+}
+@media (max-width: 380px) { .top h1 { font-size: 30px; } .grid { gap: 10px; } .var { grid-template-columns: 44px 1fr auto; } .var .th { width: 44px; height: 44px; } }
