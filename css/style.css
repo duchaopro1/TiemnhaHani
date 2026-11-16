@@ -700,3 +700,6 @@ main.wide { max-width: min(1560px, 100%); }
 .ship-mode { flex-wrap: wrap; width: fit-content; max-width: 100%; }
 .ship-mode small { font-weight: 400; opacity: .8; }
 #ship-other[hidden] { display: none; }
+
+/* web shop admin page */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }

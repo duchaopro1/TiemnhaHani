@@ -6,6 +6,8 @@ import {
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
 import { describeError } from './errors.js';
+import { buildCatalog, onShop, COMBO_LABEL } from './catalog.js';
+import { parseOrderMessage } from './shoporder.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -181,6 +183,7 @@ const TABS = {
   imports: 'Nhập hàng',
   products: 'Sản phẩm',
   packaging: 'Đóng gói',
+  webshop: 'Cửa hàng web',
   settings: 'Cài đặt',
 };
 const ui = {
@@ -198,7 +201,7 @@ const currentTab = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) 
 function render() {
   derive();
   const tab = currentTab();
-  const pages = { dashboard: pageDashboard, orders: pageOrders, revenue: pageRevenue, imports: pageImports, products: pageProducts, packaging: pagePackaging, settings: pageSettings };
+  const pages = { dashboard: pageDashboard, orders: pageOrders, revenue: pageRevenue, imports: pageImports, products: pageProducts, packaging: pagePackaging, webshop: pageWebshop, settings: pageSettings };
   const focused = document.activeElement?.id;
   $('#app').innerHTML = `
     <header class="topbar">
@@ -766,6 +769,7 @@ function pageOrders() {
       <div><h1>Đơn hàng</h1><p>Đơn Shopee nhập từ file Excel của Kênh Người Bán · Đơn Threads/Instagram thêm bằng tay.</p></div>
       <div class="actions">
         <label class="btn ghost">⬆ Nhập file Shopee<input type="file" id="shopee-file" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn ghost" data-action="paste-order" title="Dán tin đặt hàng khách gửi từ cửa hàng web để tạo đơn">📥 Dán đơn từ khách</button>
         <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng</button>
         <button class="btn pink" data-action="new-order">＋ Thêm đơn</button>
       </div>
@@ -2969,6 +2973,119 @@ function openPresetForm(existing) {
 }
 
 /* ================= SETTINGS ================= */
+/* ================= WEB SHOP (cửa hàng cho khách) ================= */
+const SHOP_PAGE = 'https://duchaopro1.github.io/tiemnhahani/shop/';
+
+function pageWebshop() {
+  const open = { ...settings, shopHidden: [] };
+  const list = S.products.filter((p) => onShop(p, open));
+  const hidden = new Set(settings.shopHidden || []);
+  const shown = list.filter((p) => !hidden.has(p.id));
+  const stockOf = (p) => (hasVariants(p) ? p.variants.reduce((n, v) => n + Math.max(0, vStock(p.id, v.id)), 0) : Math.max(0, num(stock.products[p.id])));
+  const row = (p) => {
+    const n = stockOf(p);
+    return `<tr class="${hidden.has(p.id) ? 'inactive' : ''}">
+      <td style="width:44px"><input type="checkbox" data-wshow="${esc(p.id)}" ${hidden.has(p.id) ? '' : 'checked'} aria-label="Hiện ${esc(p.name)} trên cửa hàng web"></td>
+      <td><span class="item">${thumb(p.image, p.name, 'sm')}<span><b>${esc(p.name)}</b><br><span class="small muted">${esc(isCombo(p) ? COMBO_LABEL : (p.group || '').trim() || 'Chưa có danh mục')}</span></span></span></td>
+      <td class="num">${money(p.salePrice)}${(p.tiers || []).length ? '<br><span class="small muted">có giá mua nhiều</span>' : ''}</td>
+      <td class="num">${n > 0 ? n : '<span class="chip out">Hết hàng</span>'}</td>
+      <td><input data-wdesc="${esc(p.id)}" value="${esc(settings.shopDesc?.[p.id] || '')}" placeholder="Mô tả ngắn cho khách (không bắt buộc)" maxlength="300" aria-label="Mô tả ${esc(p.name)}" style="width:100%;min-width:200px"></td>
+    </tr>`;
+  };
+  return `
+    <div class="page-head"><div><h1>Cửa hàng web</h1><p>Trang cho khách tự chọn sản phẩm, thêm vào giỏ và điền thông tin đặt hàng. Khách gửi đơn cho bạn bằng một tin nhắn soạn sẵn qua Instagram / Threads.</p></div></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Thông tin cửa hàng</h3>
+        <label class="field">Tên cửa hàng<input id="ws-name" value="${esc(settings.shopName || '')}" placeholder="Hani"></label>
+        <label class="field">Lời chào trên trang<input id="ws-welcome" value="${esc(settings.shopWelcome || '')}" placeholder="VD: Món quà nho nhỏ, kỉ niệm &quot;to đùng&quot;"></label>
+        <label class="field">Tài khoản Instagram của shop<input id="ws-ig" value="${esc(settings.shopInstagram || '')}" placeholder="vd: hani.shop (không cần @)"></label>
+        <label class="field">Tài khoản Threads của shop<input id="ws-threads" value="${esc(settings.shopThreads || '')}" placeholder="vd: hani.shop (không cần @)"></label>
+        <p class="small muted" style="margin:6px 0 0">Hai tài khoản này tạo nút “Mở chat” cho khách sau khi họ sao chép tin đặt hàng. Phí ship đồng giá lấy từ trang Cài đặt (đang là ${money(shipFlat())}).</p>
+      </div>
+      <div class="card">
+        <h3>Đưa lên web</h3>
+        <p class="small" style="margin:0 0 8px">Sẽ hiện <b>${shown.length}</b> / ${list.length} sản phẩm. Sản phẩm trong danh mục <b>Hết bán</b> không bao giờ hiện. Số lượng còn lại là số tồn đang có trừ các đơn đang mở.</p>
+        <button class="btn pink" data-action="export-catalog">⬇ Xuất danh mục cho cửa hàng web</button>
+        <ol class="small" style="margin:10px 0 0;padding-left:20px;line-height:1.55">
+          <li>Bấm nút trên, được file <b>catalog.json</b> (ảnh đã thu nhỏ, <b>không có giá vốn hay thông tin khách</b>).</li>
+          <li>Đưa file đó vào thư mục <code>shop/</code> của kho mã trên GitHub, thay file catalog.json cũ (hoặc gửi file cho tôi, tôi cập nhật giúp).</li>
+          <li>Mỗi lần đổi giá, đổi mô tả hay tồn kho thay đổi nhiều thì xuất lại.</li>
+        </ol>
+        <p class="small muted" style="margin:10px 0 0">Link cửa hàng cho khách (sau khi bật GitHub Pages): <b>${SHOP_PAGE}</b></p>
+      </div>
+    </div>
+    <div class="card table-wrap" style="margin-top:16px">
+      <h3>Sản phẩm hiện trên cửa hàng</h3>
+      ${list.length ? `<table><thead><tr><th></th><th>Sản phẩm</th><th class="num">Giá</th><th class="num">Còn</th><th>Mô tả cho khách</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table>` : '<div class="empty">Chưa có sản phẩm nào để đưa lên web.</div>'}
+    </div>`;
+}
+
+/** Make the catalog file: pictures are fetched, shrunk and embedded so the shop page needs nothing else. */
+async function exportCatalog() {
+  const list = S.products.filter((p) => onShop(p, settings));
+  if (!list.length) return notify('Chưa có sản phẩm nào để đưa lên cửa hàng web.');
+  const refs = [...new Set(list.flatMap((p) => [p.image, ...(p.variants || []).map((v) => v.image)]).filter(Boolean))];
+  const images = {};
+  toast(`Đang chuẩn bị ${list.length} sản phẩm và ${refs.length} ảnh…`, 4000);
+  let failed = 0;
+  const toData = (blob) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
+  const queue = [...refs];
+  const worker = async () => {
+    while (queue.length) {
+      const ref = queue.shift();
+      try {
+        const res = await fetch(imgSrc(ref));
+        if (!res.ok) throw new Error(res.status);
+        images[ref] = await toData(await resizeImage(await res.blob(), 480));
+      } catch { failed += 1; }
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  const catalog = buildCatalog(S, settings, images);
+  const json = JSON.stringify(catalog);
+  await download('catalog.json', json, 'application/json');
+  notify(`Đã xuất catalog.json: ${catalog.products.length} sản phẩm, ${(json.length / 1024 / 1024).toFixed(1)} MB.${failed ? ` ${failed} ảnh không tải được nên sản phẩm đó hiện không có ảnh.` : ''} Đưa file vào thư mục shop/ của kho mã để cập nhật cửa hàng web.`);
+}
+
+/** Paste the order message a customer sent from the web shop: it opens a new order already filled in. */
+function openPasteOrder() {
+  openModal({
+    title: 'Dán đơn từ khách',
+    wide: false,
+    body: `<p class="muted" style="margin-top:0">Dán nguyên tin nhắn đặt hàng khách gửi (tin tạo từ cửa hàng web, có dòng mã <code>#HANI …</code> ở cuối). App sẽ mở một đơn mới đã điền sẵn sản phẩm, số lượng, giá và thông tin giao hàng để bạn kiểm tra trước khi lưu.</p>
+      <textarea id="paste-msg" rows="12" style="width:100%" placeholder="🛍 ĐƠN ĐẶT HÀNG — Hani…"></textarea>
+      <p class="err" id="paste-err" role="alert" style="margin:6px 0 0"></p>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="paste-go">Tạo đơn từ tin nhắn</button>`,
+    onMount(m) {
+      $('#paste-msg', m).focus();
+      $('[data-close2]', m).onclick = () => m.requestClose();
+      $('#paste-go', m).onclick = async () => {
+        const r = parseOrderMessage($('#paste-msg', m).value);
+        const err = $('#paste-err', m);
+        if (!r.items.length) { err.textContent = 'Không đọc được sản phẩm trong tin này. Tin cần có dòng mã “#HANI …” ở cuối (tin tạo từ cửa hàng web).'; return; }
+        const known = r.items.filter((i) => product(i.pid));
+        if (!known.length) { err.textContent = 'Các sản phẩm trong tin này không còn trong kho của bạn.'; return; }
+        const lost = r.items.length - known.length;
+        const totals = {};
+        for (const i of known) totals[i.pid] = (totals[i.pid] || 0) + i.qty;
+        const items = known.map((i) => {
+          const p = product(i.pid);
+          const v = i.vid ? variantOf(i.pid, i.vid) : null;
+          const pr = store.get('presets', p.defaultPreset);
+          return { ...blankLine(), productId: i.pid, variantId: v ? v.id : '', qty: i.qty, price: tierPrice(p, totals[i.pid], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
+        });
+        const note = [r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`, r.name && `Người nhận: ${r.name}`, r.note && `Khách ghi chú: ${r.note}`, ...r.itemNotes.map((t) => `Ghi chú SP — ${t}`), lost ? `⚠ ${lost} sản phẩm trong tin không còn trong kho, kiểm tra lại với khách.` : ''].filter(Boolean).join('\n');
+        const prefill = { platform: 'instagram', date: today(), customer: r.account || r.name, status: 'pending', note, shipFee: shipFlat(), shipPayer: 'customer', items };
+        if (getDraft('new') && !(await ask('Bạn đang có một đơn mới nhập dở. Thay bằng đơn từ tin nhắn này?', 'Thay thế'))) return;
+        deleteDraft('new');
+        m.close();
+        openOrderFormNow(undefined, prefill);
+      };
+    },
+  });
+}
+
 function pageSettings() {
   const mapCount = Object.keys(settings.shopeeMap || {}).length;
   return `
@@ -3300,6 +3417,8 @@ document.addEventListener('click', async (e) => {
     case 'sign-out': return store.signOut();
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
     case 'export-orders': return openExportDialog();
+    case 'paste-order': return openPasteOrder();
+    case 'export-catalog': return exportCatalog();
     case 'clear-map': return store.upsert('meta', { ...settings, shopeeMap: {} });
     case 'demo': return loadDemo();
   }
@@ -3333,6 +3452,16 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'order-status') { ui.orders.status = t.value; render(); }
   if (t.id === 'order-month') { ui.orders.month = t.value; render(); }
   if (t.id === 'dash-month' && t.value) { viewMonth(t.value); render(); }
+  if (t.id === 'ws-name') await store.upsert('meta', { ...settings, shopName: t.value.trim() });
+  if (t.id === 'ws-welcome') await store.upsert('meta', { ...settings, shopWelcome: t.value.trim() });
+  if (t.id === 'ws-ig') await store.upsert('meta', { ...settings, shopInstagram: t.value.trim().replace(/^@/, '') });
+  if (t.id === 'ws-threads') await store.upsert('meta', { ...settings, shopThreads: t.value.trim().replace(/^@/, '') });
+  if (t.dataset.wshow !== undefined) {
+    const hidden = new Set(settings.shopHidden || []);
+    if (t.checked) hidden.delete(t.dataset.wshow); else hidden.add(t.dataset.wshow);
+    await store.upsert('meta', { ...settings, shopHidden: [...hidden] });
+  }
+  if (t.dataset.wdesc !== undefined) await store.upsert('meta', { ...settings, shopDesc: { ...(settings.shopDesc || {}), [t.dataset.wdesc]: t.value.trim() } });
   if (t.id === 'set-low') await store.upsert('meta', { ...settings, lowStock: num(t.value) });
   if (t.id === 'set-shipflat') {
     const v = t.value === '' ? SHIP_FLAT : Math.max(0, Math.round(num(t.value)));
