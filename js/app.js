@@ -227,7 +227,7 @@ function render() {
   if (focused && $('#' + focused)) {
     const el = $('#' + focused);
     el.focus();
-    if (el.setSelectionRange && el.type === 'search') el.setSelectionRange(el.value.length, el.value.length);
+    if (el.setSelectionRange && ['search', 'text', 'tel', 'url', 'password', 'textarea'].includes(el.type)) { try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* not a text box */ } }
   }
 }
 
@@ -3642,12 +3642,35 @@ async function boot() {
     toast(docs.length === 1 ? `Có đơn mới${codes[0] ? ': ' + codes[0] : ''}` : `Có ${docs.length} đơn mới`, 4500);
   };
   store.onLiveError = () => notify('Quyền truy cập trang đã thay đổi. Hãy tải lại trang để tiếp tục.');
-  let renderQueued = false;
+  let renderQueued = false, renderDeferred = false, editingEl = null;
+  // the box someone has typed into and not yet committed (a "change" event commits it: on Enter or on leaving the box)
+  document.addEventListener('input', (e) => { editingEl = e.target; }, true);
+  document.addEventListener('change', (e) => { if (editingEl === e.target) editingEl = null; }, true);
+  /**
+   * Is the person typing in a text box of the page? Redrawing the page then would swap that box for a new one:
+   * the cursor jumps to the start and an accent being composed (Telex / VNI) is lost. So data arriving from the
+   * server waits until they leave the box. A search box is not included: it redraws the list on purpose as they type.
+   */
+  const typingInField = () => {
+    const a = document.activeElement;
+    if (!a || !$('#app')?.contains(a) || !a.matches('input:not([type=search]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=file]), textarea')) return false;
+    return a === editingEl; // typing (or composing a word) and not saved yet
+  };
+  document.addEventListener('focusout', () => {
+    if (!renderDeferred) return;
+    setTimeout(() => { if (!renderDeferred || typingInField()) return; renderDeferred = false; render(); }, 0);
+  });
   store.onChange(() => {
     scheduleShopSync(); // keep the web shop in step with the inventory (Firebase only)
     if (renderQueued) return;
     renderQueued = true;
-    requestAnimationFrame(() => { renderQueued = false; if (!firebaseEnabled || store.user) render(); });
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      if (firebaseEnabled && !store.user) return;
+      if (typingInField()) { renderDeferred = true; return; }
+      renderDeferred = false;
+      render();
+    });
   });
   if (firebaseEnabled) {
     store.init((user) => { if (user) { render(); scheduleShopSync(); } else renderLogin(); }).catch((err) => renderLogin('Không kết nối được Firebase: ' + err.message));

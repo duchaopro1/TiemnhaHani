@@ -57,6 +57,7 @@ Bản online tự nhận thay đổi của người khác, không cần tải l�
 - Dữ liệu cập nhật qua kết nối thời gian thực của nền tảng. Nếu một kết nối bị đứt thì app **tự nối lại** (thử sau 1, 2, 4… tối đa 30 giây).
 - Phòng khi kết nối im lặng, app còn tự hỏi lại máy chủ **mỗi 30 giây** khi trang đang mở, và **ngay khi bạn quay lại tab** hoặc có mạng trở lại. Đang lưu đơn thì bỏ qua để không làm đơn đó biến mất tạm thời.
 - Có đơn mới từ người khác thì hiện thông báo "Có đơn mới: mã đơn".
+- **Đang gõ thì trang không bị vẽ lại**: dữ liệu mới về trong lúc bạn gõ vào một ô (kể cả đang ghép dấu tiếng Việt bằng bộ gõ Telex / VNI) sẽ chờ đến khi bạn lưu ô đó (Enter hoặc rời ô), nên con trỏ không nhảy về đầu và chữ không bị đảo. Ô tìm kiếm không tính vì nó cố ý lọc danh sách khi gõ.
 - Thanh đầu trang ghi giờ cập nhật gần nhất (⟳ 14:05). Bấm vào đó để làm mới ngay. Khi mất kết nối nó đổi thành "Đang kết nối lại…".
 
 ## Nhập đơn Shopee
