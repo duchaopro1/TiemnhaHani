@@ -234,9 +234,20 @@ function render() {
 /** The revenue table gets exactly the screen height left below it, so it scrolls inside its own box. */
 function fitRevenueTable() {
   const box = $('.rev-wrap');
-  if (!box) return;
-  const top = box.getBoundingClientRect().top + window.scrollY;
-  box.style.maxHeight = `${Math.max(240, window.innerHeight - top - 84)}px`;
+  if (box) {
+    const top = box.getBoundingClientRect().top + window.scrollY;
+    box.style.maxHeight = `${Math.max(240, window.innerHeight - top - 84)}px`;
+  }
+  // The orders table: only when it is wider than the window does it get its own box, as tall as the screen
+  // leaves, so the sideways scroll bar is in view. Wide enough: no box, the page scrolls as before.
+  const ord = $('.ord-wrap');
+  if (ord) {
+    ord.style.maxHeight = '';
+    if (ord.scrollWidth > ord.clientWidth + 6) { // a couple of pixels of rounding are not an overflow
+      const top = ord.getBoundingClientRect().top + window.scrollY;
+      ord.style.maxHeight = `${Math.max(320, window.innerHeight - top - 24)}px`;
+    }
+  }
 }
 window.addEventListener('resize', fitRevenueTable);
 
@@ -791,7 +802,7 @@ function pageOrders() {
       <input type="month" id="order-month" value="${esc(f.month)}">
       <span class="muted small" style="margin-left:auto">${list.length} đơn · DT ${money(agg.revenue)} · Lãi <b class="${signCls(agg.profit)}">${money(agg.profit)}</b></span>
     </div>
-    <div class="card table-wrap">
+    <div class="card table-wrap ord-wrap">
       ${list.length ? `<table class="orders-table">
         <colgroup><col style="width:80px"><col style="width:84px"><col style="width:130px"><col><col style="width:112px"><col style="width:158px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
         <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>

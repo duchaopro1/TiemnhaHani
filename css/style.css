@@ -639,7 +639,8 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .quick-sum { min-height: 22px; }
 
 /* orders table: the product column takes the room, the number columns stay narrow */
-.orders-table { table-layout: fixed; width: 100%; min-width: 1060px; }
+/* the fixed columns add up to 1008px: keep at least ~410px for the product column, and let a narrower window scroll the table sideways instead of squeezing it */
+.orders-table { table-layout: fixed; width: 100%; min-width: 1420px; border-collapse: separate; border-spacing: 0; }
 .orders-table th, .orders-table td { padding-left: 8px; padding-right: 8px; overflow-wrap: anywhere; }
 .orders-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }
 .orders-table td.num { white-space: normal; }
@@ -647,7 +648,7 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .orders-table .st-btn { min-width: 0; width: 100%; padding: 5px 8px; font-size: 12px; gap: 4px; }
 
 /* the orders table can use a wider page on big screens */
-main.wide { max-width: min(1560px, 100%); }
+main.wide { max-width: min(1800px, 100%); }
 
 .orders-table th:nth-child(5) { white-space: nowrap; }
 
@@ -716,3 +717,8 @@ main.wide { max-width: min(1560px, 100%); }
 .stg-table .stg-left { border-left: 2px solid var(--line); background: #fbfdff; }
 .stg-table .stg-left.neg { color: var(--danger); }
 .stg-table th.stg-left { background: var(--blue-soft); }
+
+/* orders page: when the window is narrower than the table, the table scrolls on its own (sideways bar stays at the bottom of the screen, column names stay on top) */
+.ord-wrap { overflow: auto; padding: 0; } /* no padding, or the sticky column names stop short of the top edge */
+.ord-wrap .empty { padding: 24px; }
+.ord-wrap .orders-table thead th { position: sticky; top: 0; z-index: 3; background: var(--blue-soft); box-shadow: 0 1px 0 var(--line, #dfe6f2); }
