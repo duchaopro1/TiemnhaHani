@@ -142,3 +142,64 @@ export function rowsToOrders(rows) {
 
 /** Key used to remember which of our products a Shopee listing corresponds to. */
 export const listingKey = (line) => normalize(line.sku || line.productName);
+
+/* ---------------- check the orders on their way against a fresh Shopee export ---------------- */
+
+const codeKey = (s) => String(s ?? '').trim().toUpperCase();
+
+/** The order codes in pasted text: separated by lines, spaces, commas or semicolons; repeats dropped, order kept. */
+export function parseCodes(text) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(text ?? '').split(/[\s,;|]+/)) {
+    const t = raw.trim();
+    if (!t || seen.has(codeKey(t))) continue;
+    seen.add(codeKey(t));
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Compare orders with what Shopee says now.
+ *   orders = the shop's orders · shopee = rowsToOrders() of a fresh export · codes = pasted (an order code or a tracking code);
+ *   no codes: every Shopee order that is "shipping" in the shop.
+ * Sorted into: complete (Shopee says done, the shop still has it shipping: these are the ones to move to done),
+ * stillShipping, waiting (Shopee has not shipped it), cancelled, returned, doneButApp (Shopee says done but the shop has
+ * it at another stage: left for the shop to decide), already (done on both sides), missing (not in the file),
+ * and notFound (pasted codes that are no order of the shop).
+ */
+export function reviewDelivery({ orders, shopee, codes = [] }) {
+  const theirs = new Map();
+  for (const s of shopee) theirs.set(codeKey(s.code), s);
+  for (const s of shopee) if (s.tracking && !theirs.has(codeKey(s.tracking))) theirs.set(codeKey(s.tracking), s);
+  const ours = new Map();
+  for (const o of orders) if (o.code) ours.set(codeKey(o.code), o);
+  for (const o of orders) if (o.tracking && !ours.has(codeKey(o.tracking))) ours.set(codeKey(o.tracking), o);
+
+  const targets = [];
+  const notFound = [];
+  if (codes.length) {
+    const seen = new Set();
+    for (const c of codes) {
+      const o = ours.get(codeKey(c));
+      if (!o) notFound.push(c);
+      else if (!seen.has(o.id)) { seen.add(o.id); targets.push(o); }
+    }
+  } else {
+    for (const o of orders) if (o.status === 'shipping' && o.platform === 'shopee') targets.push(o);
+  }
+
+  const out = { checked: targets.length, complete: [], stillShipping: [], waiting: [], cancelled: [], returned: [], doneButApp: [], already: [], missing: [], notFound };
+  for (const order of targets) {
+    const s = theirs.get(codeKey(order.code)) || (order.tracking ? theirs.get(codeKey(order.tracking)) : undefined);
+    if (!s) { out.missing.push({ order }); continue; }
+    const item = { order, shopeeStatus: s.status };
+    if (s.status === 'done') (order.status === 'done' ? out.already : order.status === 'shipping' ? out.complete : out.doneButApp).push(item);
+    else if (s.status === 'shipping') out.stillShipping.push(item);
+    else if (s.status === 'cancelled') out.cancelled.push(item);
+    else if (s.status === 'returned') out.returned.push(item);
+    else out.waiting.push(item);
+  }
+  return out;
+}

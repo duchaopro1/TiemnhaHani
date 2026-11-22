@@ -3,7 +3,7 @@ import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
   costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
-import { rowsToOrders, listingKey, normalize, mergeShopeeStatus } from './shopee.js';
+import { rowsToOrders, listingKey, normalize, mergeShopeeStatus, parseCodes, reviewDelivery } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
 import { describeError } from './errors.js';
 import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
@@ -789,6 +789,7 @@ function pageOrders() {
       <div><h1>Đơn hàng</h1><p>Đơn Shopee nhập từ file Excel của Kênh Người Bán · Đơn Threads/Instagram thêm bằng tay.</p></div>
       <div class="actions">
         <label class="btn ghost">⬆ Nhập file Shopee<input type="file" id="shopee-file" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn ghost" data-action="check-delivery" title="Dán mã đơn và chọn file Shopee mới nhất: đơn nào đã hoàn thành sẽ tự chuyển trạng thái">🔎 Kiểm tra đơn đang giao${(() => { const n = S.orders.filter((o) => o.status === 'shipping').length; return n ? ` (${n})` : ''; })()}</button>
         <button class="btn ghost" data-action="paste-order" title="Dán tin đặt hàng khách gửi từ cửa hàng web để tạo đơn">📥 Dán đơn từ khách</button>
         ${store.mode === 'firebase' ? `<button class="btn ${webInbox().length ? 'pink' : 'ghost'}" data-action="web-orders" title="Đơn khách đặt thẳng trên cửa hàng web">📬 Đơn từ web${webInbox().length ? ` (${webInbox().length})` : ''}</button>` : ''}
         <button class="btn ghost" data-action="export-orders">⬇ Xuất đơn hàng</button>
@@ -1444,13 +1445,18 @@ const listingOptions = (selected) => S.products.map((p) =>
   `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>` +
   (p.variants || []).map((v) => `<option value="${esc(p.id)}:${esc(v.id)}">　↳ ${esc(p.name)} · ${esc(v.name)}</option>`).join('')).join('');
 
+/** The orders of a Shopee export file (.xlsx or .csv), as rowsToOrders gives them. */
+async function readShopeeOrders(file) {
+  const XLSX = await loadXLSX();
+  // A .csv is text (UTF-8): read as bytes it comes out with broken accents and the "Mã đơn hàng" column is not found.
+  const wb = /\.csv$/i.test(file.name || '') ? XLSX.read(await file.text(), { type: 'string' }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+  return rowsToOrders(rows);
+}
+
 async function importShopeeFile(file) {
   try {
-    const XLSX = await loadXLSX();
-    // A .csv is text (UTF-8): read as bytes it comes out with broken accents and the "Mã đơn hàng" column is not found.
-    const wb = /\.csv$/i.test(file.name || '') ? XLSX.read(await file.text(), { type: 'string' }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-    const parsed = rowsToOrders(rows);
+    const parsed = await readShopeeOrders(file);
     if (!parsed.length) return toast('File không có đơn hàng nào');
 
     const unmatched = new Map();
@@ -1521,6 +1527,7 @@ async function commitShopee(parsed) {
     return o;
   });
   const isNew = new Set(docs.filter((d) => !existing.has(d.code)).map((d) => d.code));
+  const justDone = docs.filter((d) => existing.get(d.code) && existing.get(d.code).status !== 'done' && d.status === 'done');
   try {
     await store.upsertMany('orders', docs, { quiet: true });
   } catch (err) {
@@ -1533,6 +1540,77 @@ async function commitShopee(parsed) {
     return notify(`Đã lưu ${docs.length - err.failed.length}/${docs.length} đơn Shopee (thêm ${added}, cập nhật ${updated}). ${err.failed.length} đơn chưa lưu được: ${describeError(err).text}. Bấm nhập lại đúng file này để lưu nốt các đơn còn thiếu. Đơn đã lưu chỉ được cập nhật, không bị trùng.`);
   }
   toast(`Shopee: thêm ${added} đơn, cập nhật ${updated} đơn`);
+  if (justDone.length) openDeliveryResult({ checked: justDone.length, complete: justDone.map((order) => ({ order })), stillShipping: [], waiting: [], cancelled: [], returned: [], doneButApp: [], already: [], missing: [], notFound: [] }, 'Đơn vừa hoàn thành theo file Shopee');
+}
+
+/* ---------------- check the orders on their way ---------------- */
+
+/** Paste order codes + choose a fresh Shopee export: the orders Shopee says are done become "Hoàn thành". */
+function openDeliveryCheck() {
+  const shipping = S.orders.filter((o) => o.status === 'shipping' && o.platform === 'shopee').length;
+  let file = null;
+  openModal({
+    title: 'Kiểm tra đơn đang giao',
+    wide: false,
+    body: `<p class="muted" style="margin-top:0">Dán mã đơn hàng cần kiểm tra (mỗi mã một dòng, mã vận đơn cũng được). <b>Để trống</b> thì kiểm tra tất cả <b>${shipping}</b> đơn Shopee đang giao. Rồi chọn file xuất đơn <b>mới nhất</b> từ Kênh Người Bán Shopee, vì trạng thái thật nằm trong file đó. Đơn nào Shopee báo đã hoàn thành sẽ tự chuyển sang <b>Hoàn thành</b>.</p>
+      <textarea id="dc-codes" rows="7" style="width:100%" placeholder="2611ABCDEFGH12&#10;2611XYZKLMNP34"></textarea>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"><label class="btn ghost sm">📎 Chọn file Shopee<input type="file" id="dc-file" accept=".xlsx,.xls,.csv" hidden></label><span id="dc-name" class="small muted">Chưa chọn file</span></div>
+      <p class="err" id="dc-err" role="alert" style="margin:8px 0 0"></p>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="dc-go">Kiểm tra</button>`,
+    onMount(m) {
+      $('[data-close2]', m).onclick = () => m.requestClose();
+      $('#dc-codes', m).focus();
+      $('#dc-file', m).onchange = (e) => { file = e.target.files[0] || null; $('#dc-name', m).textContent = file ? file.name : 'Chưa chọn file'; $('#dc-err', m).textContent = ''; };
+      $('#dc-go', m).onclick = async () => {
+        const err = $('#dc-err', m);
+        const codes = parseCodes($('#dc-codes', m).value);
+        if (!file) { err.textContent = 'Bạn chọn file xuất đơn Shopee mới nhất nhé.'; return; }
+        if (!codes.length && !shipping) { err.textContent = 'Chưa có đơn Shopee nào đang giao. Dán mã đơn cần kiểm tra nhé.'; return; }
+        const go = $('#dc-go', m);
+        go.disabled = true;
+        go.textContent = 'Đang kiểm tra…';
+        try {
+          const shopee = await readShopeeOrders(file);
+          if (!shopee.length) throw new Error('File không có đơn hàng nào');
+          derive();
+          const res = reviewDelivery({ orders: S.orders, shopee, codes });
+          if (res.complete.length) await store.upsertMany('orders', res.complete.map(({ order }) => ({ ...order, status: 'done' })), { quiet: true });
+          m.close();
+          openDeliveryResult(res, 'Kết quả kiểm tra đơn đang giao');
+        } catch (e) {
+          err.textContent = e.code ? `Chưa lưu được: ${describeError(e).text}` : e.message;
+          go.disabled = false;
+          go.textContent = 'Kiểm tra';
+        }
+      };
+    },
+  });
+}
+
+/** The pop-up after a check: the orders that are now "Hoàn thành" first, then what is left to look at. */
+function openDeliveryResult(res, title) {
+  const when = (d) => (d ? fmtDate(d) : '');
+  const row = ({ order: o }) => `<li><b>${esc(o.code || '—')}</b> <span class="muted">${esc(o.customer || '')}${o.date ? ' · ' + when(o.date) : ''}</span>${o.status && o.status !== 'shipping' && o.status !== 'done' ? ` <span class="chip ${'st-' + o.status}">${esc(STATUSES[o.status] || o.status)}</span>` : ''}</li>`;
+  const groups = [
+    ['stillShipping', '🚚 Vẫn đang giao', ''],
+    ['waiting', '⏳ Shopee chưa giao (chưa có gì để đổi)', ''],
+    ['doneButApp', 'ℹ️ Shopee báo hoàn thành nhưng đơn trong app chưa ở giai đoạn Đang giao (chưa đổi, bạn tự chuyển nếu đúng)', 'warn'],
+    ['cancelled', '⚠ Shopee báo đã huỷ (chưa đổi, bạn kiểm tra)', 'warn'],
+    ['returned', '⚠ Shopee báo trả hàng / hoàn tiền (chưa đổi, bạn kiểm tra)', 'warn'],
+    ['already', '✓ Đã ở trạng thái Hoàn thành từ trước', ''],
+    ['missing', '❓ Không có trong file Shopee (file cũ quá, hoặc không phải đơn Shopee)', ''],
+  ].filter(([k]) => res[k].length);
+  const n = res.complete.length;
+  openModal({
+    title,
+    wide: false,
+    body: `<div class="dc-head ${n ? 'dc-ok' : ''}">${n ? `✅ <b>${n}</b> đơn đã hoàn thành, đã chuyển sang <b>Hoàn thành</b>` : 'Chưa có đơn nào hoàn thành.'}<span class="muted small"> · đã kiểm tra ${res.checked} đơn</span></div>
+      ${n ? `<ul class="dc-list dc-done">${res.complete.map(row).join('')}</ul>` : ''}
+      ${groups.map(([k, label, cls]) => `<details class="dc-group ${cls}" ${res[k].length <= 8 ? 'open' : ''}><summary>${esc(label)} <b>(${res[k].length})</b></summary><ul class="dc-list">${res[k].map(row).join('')}</ul></details>`).join('')}
+      ${res.notFound.length ? `<details class="dc-group warn" open><summary>❓ Mã không tìm thấy trong app <b>(${res.notFound.length})</b></summary><ul class="dc-list">${res.notFound.map((c) => `<li><b>${esc(c)}</b></li>`).join('')}</ul></details>` : ''}`,
+    foot: `<button class="btn" data-close2>Đóng</button>`,
+    onMount(m) { $('[data-close2]', m).onclick = () => m.requestClose(); },
+  });
 }
 
 /* ================= IMPORTS (nhập hàng) ================= */
@@ -3561,6 +3639,7 @@ document.addEventListener('click', async (e) => {
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
     case 'export-orders': return openExportDialog();
     case 'paste-order': return openPasteOrder();
+    case 'check-delivery': return openDeliveryCheck();
     case 'web-orders': return openWebOrders();
     case 'sync-shop-now': return syncShop({ force: true }).then(() => { if (ui.shopSync?.state === 'ok') toast('Đã cập nhật cửa hàng web'); else if (ui.shopSync?.state === 'error') notify('Chưa cập nhật được cửa hàng web: ' + ui.shopSync.text); });
     case 'export-catalog': return exportCatalog();

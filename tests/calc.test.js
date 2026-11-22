@@ -671,3 +671,43 @@ test('phí ship đồng giá đổi được: so khớp theo mức đang đặt,
   assert.equal(shipModeOf({ shipFee: 15000, shipPayer: 'customer' }, 18000), 'other');
   assert.equal(shipModeOf({ shipFee: 0 }, 0), 'flat'); // mức đồng giá 0đ = miễn phí ship cho khách
 });
+
+import { parseCodes, reviewDelivery } from '../js/shopee.js';
+test('dán mã đơn: tách theo dòng / dấu cách / dấu phẩy, bỏ trùng, giữ thứ tự', () => {
+  assert.deepEqual(parseCodes('2611A\n 2611B,2611C ;2611a\t\r\n2611D '), ['2611A', '2611B', '2611C', '2611D']);
+  assert.deepEqual(parseCodes('  \n '), []);
+  assert.deepEqual(parseCodes(null), []);
+});
+
+test('kiểm tra đơn đang giao với file Shopee: chỉ đơn đang giao mà Shopee báo hoàn thành mới được chuyển', () => {
+  const ord = (id, code, status, extra = {}) => ({ id, code, status, platform: 'shopee', ...extra });
+  const orders = [
+    ord('1', 'A1', 'shipping'), ord('2', 'A2', 'shipping'), ord('3', 'A3', 'shipping'), ord('4', 'A4', 'shipping'),
+    ord('5', 'A5', 'shipping'), ord('6', 'A6', 'shipping', { tracking: 'SPX666' }), ord('7', 'A7', 'pending'), ord('8', 'A8', 'done'),
+    ord('9', 'IG1', 'shipping', { platform: 'instagram' }),
+  ];
+  const shopee = [
+    { code: 'A1', status: 'done' }, { code: 'A2', status: 'shipping' }, { code: 'A3', status: 'cancelled' }, { code: 'A4', status: 'returned' },
+    { code: 'ZZ', tracking: 'SPX666', status: 'done' }, { code: 'A7', status: 'done' }, { code: 'A8', status: 'done' }, { code: 'A9', status: 'pending' },
+  ];
+  // không dán mã: kiểm tra mọi đơn Shopee đang giao (đơn Instagram không có trên Shopee, không tính)
+  const all = reviewDelivery({ orders, shopee });
+  assert.equal(all.checked, 6);
+  assert.deepEqual(all.complete.map((x) => x.order.id).sort(), ['1', '6']); // A6 khớp qua mã vận đơn
+  assert.deepEqual(all.stillShipping.map((x) => x.order.id), ['2']);
+  assert.deepEqual(all.cancelled.map((x) => x.order.id), ['3']);
+  assert.deepEqual(all.returned.map((x) => x.order.id), ['4']);
+  assert.deepEqual(all.missing.map((x) => x.order.id), ['5']); // không có trong file
+  // dán mã: chỉ các mã đó; đơn chưa giao mà Shopee báo xong để shop tự quyết, đơn đã xong thì giữ nguyên
+  const some = reviewDelivery({ orders, shopee, codes: ['a1', 'A7', 'A8', 'XX99', 'A1', 'SPX666', 'IG1'] });
+  assert.deepEqual(some.complete.map((x) => x.order.id).sort(), ['1', '6']);
+  assert.deepEqual(some.doneButApp.map((x) => x.order.id), ['7']);
+  assert.deepEqual(some.already.map((x) => x.order.id), ['8']);
+  assert.deepEqual(some.notFound, ['XX99']);
+  assert.deepEqual(some.missing.map((x) => x.order.id), ['9']);
+  assert.equal(some.checked, 5); // A1 (trùng bỏ), A7, A8, SPX666 → A6, IG1
+  // Shopee chưa giao (chờ xử lý): chưa tính là đã xong
+  const w = reviewDelivery({ orders: [ord('x', 'A9', 'shipping')], shopee });
+  assert.equal(w.waiting.length, 1);
+  assert.equal(w.complete.length, 0);
+});

@@ -722,3 +722,12 @@ main.wide { max-width: min(1800px, 100%); }
 .ord-wrap { overflow: auto; padding: 0; } /* no padding, or the sticky column names stop short of the top edge */
 .ord-wrap .empty { padding: 24px; }
 .ord-wrap .orders-table thead th { position: sticky; top: 0; z-index: 3; background: var(--blue-soft); box-shadow: 0 1px 0 var(--line, #dfe6f2); }
+
+/* checking the orders on their way */
+.dc-head { padding: 10px 12px; border-radius: 10px; background: var(--blue-soft); margin-bottom: 8px; }
+.dc-head.dc-ok { background: var(--st-done); color: var(--st-done-ink); }
+.dc-list { margin: 6px 0 4px; padding-left: 20px; display: grid; gap: 3px; }
+.dc-list.dc-done { max-height: 36vh; overflow: auto; margin-bottom: 10px; }
+.dc-group { margin: 8px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.dc-group.warn { border-color: var(--st-pending-edge); background: var(--st-pending); }
+.dc-group summary { cursor: pointer; font-weight: 600; }
