@@ -1552,15 +1552,20 @@ async function commitShopee(parsed) {
 /** Paste order codes + choose a fresh Shopee export: the orders Shopee says are done become "Hoàn thành". */
 function openDeliveryCheck() {
   const shipping = S.orders.filter((o) => o.status === 'shipping' && o.platform === 'shopee').length;
+  // every order on its way that has an SPX tracking code is filled in already
+  const onWay = S.orders.filter((o) => o.status === 'shipping');
+  const spxOnWay = onWay.filter((o) => isSpx(o.tracking));
+  const noSpx = onWay.length - spxOnWay.length;
   let file = null;
   openModal({
     title: 'Kiểm tra đơn đang giao',
     wide: false,
-    body: `<p class="muted" style="margin-top:0">Dán mã đơn hàng cần kiểm tra (mỗi mã một dòng, mã vận đơn cũng được). <b>Để trống</b> thì kiểm tra tất cả <b>${shipping}</b> đơn Shopee đang giao. Rồi chọn file xuất đơn <b>mới nhất</b> từ Kênh Người Bán Shopee, vì trạng thái thật nằm trong file đó. Đơn nào Shopee báo đã hoàn thành sẽ tự chuyển sang <b>Hoàn thành</b>.</p>
-      <textarea id="dc-codes" rows="7" style="width:100%" placeholder="2611ABCDEFGH12&#10;2611XYZKLMNP34"></textarea>
+    body: `<p style="margin-top:0">${onWay.length ? `Đã tự điền mã vận đơn SPX của <b>${spxOnWay.length}</b> đơn đang giao${noSpx ? ` (còn ${noSpx} đơn đang giao chưa có mã SPX nên không có trong danh sách)` : ''}.` : 'Chưa có đơn nào đang giao.'} Bạn sửa hoặc dán thêm mã tuỳ ý.</p>
+      <p class="muted small" style="margin-top:0"><b>Tra trên SPX</b>: mở trang SPX của từng mã, bạn tick các đơn đã giao rồi chuyển sang Hoàn thành. <b>Kiểm tra bằng file Shopee</b>: chọn file xuất đơn mới nhất từ Kênh Người Bán, đơn nào Shopee báo hoàn thành sẽ tự chuyển (xoá hết mã thì kiểm tra tất cả <b>${shipping}</b> đơn Shopee đang giao).</p>
+      <textarea id="dc-codes" rows="7" style="width:100%" placeholder="SPXVN0123456789&#10;2611ABCDEFGH12">${spxOnWay.map((o) => esc(String(o.tracking).trim())).join('\n')}</textarea>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"><label class="btn ghost sm">📎 Chọn file Shopee<input type="file" id="dc-file" accept=".xlsx,.xls,.csv" hidden></label><span id="dc-name" class="small muted">Chưa chọn file</span></div>
       <p class="err" id="dc-err" role="alert" style="margin:8px 0 0"></p>`,
-    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn ghost" id="dc-spx" title="Cho các đơn giao bằng SPX không có trong file Shopee: mở trang SPX của từng mã rồi tick các đơn đã giao">🔗 Tra trên SPX (đơn ngoài Shopee)</button><button class="btn" id="dc-go">Kiểm tra bằng file Shopee</button>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn ghost" id="dc-go">Kiểm tra bằng file Shopee</button><button class="btn" id="dc-spx" title="Mở trang SPX của từng mã, bạn tick các đơn đã giao">🔗 Tra trên SPX</button>`,
     onMount(m) {
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#dc-codes', m).focus();
