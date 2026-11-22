@@ -640,7 +640,7 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 
 /* orders table: the product column takes the room, the number columns stay narrow */
 /* the fixed columns add up to 1028px: keep at least ~410px for the product column, and let a narrower window scroll the table sideways instead of squeezing it */
-.orders-table { table-layout: fixed; width: 100%; min-width: 1440px; border-collapse: separate; border-spacing: 0; }
+.orders-table { table-layout: fixed; width: 100%; min-width: 1480px; border-collapse: separate; border-spacing: 0; }
 .orders-table th, .orders-table td { padding-left: 8px; padding-right: 8px; overflow-wrap: anywhere; }
 .orders-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }
 .orders-table td.num { white-space: normal; }
@@ -743,4 +743,15 @@ main.wide { max-width: min(1800px, 100%); }
 .spx-info { display: grid; min-width: 0; }
 
 /* the date never breaks across two lines ("22/11/202" + "6") */
-.orders-table td:first-child, .orders-table th:first-child { white-space: nowrap; overflow-wrap: normal; }
+.orders-table td:nth-child(2), .orders-table th:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
+
+/* ticking several orders to change their status together */
+.sel-col { width: 40px; text-align: center; padding-left: 8px; padding-right: 4px; }
+.sel-col input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--blue); }
+.orders-table tr.picked td { background: var(--blue-soft); }
+.bulk-bar { position: sticky; top: 8px; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 14px;
+  background: var(--card); border: 1.5px solid var(--blue); border-radius: 14px; box-shadow: 0 8px 24px rgba(11, 93, 156, .18); }
+.bulk-bar[hidden] { display: none; }
+.bulk-n { margin-right: 6px; }
+.bulk-lbl { color: var(--muted, #667); font-size: 14px; }
+.bulk-bar .st-btn { min-width: 0; justify-content: center; }

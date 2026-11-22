@@ -191,7 +191,7 @@ const TABS = {
 const ui = {
   period: 'month', // 'month' (the month in dashMonth) or 'all'
   dashMonth: isoLocal(new Date()).slice(0, 7),
-  orders: { q: '', platform: '', status: '', month: '' },
+  orders: { q: '', platform: '', status: '', month: '', sel: new Set() }, // sel: ticked order ids (bulk status change)
   imports: { q: '', kind: '', status: '', open: {} },
   products: { q: '' },
   stages: {}, // product id -> its variants are shown
@@ -780,6 +780,44 @@ function filteredOrders() {
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
+/** The ticked orders that are still on screen (a filter or a deletion can hide some). */
+function selectedOrders(list = filteredOrders()) {
+  const sel = ui.orders.sel;
+  const ids = new Set(list.map((o) => o.id));
+  for (const id of [...sel]) if (!ids.has(id)) sel.delete(id);
+  return list.filter((o) => sel.has(o.id));
+}
+function bulkBarHtml(list) {
+  const picked = selectedOrders(list);
+  if (!picked.length) return '';
+  return `<span class="bulk-n"><b>${picked.length}</b> đơn đã chọn</span>
+    <span class="bulk-lbl">Chuyển sang:</span>
+    ${Object.entries(STATUSES).map(([k, v]) => `<button type="button" class="st-btn st-${k}" data-bulk-status="${k}">${esc(v)}</button>`).join('')}
+    <button type="button" class="btn ghost sm" data-action="bulk-clear">Bỏ chọn</button>`;
+}
+/** Redraws the bulk bar and the tick boxes without rebuilding the page (keeps the scroll place). */
+function refreshBulk() {
+  const list = filteredOrders();
+  const picked = selectedOrders(list);
+  const bar = $('#bulk-bar');
+  if (bar) { bar.innerHTML = bulkBarHtml(list); bar.hidden = !picked.length; }
+  $$('[data-sel]').forEach((c) => { c.checked = ui.orders.sel.has(c.dataset.sel); c.closest('tr')?.classList.toggle('picked', c.checked); });
+  const all = $('#sel-all');
+  if (all) { all.checked = !!list.length && picked.length === list.length; all.indeterminate = picked.length > 0 && picked.length < list.length; }
+}
+async function bulkSetStatus(status) {
+  const chosen = selectedOrders();
+  const picked = chosen.filter((o) => o.status !== status);
+  if (!chosen.length) return;
+  if (!picked.length) return toast(`Các đơn đã chọn đều đang là “${STATUSES[status]}”`);
+  const skip = chosen.length - picked.length;
+  if (!(await ask(`Chuyển ${picked.length} đơn sang “${STATUSES[status]}”?${skip ? ` (${skip} đơn đã ở trạng thái này, giữ nguyên)` : ''}`, 'Chuyển'))) return;
+  await store.upsertMany('orders', picked.map((o) => ({ ...o, status })));
+  ui.orders.sel.clear();
+  toast(`Đã chuyển ${picked.length} đơn sang “${STATUSES[status]}”`);
+  render();
+}
+
 function pageOrders() {
   const f = ui.orders;
   const list = filteredOrders();
@@ -803,10 +841,11 @@ function pageOrders() {
       <input type="month" id="order-month" value="${esc(f.month)}">
       <span class="muted small" style="margin-left:auto">${list.length} đơn · DT ${money(agg.revenue)} · Lãi <b class="${signCls(agg.profit)}">${money(agg.profit)}</b></span>
     </div>
+    <div id="bulk-bar" class="bulk-bar" role="region" aria-label="Đổi trạng thái nhiều đơn" ${selectedOrders(list).length ? '' : 'hidden'}>${bulkBarHtml(list)}</div>
     <div class="card table-wrap ord-wrap">
       ${list.length ? `<table class="orders-table">
-        <colgroup><col style="width:100px"><col style="width:84px"><col style="width:130px"><col><col style="width:112px"><col style="width:158px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
-        <thead><tr><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>
+        <colgroup><col style="width:40px"><col style="width:100px"><col style="width:84px"><col style="width:130px"><col><col style="width:112px"><col style="width:158px"><col style="width:118px"><col style="width:78px"><col style="width:88px"><col style="width:102px"><col style="width:58px"></colgroup>
+        <thead><tr><th class="sel-col"><input type="checkbox" id="sel-all" aria-label="Chọn tất cả đơn đang hiện" ${list.length && selectedOrders(list).length === list.length ? 'checked' : ''}></th><th>Ngày</th><th>Nền tảng</th><th>Mã đơn / Khách</th><th>Sản phẩm</th><th class="num">Giá sản phẩm</th><th class="num" title="Phí ship của đơn và ai trả">Phí ship</th><th class="num" title="Giá sản phẩm − giảm giá + phí ship khách trả">Tổng đơn</th><th class="num">Chi phí</th><th class="num">Lợi nhuận</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody>${list.map(orderRow).join('')}</tbody>
       </table>` : '<div class="empty">Chưa có đơn nào. Bấm “＋ Thêm đơn” hoặc nhập file Shopee.</div>'}
     </div>`;
@@ -891,7 +930,9 @@ function orderRow(o) {
     const v = variantOf(l.productId, l.variantId);
     return `<span class="item">${thumb(v?.image || p.image, v?.name || p.name, 'sm')}<span>${esc(itemLabel(l.productId, l.variantId))} <span class="muted">×${l.qty}</span>${hasVariants(p) && !v ? ' <span class="chip warn">chưa chọn phân loại</span>' : ''}</span></span>`;
   }).join('');
-  return `<tr class="${inactive ? 'inactive' : ''}">
+  const picked = ui.orders.sel.has(o.id);
+  return `<tr class="${inactive ? 'inactive' : ''} ${picked ? 'picked' : ''}">
+    <td class="sel-col"><input type="checkbox" data-sel="${o.id}" ${picked ? 'checked' : ''} aria-label="Chọn đơn ${esc(o.code || '')}"></td>
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
@@ -3626,7 +3667,25 @@ async function loadDemo() {
 }
 
 /* ================= events ================= */
+let lastSel = null;
 document.addEventListener('click', async (e) => {
+  const bulk = e.target.closest('[data-bulk-status]');
+  if (bulk) return bulkSetStatus(bulk.dataset.bulkStatus);
+  const selBox = e.target.closest('[data-sel]');
+  if (selBox) {
+    const ids = filteredOrders().map((o) => o.id);
+    if (e.shiftKey && lastSel && ids.includes(lastSel)) {
+      const [a, b] = [ids.indexOf(lastSel), ids.indexOf(selBox.dataset.sel)].sort((x, y) => x - y);
+      ids.slice(a, b + 1).forEach((id) => (selBox.checked ? ui.orders.sel.add(id) : ui.orders.sel.delete(id)));
+    } else if (selBox.checked) ui.orders.sel.add(selBox.dataset.sel); else ui.orders.sel.delete(selBox.dataset.sel);
+    lastSel = selBox.dataset.sel;
+    return refreshBulk();
+  }
+  if (e.target.id === 'sel-all') {
+    if (e.target.checked) filteredOrders().forEach((o) => ui.orders.sel.add(o.id)); else ui.orders.sel.clear();
+    return refreshBulk();
+  }
+  if (e.target.closest('[data-action="bulk-clear"]')) { ui.orders.sel.clear(); return refreshBulk(); }
   const stOpt = e.target.closest('.st-pop [data-status]');
   if (stOpt) {
     const { orderId } = stPop;
