@@ -8,7 +8,6 @@ import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClose
 import { describeError } from './errors.js';
 import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
 import { parseOrderMessage } from './shoporder.js';
-import { bridgeUrl, bookmarkletHref } from './spxbridge.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -1563,48 +1562,13 @@ function openDeliveryCheck() {
     wide: false,
     body: `<p style="margin-top:0">${onWay.length ? `Đã tự điền mã vận đơn SPX của <b>${spxOnWay.length}</b> đơn đang giao${noSpx ? ` (còn ${noSpx} đơn đang giao chưa có mã SPX nên không có trong danh sách)` : ''}.` : 'Chưa có đơn nào đang giao.'} Bạn sửa hoặc dán thêm mã tuỳ ý.</p>
       <p class="muted small" style="margin-top:0"><b>Tra trên SPX</b>: mở trang SPX của từng mã, bạn tick các đơn đã giao rồi chuyển sang Hoàn thành. <b>Kiểm tra bằng file Shopee</b>: chọn file xuất đơn mới nhất từ Kênh Người Bán, đơn nào Shopee báo hoàn thành sẽ tự chuyển (xoá hết mã thì kiểm tra tất cả <b>${shipping}</b> đơn Shopee đang giao).</p>
-      <textarea id="dc-codes" rows="5" style="width:100%" placeholder="SPXVN0123456789&#10;2611ABCDEFGH12">${spxOnWay.map((o) => esc(String(o.tracking).trim())).join('\n')}</textarea>
-      <div class="dc-steps">
-        <div class="dc-step"><b>1.</b> <a id="dc-bridge" class="btn sm" href="${esc(bridgeUrl(spxOnWay.map((o) => String(o.tracking).trim())) || '#')}" target="_blank" rel="noopener">🌐 Mở SPX để tra tất cả</a> <span class="small muted" id="dc-bridge-n">(${spxOnWay.length} mã SPX)</span></div>
-        <div class="dc-step"><b>2.</b> Ở tab SPX vừa mở, bấm nút dấu trang <b>Tra SPX Hani</b> trên thanh dấu trang. Nó tự tra hết các mã, rồi bấm <b>Sao chép mã đã giao</b>.</div>
-        <div class="dc-step"><b>3.</b> Quay lại đây, dán vào ô dưới (Ctrl + V), danh sách các đơn đã giao hiện ra để bạn tick.</div>
-      </div>
-      <textarea id="dc-done" rows="3" style="width:100%" placeholder="Dán các mã đã giao từ SPX vào đây"></textarea>
-      <details class="dc-install"><summary>Chưa có nút dấu trang? Cài một lần (30 giây)</summary>
-        <ol class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.6">
-          <li>Bật thanh dấu trang của Chrome: Ctrl + Shift + B.</li>
-          <li><b>Kéo</b> nút bên dưới (đừng bấm) lên thanh dấu trang:<br><a id="dc-bm" class="btn ghost sm" href="${esc(bookmarkletHref())}" draggable="true" title="Kéo nút này lên thanh dấu trang, đừng bấm">Tra SPX Hani</a></li>
-          <li>Không kéo được thì bấm <button type="button" class="link-btn" id="dc-bm-copy">sao chép mã nút</button>, tạo dấu trang mới (Ctrl + D), sửa tên thành <b>Tra SPX Hani</b>, dán mã vào ô địa chỉ (URL) rồi lưu.</li>
-        </ol>
-      </details>
+      <textarea id="dc-codes" rows="7" style="width:100%" placeholder="SPXVN0123456789&#10;2611ABCDEFGH12">${spxOnWay.map((o) => esc(String(o.tracking).trim())).join('\n')}</textarea>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"><label class="btn ghost sm">📎 Chọn file Shopee<input type="file" id="dc-file" accept=".xlsx,.xls,.csv" hidden></label><span id="dc-name" class="small muted">Chưa chọn file</span></div>
       <p class="err" id="dc-err" role="alert" style="margin:8px 0 0"></p>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn ghost" id="dc-go">Kiểm tra bằng file Shopee</button><button class="btn" id="dc-spx" title="Mở trang SPX của từng mã, bạn tick các đơn đã giao">🔗 Tra trên SPX</button>`,
     onMount(m) {
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#dc-codes', m).focus();
-      const refreshBridge = () => {
-        const codes = parseCodes($('#dc-codes', m).value).filter(isSpx);
-        $('#dc-bridge', m).href = bridgeUrl(codes) || '#';
-        $('#dc-bridge-n', m).textContent = `(${codes.length} mã SPX)`;
-      };
-      $('#dc-codes', m).addEventListener('input', refreshBridge);
-      $('#dc-bridge', m).addEventListener('click', (e) => {
-        if (!parseCodes($('#dc-codes', m).value).filter(isSpx).length) { e.preventDefault(); $('#dc-err', m).textContent = 'Chưa có mã SPX nào để tra. Dán mã vận đơn SPX vào ô trên.'; }
-      });
-      // the bookmark is for dragging; a click on the page is harmless but does nothing
-      $('#dc-bm', m).addEventListener('click', (e) => { e.preventDefault(); toast('Hãy kéo nút này lên thanh dấu trang, đừng bấm.'); });
-      $('#dc-bm-copy', m).onclick = async () => {
-        try { await navigator.clipboard.writeText(bookmarkletHref()); toast('Đã sao chép mã nút dấu trang'); } catch { notify('Chưa sao chép được. Bạn thử kéo nút lên thanh dấu trang.'); }
-      };
-      // what SPX said was delivered: pasted here, the orders appear to tick
-      const showDelivered = () => {
-        const codes = parseCodes($('#dc-done', m).value);
-        if (!codes.length) return;
-        m.close();
-        openSpxCheck(spxTargets(codes), { delivered: true });
-      };
-      $('#dc-done', m).addEventListener('paste', () => setTimeout(showDelivered, 0));
       $('#dc-spx', m).onclick = () => {
         const list = spxTargets(parseCodes($('#dc-codes', m).value));
         if (!list.length) { $('#dc-err', m).textContent = 'Dán mã vận đơn SPX cần tra, hoặc để trống khi có đơn đang giao đã ghi mã vận đơn.'; return; }
@@ -1659,12 +1623,12 @@ function spxTargets(codes) {
  * The orders of an SPX delivery, each with a link to its SPX page. The shop reads the status there and ticks the ones
  * delivered; the ticked orders become "Hoàn thành". Nothing is changed without a tick.
  */
-function openSpxCheck(list, { delivered = false } = {}) {
+function openSpxCheck(list) {
   const row = (t, i) => {
     const o = t.order;
     const can = o && o.status !== 'done';
     return `<label class="spx-row ${can ? '' : 'off'}">
-      <input type="checkbox" data-spx="${i}" ${can ? '' : 'disabled'} ${can && delivered ? 'checked' : ''} aria-label="Đã giao ${esc(o?.code || t.tracking || '')}">
+      <input type="checkbox" data-spx="${i}" ${can ? '' : 'disabled'} aria-label="Đã giao ${esc(o?.code || t.tracking || '')}">
       <span class="spx-info"><b>${esc(o?.code || '(không có đơn trong app)')}</b> <span class="muted small">${esc(o?.customer || '')}${o?.date ? ' · ' + fmtDate(o.date) : ''}</span>
         <span class="small muted">${t.tracking ? `Mã vận đơn: <b>${esc(t.tracking)}</b>` : 'Chưa có mã vận đơn'}</span></span>
       ${o ? `<span class="chip st-${o.status}">${esc(STATUSES[o.status] || o.status)}</span>` : ''}
@@ -1672,20 +1636,21 @@ function openSpxCheck(list, { delivered = false } = {}) {
     </label>`;
   };
   openModal({
-    title: delivered ? `SPX báo đã giao (${list.length} mã)` : `Tra đơn trên SPX (${list.length})`,
+    title: `Tra đơn trên SPX (${list.length})`,
     wide: false,
-    body: `${delivered
-      ? `<p style="margin-top:0">SPX báo <b>giao hàng thành công</b> cho các mã này. Các đơn trong app đã được tick sẵn: <b>bỏ tick</b> đơn nào bạn chưa muốn chuyển, rồi bấm <b>Chuyển sang Hoàn thành</b>.</p>`
-      : `<p class="muted" style="margin-top:0">Bấm <b>Tra SPX ↗</b> để mở trang theo dõi của từng mã (tab mới). Đơn nào SPX ghi <b>đã giao thành công</b> thì tick vào ô trước đơn, rồi bấm <b>Chuyển sang Hoàn thành</b>. Đơn không tick sẽ không bị đổi.</p>`}
+    body: `<p class="muted" style="margin-top:0">Bấm <b>Tra SPX ↗</b> để mở trang theo dõi của từng mã (tab mới). Đơn nào SPX ghi <b>đã giao thành công</b> thì tick vào ô trước đơn, rồi bấm <b>Chuyển sang Hoàn thành</b>. Đơn không tick sẽ không bị đổi.</p>
       <div class="spx-list">${list.map(row).join('')}</div>
       <p class="small muted" id="spx-count" style="margin:8px 0 0">Đã tick 0 đơn</p>`,
     foot: `<button class="btn ghost" data-close2>Đóng</button><button class="btn" id="spx-go" disabled>Chuyển sang Hoàn thành</button>`,
     onMount(m) {
       $('[data-close2]', m).onclick = () => m.requestClose();
       const ticked = () => $$('[data-spx]:checked', m).map((c) => list[+c.dataset.spx].order);
-      const recount = () => { const n = ticked().length; $('#spx-count', m).textContent = `Đã tick ${n} đơn`; $('#spx-go', m).disabled = !n; };
-      recount();
-      m.addEventListener('change', (e) => { if (e.target.dataset.spx !== undefined) recount(); });
+      m.addEventListener('change', (e) => {
+        if (e.target.dataset.spx === undefined) return;
+        const n = ticked().length;
+        $('#spx-count', m).textContent = `Đã tick ${n} đơn`;
+        $('#spx-go', m).disabled = !n;
+      });
       $('#spx-go', m).onclick = async () => {
         const orders = ticked();
         if (!orders.length) return;
