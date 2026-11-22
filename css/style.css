@@ -639,8 +639,8 @@ dialog.confirm .modal-body p { white-space: pre-line; }
 .quick-sum { min-height: 22px; }
 
 /* orders table: the product column takes the room, the number columns stay narrow */
-/* the fixed columns add up to 1008px: keep at least ~410px for the product column, and let a narrower window scroll the table sideways instead of squeezing it */
-.orders-table { table-layout: fixed; width: 100%; min-width: 1420px; border-collapse: separate; border-spacing: 0; }
+/* the fixed columns add up to 1028px: keep at least ~410px for the product column, and let a narrower window scroll the table sideways instead of squeezing it */
+.orders-table { table-layout: fixed; width: 100%; min-width: 1440px; border-collapse: separate; border-spacing: 0; }
 .orders-table th, .orders-table td { padding-left: 8px; padding-right: 8px; overflow-wrap: anywhere; }
 .orders-table th { white-space: normal; line-height: 1.25; vertical-align: bottom; }
 .orders-table td.num { white-space: normal; }
@@ -741,3 +741,6 @@ main.wide { max-width: min(1800px, 100%); }
 .spx-row.off { opacity: .6; cursor: default; }
 .spx-row:has(input:checked) { background: var(--st-done); border-color: var(--st-done-edge); }
 .spx-info { display: grid; min-width: 0; }
+
+/* the date never breaks across two lines ("22/11/202" + "6") */
+.orders-table td:first-child, .orders-table th:first-child { white-space: nowrap; overflow-wrap: normal; }
