@@ -1,5 +1,6 @@
 // Data store: local (this browser only) or Firebase Firestore (shared, realtime).
 import { firebaseConfig, SHOP_ID } from './firebase-config.js';
+import { stampStatusDates } from './calc.js';
 
 // `shopOrders` = orders customers send from the web shop (Firebase only; stays empty elsewhere).
 export const COLLECTIONS = ['products', 'packaging', 'presets', 'imports', 'orders', 'meta', 'shopOrders'];
@@ -407,6 +408,16 @@ export const firebaseEnabled = Boolean(firebaseConfig && firebaseConfig.apiKey);
 // page runs as a Claude artifact, otherwise this browser's localStorage.
 export let store;
 
+/** Every save of an order goes through here so a change of status leaves its dates (shippedAt / doneAt). */
+function stampOrders(s) {
+  const day = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const stamp = (doc) => stampStatusDates(s.get('orders', doc.id), doc, day());
+  const one = s.upsert.bind(s);
+  const many = s.upsertMany.bind(s);
+  s.upsert = (coll, doc, ...rest) => one(coll, coll === 'orders' && doc?.id ? stamp(doc) : doc, ...rest);
+  s.upsertMany = (coll, docs, ...rest) => many(coll, coll === 'orders' ? docs.map((d) => (d?.id ? stamp(d) : d)) : docs, ...rest);
+}
+
 export async function initStore() {
   if (firebaseEnabled) {
     store = new FirebaseStore();
@@ -417,6 +428,7 @@ export async function initStore() {
     } catch { /* not served here */ }
     store = db ? new ArtifactStore(db) : new LocalStore();
   }
+  stampOrders(store);
   return store;
 }
 

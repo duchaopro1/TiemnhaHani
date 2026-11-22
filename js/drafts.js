@@ -19,6 +19,8 @@ export function normalizeOrder(o) {
     platform: str(o.platform),
     code: str(o.code).trim(),
     date: str(o.date),
+    shippedAt: str(o.shippedAt),
+    doneAt: str(o.doneAt),
     customer: str(o.customer).trim(),
     status: str(o.status) || 'pending',
     note: str(o.note),

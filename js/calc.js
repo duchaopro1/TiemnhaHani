@@ -592,3 +592,20 @@ export function transitHistory(slip) {
 }
 
 export { tierPrice } from './tier.js';
+
+/**
+ * Dates a status change leaves on an order: `shippedAt` (started shipping) and `doneAt` (completed), both YYYY-MM-DD.
+ * Only a real change of status writes them, and a date the person typed in the same save is left alone.
+ * Going back before "Đang giao" clears the shipping date; leaving "Hoàn thành" clears the completion date.
+ * A brand-new document (no `prev`) is never stamped, so restoring a backup does not invent dates.
+ */
+export function stampStatusDates(prev, next, today) {
+  if (!prev || !next || prev.status === next.status) return next;
+  const out = { ...next };
+  const kept = (k) => (next[k] || '') !== (prev[k] || ''); // typed by hand in this save
+  if (next.status === 'shipping' && !kept('shippedAt')) out.shippedAt = today;
+  if (next.status === 'done' && !kept('doneAt')) out.doneAt = today;
+  if (['pending', 'designed', 'packed'].includes(next.status) && !kept('shippedAt')) out.shippedAt = '';
+  if (next.status !== 'done' && !kept('doneAt')) out.doneAt = '';
+  return out;
+}

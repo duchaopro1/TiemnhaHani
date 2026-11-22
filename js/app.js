@@ -536,18 +536,20 @@ function pageRevenue() {
     <div class="card table-wrap rev-wrap">
       ${rows.length ? `<table class="rev-table">
         <thead><tr>
-          <th>Ngày</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
+          <th title="Ngày tạo đơn">Ngày tạo</th><th title="Ngày đơn chuyển sang Đang giao">Bắt đầu giao</th><th title="Ngày đơn chuyển sang Hoàn thành">Hoàn thành</th><th>Đơn</th><th class="num" title="Tiền hàng + ship khách trả − giảm giá">Tổng đơn</th><th class="num">Tiền hàng</th><th class="num">Giảm giá</th>
           <th class="num" title="Tiền hàng − giảm giá">Doanh thu</th><th class="num">Giá vốn SP</th><th class="num">Đóng gói</th><th class="num" title="+ khách trả (cộng vào Tổng đơn) · − shop chịu (tính vào Chi phí)">Phí ship</th><th class="num">Phí sàn</th>
           <th class="num" title="Giá vốn + đóng gói + ship shop chịu + phí sàn">Chi phí</th><th class="num" title="Doanh thu − chi phí">Lợi nhuận</th>
           <th class="num">Tiền công</th><th class="num" title="Lợi nhuận − tiền công">Lợi nhuận sau công</th>
         </tr></thead>
         <tbody>${rows.map((r) => `<tr>
           <td>${fmtDate(r.order.date)}</td>
+          <td class="${r.order.shippedAt ? '' : 'muted'}">${r.order.shippedAt ? fmtDate(r.order.shippedAt) : '—'}</td>
+          <td class="${r.order.doneAt ? '' : 'muted'}">${r.order.doneAt ? fmtDate(r.order.doneAt) : '—'}</td>
           <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="plat-tag ${esc(r.order.platform)}">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
           ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}<td class="num" title="${r.pieces} sản phẩm × ${money(labor)}">${money(r.labor)}<br><span class="small muted">${r.pieces} sp</span></td>${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
-          <td colspan="2"><b>Tổng ${total.orders} đơn</b></td>
+          <td colspan="4"><b>Tổng ${total.orders} đơn</b></td>
           ${cell(total.total, 'strong')}${cell(total.gross)}${cell(total.discount)}${cell(total.revenue)}${cell(total.product)}${cell(total.packaging)}${shipCell(total.shipFee - 2 * total.ship, false, true)}${cell(total.fee)}${cell(total.cost, 'strong')}${cell(total.before, `strong ${profitCls(total.before)}`)}${cell(total.labor)}${cell(total.profit, `strong ${profitCls(total.profit)}`)}
         </tr></tfoot>
       </table>` : '<div class="empty">Chưa có đơn hoàn thành trong thời gian này.</div>'}
@@ -1047,7 +1049,9 @@ function openOrderFormNow(existing, restored) {
           <select name="platform">${Object.entries(PLATFORMS).map(([k, v]) => `<option value="${k}" ${o.platform === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
         </label>
         <label class="field">Mã đơn<input name="code" value="${esc(o.code)}" placeholder="VD: IG-0012"></label>
-        <label class="field">Ngày<input type="date" name="date" value="${esc(o.date)}" required></label>
+        <label class="field">Ngày tạo đơn<input type="date" name="date" value="${esc(o.date)}" required></label>
+        <label class="field">Ngày bắt đầu giao<input type="date" name="shippedAt" value="${esc(o.shippedAt || '')}"></label>
+        <label class="field">Ngày hoàn thành<input type="date" name="doneAt" value="${esc(o.doneAt || '')}"></label>
         <label class="field">Khách hàng<input name="customer" value="${esc(o.customer)}" placeholder="Tên / @username"></label>
         <label class="field">Trạng thái
           <select name="status" class="st-select st-${o.status}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
@@ -1242,7 +1246,7 @@ function openOrderFormNow(existing, restored) {
       const readHeader = () => {
         const d = formData(form);
         return {
-          platform: d.platform, code: d.code.trim(), date: d.date, customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
+          platform: d.platform, code: d.code.trim(), date: d.date, shippedAt: d.shippedAt || '', doneAt: d.doneAt || '', customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
           wrap1: d.wrap1 || '', wrap2: d.wrap2 || '', wrap3: d.wrap3 || '',
           ...shipChoice(d), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
