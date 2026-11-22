@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, doneDay, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus, parseCodes, reviewDelivery } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -495,7 +495,7 @@ function pageRevenue() {
   const [from, to, periodLabel] = periodRange();
   // pay per product; the figure the shop set before it was per order is kept as the starting rate
   const labor = num(settings.laborPerItem ?? settings.laborPerOrder);
-  const { rows, total } = completedRevenue(costs, S.orders.filter((o) => o.date >= from && o.date <= to), labor);
+  const { rows, total } = completedRevenue(costs, S.orders.filter((o) => doneDay(o) >= from && doneDay(o) <= to), labor);
   const cur = thisMonth();
   const isMonth = (ym) => ui.period === 'month' && ui.dashMonth === ym;
   const pickedOther = ui.period === 'month' && !isMonth(cur);
@@ -511,7 +511,7 @@ function pageRevenue() {
 
   return `
     <div class="page-head">
-      <div><h1>Doanh thu</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · chỉ tính đơn <b>Hoàn thành</b>. Mỗi đơn cho thấy khách trả bao nhiêu, mất những khoản phí nào và lời bao nhiêu.</p></div>
+      <div><h1>Doanh thu</h1><p>Đang xem: <b>${esc(periodLabel)}</b> · chỉ tính đơn <b>Hoàn thành</b>, theo <b>ngày hoàn thành</b> (đơn cũ chưa có ngày hoàn thành thì tính theo ngày tạo). Mỗi đơn cho thấy khách trả bao nhiêu, mất những khoản phí nào và lời bao nhiêu.</p></div>
       <div class="actions period-bar">
         <button class="period-btn ${isMonth(cur) ? 'on' : ''}" data-period="this">Tháng này</button>
         <div class="month-nav ${pickedOther ? 'on' : ''}" title="Chọn các tháng trước">

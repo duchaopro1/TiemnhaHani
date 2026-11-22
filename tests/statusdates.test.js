@@ -29,3 +29,10 @@ test('huỷ / trả hàng giữ ngày giao', () => {
   const r = stampStatusDates({ status: 'shipping', shippedAt: T }, { status: 'returned', shippedAt: T }, '2026-12-01');
   assert.equal(r.shippedAt, T);
 });
+
+import { doneDay, completedRevenue } from '../js/calc.js';
+test('doanh thu theo ngày hoàn thành; đơn cũ rơi về ngày tạo', () => {
+  assert.equal(doneDay({ date: '2026-10-30', doneAt: '2026-11-02' }), '2026-11-02');
+  assert.equal(doneDay({ date: '2026-10-30' }), '2026-10-30');
+  assert.equal(typeof completedRevenue, 'function');
+});

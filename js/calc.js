@@ -422,6 +422,9 @@ export const DEFAULT_LABOR = 10000;
  *   profit   = before - labor                (profit after labor)
  * Operating costs (shared supplies) are not per order and are not in these rows.
  */
+/** The day an order counts in the revenue page: when it was completed (orders from before that was recorded: the day they were made). */
+export const doneDay = (o) => o.doneAt || o.date || '';
+
 export function completedRevenue(costs, orders, laborPerItem = DEFAULT_LABOR) {
   const rows = [];
   const total = { orders: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, shipFee: 0, ship: 0, fee: 0, cost: 0, before: 0, labor: 0, profit: 0, pieces: 0 };
@@ -442,7 +445,7 @@ export function completedRevenue(costs, orders, laborPerItem = DEFAULT_LABOR) {
     total.orders += 1;
     for (const k of Object.keys(total)) if (k !== 'orders') total[k] += row[k];
   }
-  rows.sort((a, b) => (b.order.date || '').localeCompare(a.order.date || '') || (b.order.code || '').localeCompare(a.order.code || ''));
+  rows.sort((a, b) => doneDay(b.order).localeCompare(doneDay(a.order)) || (b.order.code || '').localeCompare(a.order.code || ''));
   return { rows, total };
 }
 
