@@ -18,6 +18,7 @@ export function normalizeOrder(o) {
   return {
     platform: str(o.platform),
     code: str(o.code).trim(),
+    messageLink: str(o.messageLink).trim(),
     date: str(o.date),
     shippedAt: str(o.shippedAt),
     doneAt: str(o.doneAt),

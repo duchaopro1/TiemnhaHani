@@ -755,3 +755,9 @@ main.wide { max-width: min(1800px, 100%); }
 .bulk-n { margin-right: 6px; }
 .bulk-lbl { color: var(--muted, #667); font-size: 14px; }
 .bulk-bar .st-btn { min-width: 0; justify-content: center; }
+
+/* link to the customer's conversation */
+.msg-link { display: flex; gap: 8px; align-items: center; }
+.msg-link input { flex: 1; min-width: 0; }
+.msg-link a[hidden] { display: none; }
+.msg-btn { text-decoration: none; font-size: 15px; }

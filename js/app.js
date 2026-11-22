@@ -8,6 +8,7 @@ import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClose
 import { describeError } from './errors.js';
 import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
 import { parseOrderMessage } from './shoporder.js';
+import { parseChatOrder, safeLink } from './chatorder.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -545,7 +546,7 @@ function pageRevenue() {
           <td>${fmtDate(r.order.date)}</td>
           <td class="${r.order.shippedAt ? '' : 'muted'}">${r.order.shippedAt ? fmtDate(r.order.shippedAt) : '—'}</td>
           <td class="${r.order.doneAt ? '' : 'muted'}">${r.order.doneAt ? fmtDate(r.order.doneAt) : '—'}</td>
-          <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a> <span class="plat-tag ${esc(r.order.platform)}">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
+          <td><a href="javascript:void 0" data-action="edit-order" data-id="${r.order.id}"><b>${esc(r.order.code || '—')}</b></a>${msgLinkHtml(r.order)} <span class="plat-tag ${esc(r.order.platform)}">${esc(PLATFORMS[r.order.platform]?.label || r.order.platform)}</span><br><span class="muted small">${esc(r.order.customer || '')}</span></td>
           ${cell(r.total, 'strong')}${cell(r.gross)}${cell(r.discount)}${cell(r.revenue)}${cell(r.product)}${cell(r.packaging)}${shipCell(r.shipFee, r.order.shipPayer === 'shop')}${cell(r.fee)}${cell(r.cost, 'strong')}${cell(r.before, `strong ${profitCls(r.before)}`)}<td class="num" title="${r.pieces} sản phẩm × ${money(labor)}">${money(r.labor)}<br><span class="small muted">${r.pieces} sp</span></td>${cell(r.profit, `strong ${profitCls(r.profit)}`)}
         </tr>`).join('')}</tbody>
         <tfoot><tr>
@@ -923,6 +924,12 @@ const shortText = (x) => `Thiếu: ${x.lines.map((l) => `${shortLabel(l)} ×${l.
 const isSpx = (code) => /^SPX/i.test(String(code || '').trim());
 const spxUrl = (code) => `https://spx.vn/track?${encodeURIComponent(String(code).trim())}`;
 
+/** 💬 next to an order's code: opens the customer's conversation in a new tab. */
+function msgLinkHtml(o) {
+  const href = safeLink(o.messageLink);
+  return href ? ` <a class="track-link msg-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="Mở tin nhắn của khách (tab mới)">💬</a>` : '';
+}
+
 function orderRow(o) {
   const s = orderSummary(costs, o);
   const inactive = INACTIVE_STATUSES.has(o.status);
@@ -937,7 +944,7 @@ function orderRow(o) {
     <td class="sel-col"><input type="checkbox" data-sel="${o.id}" ${picked ? 'checked' : ''} aria-label="Chọn đơn ${esc(o.code || '')}"></td>
     <td>${fmtDate(o.date)}</td>
     <td><span class="chip ${o.platform}">${PLATFORMS[o.platform]?.label || o.platform}</span></td>
-    <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
+    <td><b>${esc(o.code || '—')}</b>${msgLinkHtml(o)}${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div>${(o.items || []).length ? `<div class="order-total">Tổng: <b>${(o.items || []).reduce((n, l) => n + num(l.qty), 0)}</b> sản phẩm${(o.items || []).length > 1 ? ` <span class="muted">· ${o.items.length} dòng</span>` : ''}</div>` : ''}${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
     <td class="num">${money(s.gross)}${s.discount ? `<br><span class="small muted">− giảm giá ${money(s.discount)}</span>` : ''}</td>
     <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>${isSpx(o.tracking) ? ` <a class="track-link" href="${esc(spxUrl(o.tracking))}" target="_blank" rel="noopener" title="Tra cứu trên SPX (mở tab mới)">↗</a>` : ''}` : ''}</td>
@@ -1053,6 +1060,7 @@ function openOrderFormNow(existing, restored) {
         <label class="field">Ngày bắt đầu giao<input type="date" name="shippedAt" value="${esc(o.shippedAt || '')}"></label>
         <label class="field">Ngày hoàn thành<input type="date" name="doneAt" value="${esc(o.doneAt || '')}"></label>
         <label class="field">Khách hàng<input name="customer" value="${esc(o.customer)}" placeholder="Tên / @username"></label>
+        <label class="field">Link tin nhắn khách<span class="msg-link"><input name="messageLink" value="${esc(o.messageLink || '')}" placeholder="https://… (dán link cuộc trò chuyện)"><a id="msg-open" class="btn ghost sm" target="_blank" rel="noopener noreferrer" ${safeLink(o.messageLink) ? `href="${esc(safeLink(o.messageLink))}"` : 'hidden'}>Mở ↗</a></span></label>
         <label class="field">Trạng thái
           <select name="status" class="st-select st-${o.status}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
@@ -1246,7 +1254,7 @@ function openOrderFormNow(existing, restored) {
       const readHeader = () => {
         const d = formData(form);
         return {
-          platform: d.platform, code: d.code.trim(), date: d.date, shippedAt: d.shippedAt || '', doneAt: d.doneAt || '', customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
+          platform: d.platform, code: d.code.trim(), messageLink: safeLink(d.messageLink) || (d.messageLink || '').trim(), date: d.date, shippedAt: d.shippedAt || '', doneAt: d.doneAt || '', customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
           wrap1: d.wrap1 || '', wrap2: d.wrap2 || '', wrap3: d.wrap3 || '',
           ...shipChoice(d), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
@@ -3367,9 +3375,39 @@ function prefillFromMessage(r, webOrderId = '') {
   return { prefill };
 }
 
+/** An order from a chat message the shop owner pasted (free text + a link back to the conversation). */
+function prefillFromChat(r) {
+  if (!r.items.length && !r.phone && !r.address && !r.account) {
+    return { error: 'Không đọc được gì từ tin này. Tin cần có sản phẩm kèm số lượng (VD: “Móc khoá x2”) và/hoặc thông tin khách.' };
+  }
+  const totals = {};
+  for (const i of r.items) if (i.productId) totals[i.productId] = (totals[i.productId] || 0) + i.qty;
+  const items = r.items.map((i) => {
+    if (!i.productId) return { ...blankLine(), productName: i.name, qty: i.qty, price: 0 };
+    const p = product(i.productId);
+    const v = i.variantId ? variantOf(i.productId, i.variantId) : null;
+    const pr = store.get('presets', p.defaultPreset);
+    return { ...blankLine(), productId: i.productId, variantId: v ? v.id : '', qty: i.qty, price: tierPrice(p, totals[i.productId], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
+  });
+  const lost = r.items.filter((i) => !i.productId);
+  const guess = r.items.filter((i) => i.productId && i.fuzzy);
+  const note = [
+    r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`, r.name && `Người nhận: ${r.name}`, r.note && `Khách ghi chú: ${r.note}`,
+    lost.length && `⚠ Chưa gắn được sản phẩm: ${lost.map((i) => `${i.name} ×${i.qty}`).join(', ')}. Chọn lại trong danh sách.`,
+    guess.length && `⚠ Đoán theo tên, kiểm tra lại: ${guess.map((i) => `“${i.name}” → ${itemLabel(i.productId, i.variantId)}`).join('; ')}.`,
+    r.unread.length && `⚠ Dòng chưa đọc được: ${r.unread.join(' / ')}`,
+  ].filter(Boolean).join('\n');
+  const prefill = { platform: r.platform || 'instagram', date: today(), customer: r.account || r.name, status: 'pending', note, shipFee: r.shipFee, shipPayer: r.shipPayer, items };
+  const link = safeLink(r.link);
+  if (link) prefill.messageLink = link;
+  return { prefill, chat: r };
+}
+
 /** Open the order form filled in from a message; asks first when a half-typed new order would be replaced. */
 async function openOrderFromMessage(text, webOrderId = '', closeCurrent = () => {}) {
-  const { prefill, error } = prefillFromMessage(parseOrderMessage(text), webOrderId);
+  // a message made by the web shop carries the machine line "#HANI …"; anything else is read as free chat text
+  const { prefill, error } = /(^|\n)\s*#HANI\b/.test(String(text)) ? prefillFromMessage(parseOrderMessage(text), webOrderId)
+    : prefillFromChat(parseChatOrder(text, S.products, { shipFlat: shipFlat() }));
   if (error) return { error };
   if (getDraft('new') && !(await ask('Bạn đang có một đơn mới nhập dở. Thay bằng đơn từ tin nhắn này?', 'Thay thế'))) return { cancelled: true };
   deleteDraft('new');
@@ -3383,8 +3421,14 @@ function openPasteOrder() {
   openModal({
     title: 'Dán đơn từ khách',
     wide: false,
-    body: `<p class="muted" style="margin-top:0">Dán nguyên tin nhắn đặt hàng khách gửi (tin tạo từ cửa hàng web, có dòng mã <code>#HANI …</code> ở cuối). App sẽ mở một đơn mới đã điền sẵn sản phẩm, số lượng, giá và thông tin giao hàng để bạn kiểm tra trước khi lưu.</p>
-      <textarea id="paste-msg" rows="12" style="width:100%" placeholder="🛍 ĐƠN ĐẶT HÀNG — Hani…"></textarea>
+    body: `<p class="muted" style="margin-top:0">Dán tin nhắn chứa đơn hàng: <b>sản phẩm + số lượng + phí ship</b>, <b>thông tin khách</b> và <b>link tới cuộc trò chuyện</b>. App mở một đơn mới đã điền sẵn (sản phẩm, số lượng, giá, ship, khách, link) để bạn kiểm tra trước khi lưu. Cũng đọc được tin tạo từ cửa hàng web (có dòng <code>#HANI …</code>).</p>
+      <textarea id="paste-msg" rows="11" style="width:100%" placeholder="Móc khoá mica in ảnh x2&#10;Cúp pha lê mini vàng x1&#10;Ship: 15k   (hoặc: freeship)&#10;Tên: Nguyễn Lan&#10;SĐT: 0912345678&#10;Địa chỉ: 12 Lê Lợi, Q.1&#10;IG: @lan.ng&#10;https://www.instagram.com/direct/t/…"></textarea>
+      <details class="dc-install"><summary>Cách viết tin để app đọc đúng</summary>
+        <ul class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.6">
+          <li>Mỗi sản phẩm một dòng, số lượng ghi <b>x2</b>, <b>- 2</b> hoặc <b>2 cái</b>. Tên viết tắt, không dấu vẫn nhận (VD: “cup do x2”); không khớp sản phẩm nào thì thành dòng “chưa gắn” để bạn chọn lại.</li>
+          <li>Ship: <b>ship 15k</b> / <b>ship đồng giá</b> (khách chịu), <b>freeship</b> hoặc <b>shop chịu ship</b> (shop chịu), số tiền khác thì ghi rõ. Không ghi thì tính ship đồng giá khách chịu.</li>
+          <li>Khách: có thể có nhãn (<b>Tên:</b>, <b>SĐT:</b>, <b>Địa chỉ:</b>, <b>IG:</b> / <b>Threads:</b>) hoặc viết thẳng từng dòng. Link tin nhắn dán ở đâu cũng được; link threads.net / instagram.com tự chọn đúng nền tảng.</li>
+        </ul></details>
       <p class="err" id="paste-err" role="alert" style="margin:6px 0 0"></p>`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="paste-go">Tạo đơn từ tin nhắn</button>`,
     onMount(m) {
@@ -3803,6 +3847,12 @@ document.addEventListener('input', (e) => {
   if (t.id === 'product-q') { ui.products.q = t.value; render(); }
 });
 
+document.addEventListener('input', (e) => {
+  if (e.target.name !== 'messageLink') return;
+  const a = document.getElementById('msg-open');
+  const href = safeLink(e.target.value);
+  if (a) { a.hidden = !href; if (href) a.href = href; else a.removeAttribute('href'); }
+});
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'stg-all') { ui.stagesAll = t.checked; render(); }
