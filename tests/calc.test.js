@@ -711,3 +711,25 @@ test('kiểm tra đơn đang giao với file Shopee: chỉ đơn đang giao mà 
   assert.equal(w.waiting.length, 1);
   assert.equal(w.complete.length, 0);
 });
+
+import { bridgeUrl, spxDelivered, bookmarklet, bookmarkletHref } from '../js/spxbridge.js';
+test('nút dấu trang SPX: địa chỉ mở SPX kèm mã, nhận biết đã giao, mã nút tự đứng được', () => {
+  assert.equal(bridgeUrl([]), '');
+  assert.equal(bridgeUrl(['SPXVN1', 'SPXVN2', 'SPXVN3']), 'https://spx.vn/track?SPXVN1#hani=SPXVN1,SPXVN2,SPXVN3');
+  const delivered = { retcode: 0, data: { order_info: { tracking_code_group_name: 'Delivered' }, sls_tracking_info: { records: [{ tracking_code: 'F980' }] } } };
+  assert.equal(spxDelivered(delivered), true);
+  // chỉ có mốc F980 (tên nhóm khác): vẫn là đã giao
+  assert.equal(spxDelivered({ retcode: 0, data: { order_info: { tracking_code_group_name: 'x' }, sls_tracking_info: { records: [{ tracking_code: 'F600' }, { tracking_code: 'F980' }] } } }), true);
+  // đang giao, mã không có, lỗi: không phải đã giao
+  assert.equal(spxDelivered({ retcode: 0, data: { order_info: { tracking_code_group_name: 'Out For Delivery' }, sls_tracking_info: { records: [{ tracking_code: 'F600' }] } } }), false);
+  assert.equal(spxDelivered({ retcode: 0, data: {} }), false);
+  assert.equal(spxDelivered({ retcode: 2001 }), false);
+  assert.equal(spxDelivered(null), false);
+  // nút dấu trang là một lệnh javascript: tự đứng được (không dùng tên nào bên ngoài hàm)
+  const href = bookmarkletHref();
+  assert.ok(href.startsWith('javascript:'));
+  const src = decodeURIComponent(href.slice('javascript:'.length));
+  assert.ok(src.startsWith('(function bookmarklet()') && src.endsWith(')()'));
+  assert.doesNotThrow(() => new Function(src)); // cú pháp hợp lệ
+  assert.ok(!/\b(import|export)\b/.test(bookmarklet.toString()));
+});

@@ -741,3 +741,10 @@ main.wide { max-width: min(1800px, 100%); }
 .spx-row.off { opacity: .6; cursor: default; }
 .spx-row:has(input:checked) { background: var(--st-done); border-color: var(--st-done-edge); }
 .spx-info { display: grid; min-width: 0; }
+
+/* the SPX bridge in the check dialog */
+.dc-steps { display: grid; gap: 6px; margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: var(--blue-soft); }
+.dc-step { font-size: 14px; }
+.dc-install { margin: 8px 0 0; padding: 6px 10px; border: 1px dashed var(--line); border-radius: 10px; }
+.dc-install summary { cursor: pointer; font-weight: 600; }
+a.btn { text-decoration: none; display: inline-block; }
