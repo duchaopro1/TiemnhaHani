@@ -115,16 +115,17 @@ test('sản phẩm chưa có trong kho vẫn giữ tên, số lượng và giá'
   assert.deepEqual(r.items.map((i) => [i.productId, i.name, i.qty, i.price]), [['', 'Bình nước CR7', 2, 800000]]);
 });
 
-import { ORDER_TEMPLATE } from '../js/chatorder.js';
+import { ORDER_TEMPLATE, applyExtras } from '../js/chatorder.js';
 test('tin mẫu điền xong thì đọc đúng', () => {
   const filled = ORDER_TEMPLATE
     .replace('[Tên sản phẩm 2] x [số lượng] : [giá]k', 'Cúp pha lê mini xanh x 2 : 180k')
     .replace('[Tên sản phẩm] x [số lượng] : [giá]k', 'Móc khoá mica in ảnh x 1 : 45k')
     .replace('[tổng]', '240').replace('[Họ tên người nhận]', 'Lê Thu').replace('[Số điện thoại]', '0901234567')
-    .replace('[Địa chỉ nhận hàng]', '5 Nguyễn Trãi, Q5').replace('@[tên tài khoản]', '@thu.le').replace('https://[link tin nhắn của khách]', 'https://ig.me/m/thu');
-  const r = parseChatOrder(filled, P);
+    .replace('[Địa chỉ nhận hàng]', '5 Nguyễn Trãi, Q5');
+  const r = applyExtras(parseChatOrder(filled, P), { account: '@thu.le', link: 'https://www.threads.net/@thu.le' });
   assert.deepEqual(r.items.map((i) => [i.productId, i.variantId, i.qty, i.price]), [['moc', '', 1, 45000], ['cup', 'xanh', 2, 180000]]);
   assert.equal(r.shipFee, 15000); assert.equal(r.total, 240000);
   assert.equal(r.name, 'Lê Thu'); assert.equal(r.phone, '0901234567'); assert.equal(r.address, '5 Nguyễn Trãi, Q5');
-  assert.equal(r.account, '@thu.le'); assert.equal(r.link, 'https://ig.me/m/thu');
+  assert.equal(r.account, '@thu.le'); assert.equal(r.link, 'https://www.threads.net/@thu.le'); assert.equal(r.platform, 'threads');
+  assert.ok(!/@\[|\[link/.test(ORDER_TEMPLATE));
 });

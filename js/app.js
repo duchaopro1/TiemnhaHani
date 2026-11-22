@@ -8,7 +8,7 @@ import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClose
 import { describeError } from './errors.js';
 import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
 import { parseOrderMessage } from './shoporder.js';
-import { parseChatOrder, safeLink, ORDER_TEMPLATE } from './chatorder.js';
+import { parseChatOrder, safeLink, applyExtras, ORDER_TEMPLATE } from './chatorder.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -3409,10 +3409,10 @@ function prefillFromChat(r) {
 }
 
 /** Open the order form filled in from a message; asks first when a half-typed new order would be replaced. */
-async function openOrderFromMessage(text, webOrderId = '', closeCurrent = () => {}) {
+async function openOrderFromMessage(text, webOrderId = '', closeCurrent = () => {}, extra = {}) {
   // a message made by the web shop carries the machine line "#HANI …"; anything else is read as free chat text
   const { prefill, error } = /(^|\n)\s*#HANI\b/.test(String(text)) ? prefillFromMessage(parseOrderMessage(text), webOrderId)
-    : prefillFromChat(parseChatOrder(text, S.products, { shipFlat: shipFlat() }));
+    : prefillFromChat(applyExtras(parseChatOrder(text, S.products, { shipFlat: shipFlat() }), extra));
   if (error) return { error };
   if (getDraft('new') && !(await ask('Bạn đang có một đơn mới nhập dở. Thay bằng đơn từ tin nhắn này?', 'Thay thế'))) return { cancelled: true };
   deleteDraft('new');
@@ -3428,13 +3428,17 @@ function openPasteOrder() {
     wide: false,
     body: `<p class="muted" style="margin-top:0">Dán tin nhắn chứa đơn hàng: <b>sản phẩm + số lượng + phí ship</b>, <b>thông tin khách</b> và <b>link tới cuộc trò chuyện</b>. App mở một đơn mới đã điền sẵn (sản phẩm, số lượng, giá, ship, khách, link) để bạn kiểm tra trước khi lưu. Cũng đọc được tin tạo từ cửa hàng web (có dòng <code>#HANI …</code>).</p>
       <textarea id="paste-msg" rows="11" style="width:100%" placeholder="Móc khoá mica in ảnh x2&#10;Cúp pha lê mini vàng x1&#10;Ship: 15k   (hoặc: freeship)&#10;Tên: Nguyễn Lan&#10;SĐT: 0912345678&#10;Địa chỉ: 12 Lê Lợi, Q.1&#10;IG: @lan.ng&#10;https://www.instagram.com/direct/t/…"></textarea>
+      <div class="form-grid" style="margin-top:10px">
+        <label class="field">Tên tài khoản (Instagram / Threads)<input id="paste-account" placeholder="@username"></label>
+        <label class="field">Link tin nhắn khách<input id="paste-link" placeholder="https://… (dán link cuộc trò chuyện)"></label>
+      </div>
       <details class="dc-install" open><summary>Tin mẫu để đồng nghiệp copy</summary>
-        <p class="small muted" style="margin:6px 0">Copy tin này, điền vào các ô <b>[ngoặc vuông]</b> (xoá dòng sản phẩm 2 nếu không dùng), rồi gửi cho khách xác nhận hoặc dán lại vào đây để tạo đơn.</p>
+        <p class="small muted" style="margin:6px 0">Copy tin này, điền vào các ô <b>[ngoặc vuông]</b> (xoá dòng sản phẩm 2 nếu không dùng), rồi gửi cho khách xác nhận hoặc dán lại vào ô trên để tạo đơn. <b>Tên tài khoản</b> và <b>link tin nhắn</b> điền ở hai ô riêng bên trên, không cần đưa vào tin.</p>
         <textarea id="tpl-msg" rows="13" readonly style="width:100%;font-size:13px">${esc(ORDER_TEMPLATE)}</textarea>
         <button type="button" class="btn ghost sm" id="tpl-copy" style="margin-top:6px">📋 Sao chép tin mẫu</button>
         <ul class="small" style="margin:8px 0 0;padding-left:20px;line-height:1.6">
           <li><b>Giá</b> ghi sau dấu hai chấm là giá cả dòng (VD: <b>x 2 : 800k</b> là 2 cái, tổng 800.000đ); không ghi giá thì app lấy giá trong kho.</li>
-          <li><b>Tên tài khoản</b> (IG / Threads) và <b>link tin nhắn</b> tách riêng trong đơn; họ tên, SĐT, địa chỉ vào <b>Ghi chú khách hàng</b> (chỉ hiện khi mở chi tiết đơn).</li>
+          <li>Hai ô <b>Tên tài khoản</b> và <b>Link tin nhắn</b> ưu tiên hơn nội dung tin (tin có ghi sẵn thì vẫn đọc nếu hai ô để trống). Họ tên, SĐT, địa chỉ vào <b>Ghi chú khách hàng</b> (chỉ hiện khi mở chi tiết đơn).</li>
         </ul>
       </details>
       <details class="dc-install"><summary>Cách viết tin để app đọc đúng</summary>
@@ -3453,7 +3457,9 @@ function openPasteOrder() {
       };
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#paste-go', m).onclick = async () => {
-        const out = await openOrderFromMessage($('#paste-msg', m).value, '', () => m.close());
+        const link = $('#paste-link', m).value.trim();
+        if (link && !safeLink(link)) { $('#paste-err', m).textContent = 'Link tin nhắn chưa đúng, cần bắt đầu bằng https://'; return; }
+        const out = await openOrderFromMessage($('#paste-msg', m).value, '', () => m.close(), { account: $('#paste-account', m).value, link });
         if (out.error) $('#paste-err', m).textContent = out.error;
       };
     },

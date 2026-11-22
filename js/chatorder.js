@@ -3,6 +3,14 @@
 // "Nhãn: giá trị" lines and bare lines alike, and matches product names loosely against the shop's own products.
 // Pure functions (no DOM), covered by tests/chatorder.test.js.
 
+/** The two boxes next to the pasted text (account name, link to the chat) win over anything the text itself says. */
+export function applyExtras(r, { account = '', link = '' } = {}) {
+  const a = String(account).trim(); const l = safeLink(link);
+  if (a) { r.account = a; r.platform = r.platform || ''; }
+  if (l) { r.link = l; if (/threads\.(net|com)/i.test(l)) r.platform = 'threads'; else if (/instagram\.com/i.test(l)) r.platform = 'instagram'; }
+  return r;
+}
+
 /** The sample message: a colleague copies it, fills the [brackets] (or sends it to the customer to fill in) and pastes it back. */
 export const ORDER_TEMPLATE = `Thông tin đơn hàng
 • [Tên sản phẩm] x [số lượng] : [giá]k
@@ -13,9 +21,7 @@ TỔNG ĐƠN: [tổng]k
 Thông tin khách hàng
 [Họ tên người nhận]
 [Số điện thoại]
-[Địa chỉ nhận hàng]
-IG/Threads: @[tên tài khoản]
-https://[link tin nhắn của khách]`;
+[Địa chỉ nhận hàng]`;
 
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 
