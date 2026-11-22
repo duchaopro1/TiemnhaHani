@@ -731,3 +731,13 @@ main.wide { max-width: min(1800px, 100%); }
 .dc-group { margin: 8px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; }
 .dc-group.warn { border-color: var(--st-pending-edge); background: var(--st-pending); }
 .dc-group summary { cursor: pointer; font-weight: 600; }
+
+/* tracking on SPX */
+.track-link { font-size: 13px; font-weight: 700; text-decoration: none; color: var(--blue); margin-left: 4px; }
+.track-link:hover { text-decoration: underline; }
+.spx-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
+.spx-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.spx-row input { width: 18px; height: 18px; margin: 0; }
+.spx-row.off { opacity: .6; cursor: default; }
+.spx-row:has(input:checked) { background: var(--st-done); border-color: var(--st-done-edge); }
+.spx-info { display: grid; min-width: 0; }

@@ -878,6 +878,10 @@ function payInfo(o) {
 const shortById = { has: (id) => shortages.short.some((x) => x.order.id === id), get: (id) => shortages.short.find((x) => x.order.id === id) };
 const shortText = (x) => `Thiếu: ${x.lines.map((l) => `${shortLabel(l)} ×${l.short}`).join(', ')}`;
 
+/** SPX Express tracking page of a tracking code (codes like SPXVN0123456789). */
+const isSpx = (code) => /^SPX/i.test(String(code || '').trim());
+const spxUrl = (code) => `https://spx.vn/track?${encodeURIComponent(String(code).trim())}`;
+
 function orderRow(o) {
   const s = orderSummary(costs, o);
   const inactive = INACTIVE_STATUSES.has(o.status);
@@ -893,7 +897,7 @@ function orderRow(o) {
     <td><b>${esc(o.code || '—')}</b>${o.card ? ' <span class="chip her" title="Khách yêu cầu thiết kế thiệp">Có thiệp</span>' : ''}${shortById.has(o.id) ? ` <span class="chip warn" title="${esc(shortText(shortById.get(o.id)))}">Thiếu hàng</span>` : ''}<br><span class="muted small">${esc(o.customer || '')}</span></td>
     <td class="small"><div class="items">${items}</div>${(o.items || []).length ? `<div class="order-total">Tổng: <b>${(o.items || []).reduce((n, l) => n + num(l.qty), 0)}</b> sản phẩm${(o.items || []).length > 1 ? ` <span class="muted">· ${o.items.length} dòng</span>` : ''}</div>` : ''}${o.note?.trim() ? `<div class="order-note"><b>Ghi chú:</b> ${esc(o.note.trim())}</div>` : ''}</td>
     <td class="num">${money(s.gross)}${s.discount ? `<br><span class="small muted">− giảm giá ${money(s.discount)}</span>` : ''}</td>
-    <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>` : ''}</td>
+    <td class="num small">${money(o.shipFee)}<br><span class="muted">${o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu'}</span>${o.tracking ? `<br><button type="button" class="track-btn" data-action="copy-tracking" data-text="${esc(o.tracking)}" title="Bấm để sao chép mã vận đơn">📦 ${esc(o.tracking)}</button>${isSpx(o.tracking) ? ` <a class="track-link" href="${esc(spxUrl(o.tracking))}" target="_blank" rel="noopener" title="Tra cứu trên SPX (mở tab mới)">↗</a>` : ''}` : ''}</td>
     <td class="num"><b>${money(orderPayment(costs, o).total)}</b>${payInfo(o)}</td>
     <td class="num">${money(s.cost)}</td>
     <td class="num ${signCls(s.profit)}"><b>${money(s.profit)}</b></td>
@@ -1556,10 +1560,16 @@ function openDeliveryCheck() {
       <textarea id="dc-codes" rows="7" style="width:100%" placeholder="2611ABCDEFGH12&#10;2611XYZKLMNP34"></textarea>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"><label class="btn ghost sm">📎 Chọn file Shopee<input type="file" id="dc-file" accept=".xlsx,.xls,.csv" hidden></label><span id="dc-name" class="small muted">Chưa chọn file</span></div>
       <p class="err" id="dc-err" role="alert" style="margin:8px 0 0"></p>`,
-    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="dc-go">Kiểm tra</button>`,
+    foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn ghost" id="dc-spx" title="Cho các đơn giao bằng SPX không có trong file Shopee: mở trang SPX của từng mã rồi tick các đơn đã giao">🔗 Tra trên SPX (đơn ngoài Shopee)</button><button class="btn" id="dc-go">Kiểm tra bằng file Shopee</button>`,
     onMount(m) {
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#dc-codes', m).focus();
+      $('#dc-spx', m).onclick = () => {
+        const list = spxTargets(parseCodes($('#dc-codes', m).value));
+        if (!list.length) { $('#dc-err', m).textContent = 'Dán mã vận đơn SPX cần tra, hoặc để trống khi có đơn đang giao đã ghi mã vận đơn.'; return; }
+        m.close();
+        openSpxCheck(list);
+      };
       $('#dc-file', m).onchange = (e) => { file = e.target.files[0] || null; $('#dc-name', m).textContent = file ? file.name : 'Chưa chọn file'; $('#dc-err', m).textContent = ''; };
       $('#dc-go', m).onclick = async () => {
         const err = $('#dc-err', m);
@@ -1580,8 +1590,77 @@ function openDeliveryCheck() {
         } catch (e) {
           err.textContent = e.code ? `Chưa lưu được: ${describeError(e).text}` : e.message;
           go.disabled = false;
-          go.textContent = 'Kiểm tra';
+          go.textContent = 'Kiểm tra bằng file Shopee';
         }
+      };
+    },
+  });
+}
+
+/** Orders to look up on SPX: the pasted codes (an order code or a tracking code), else every shipping order that has a tracking code. */
+function spxTargets(codes) {
+  const byKey = new Map();
+  for (const o of S.orders) if (o.code) byKey.set(String(o.code).trim().toUpperCase(), o);
+  for (const o of S.orders) if (o.tracking && !byKey.has(String(o.tracking).trim().toUpperCase())) byKey.set(String(o.tracking).trim().toUpperCase(), o);
+  if (!codes.length) return S.orders.filter((o) => o.status === 'shipping' && o.tracking).map((order) => ({ order, tracking: order.tracking }));
+  const seen = new Set();
+  const out = [];
+  for (const c of codes) {
+    const order = byKey.get(c.toUpperCase()) || null;
+    if (order && seen.has(order.id)) continue;
+    if (order) seen.add(order.id);
+    out.push({ order, tracking: order ? order.tracking || (isSpx(c) ? c : '') : c });
+  }
+  return out;
+}
+
+/**
+ * The orders of an SPX delivery, each with a link to its SPX page. The shop reads the status there and ticks the ones
+ * delivered; the ticked orders become "Hoàn thành". Nothing is changed without a tick.
+ */
+function openSpxCheck(list) {
+  const row = (t, i) => {
+    const o = t.order;
+    const can = o && o.status !== 'done';
+    return `<label class="spx-row ${can ? '' : 'off'}">
+      <input type="checkbox" data-spx="${i}" ${can ? '' : 'disabled'} aria-label="Đã giao ${esc(o?.code || t.tracking || '')}">
+      <span class="spx-info"><b>${esc(o?.code || '(không có đơn trong app)')}</b> <span class="muted small">${esc(o?.customer || '')}${o?.date ? ' · ' + fmtDate(o.date) : ''}</span>
+        <span class="small muted">${t.tracking ? `Mã vận đơn: <b>${esc(t.tracking)}</b>` : 'Chưa có mã vận đơn'}</span></span>
+      ${o ? `<span class="chip st-${o.status}">${esc(STATUSES[o.status] || o.status)}</span>` : ''}
+      ${isSpx(t.tracking) ? `<a class="btn ghost sm" href="${esc(spxUrl(t.tracking))}" target="_blank" rel="noopener">Tra SPX ↗</a>` : t.tracking ? '<span class="small muted" title="Chỉ tra được mã bắt đầu bằng SPX">không phải mã SPX</span>' : ''}
+    </label>`;
+  };
+  openModal({
+    title: `Tra đơn trên SPX (${list.length})`,
+    wide: false,
+    body: `<p class="muted" style="margin-top:0">Bấm <b>Tra SPX ↗</b> để mở trang theo dõi của từng mã (tab mới). Đơn nào SPX ghi <b>đã giao thành công</b> thì tick vào ô trước đơn, rồi bấm <b>Chuyển sang Hoàn thành</b>. Đơn không tick sẽ không bị đổi.</p>
+      <div class="spx-list">${list.map(row).join('')}</div>
+      <p class="small muted" id="spx-count" style="margin:8px 0 0">Đã tick 0 đơn</p>`,
+    foot: `<button class="btn ghost" data-close2>Đóng</button><button class="btn" id="spx-go" disabled>Chuyển sang Hoàn thành</button>`,
+    onMount(m) {
+      $('[data-close2]', m).onclick = () => m.requestClose();
+      const ticked = () => $$('[data-spx]:checked', m).map((c) => list[+c.dataset.spx].order);
+      m.addEventListener('change', (e) => {
+        if (e.target.dataset.spx === undefined) return;
+        const n = ticked().length;
+        $('#spx-count', m).textContent = `Đã tick ${n} đơn`;
+        $('#spx-go', m).disabled = !n;
+      });
+      $('#spx-go', m).onclick = async () => {
+        const orders = ticked();
+        if (!orders.length) return;
+        const go = $('#spx-go', m);
+        go.disabled = true;
+        go.textContent = 'Đang lưu…';
+        try {
+          await store.upsertMany('orders', orders.map((o) => ({ ...store.get('orders', o.id), status: 'done' })), { quiet: true });
+        } catch (err) {
+          go.disabled = false;
+          go.textContent = 'Chuyển sang Hoàn thành';
+          return notify(`Chưa lưu được: ${describeError(err).text}`);
+        }
+        m.close();
+        openDeliveryResult({ checked: orders.length, complete: orders.map((order) => ({ order })), stillShipping: [], waiting: [], cancelled: [], returned: [], doneButApp: [], already: [], missing: [], notFound: [] }, 'Đơn đã hoàn thành (xem trên SPX)');
       };
     },
   });
