@@ -3,6 +3,20 @@
 // "Nhãn: giá trị" lines and bare lines alike, and matches product names loosely against the shop's own products.
 // Pure functions (no DOM), covered by tests/chatorder.test.js.
 
+/** The sample message: a colleague copies it, fills the [brackets] (or sends it to the customer to fill in) and pastes it back. */
+export const ORDER_TEMPLATE = `Thông tin đơn hàng
+• [Tên sản phẩm] x [số lượng] : [giá]k
+• [Tên sản phẩm 2] x [số lượng] : [giá]k
+• Ship: 15k
+TỔNG ĐƠN: [tổng]k
+
+Thông tin khách hàng
+[Họ tên người nhận]
+[Số điện thoại]
+[Địa chỉ nhận hàng]
+IG/Threads: @[tên tài khoản]
+https://[link tin nhắn của khách]`;
+
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 
 /** lower-case, no accents, single spaces: "Móc Khoá" → "moc khoa" */
@@ -27,13 +41,14 @@ const LABELS = {
   phone: ['sdt', 'so dien thoai', 'dien thoai', 'phone', 'sdt nguoi nhan', 'tel', 'so dt'],
   address: ['dia chi', 'dc', 'address', 'dia chi giao hang', 'dia chi nhan hang'],
   ship: ['ship', 'phi ship', 'phi van chuyen', 'van chuyen', 'shipping', 'phi giao hang', 'tien ship'],
-  account: ['tai khoan', 'tk', 'account', 'id', 'user', 'username', 'nick', 'nick name'],
+  account: ['tai khoan', 'tk', 'ig threads', 'threads ig', 'ig thread', 'insta threads', 'account', 'id', 'user', 'username', 'nick', 'nick name'],
   ig: ['ig', 'instagram'],
   threads: ['threads', 'thread'],
   items: ['san pham', 'sp', 'don hang', 'don', 'hang', 'mon', 'order', 'noi dung', 'chi tiet don', 'thong tin don hang', 'thong tin san pham'],
   note: ['ghi chu', 'note', 'luu y', 'yeu cau'],
   link: ['link', 'tin nhan', 'link tin nhan', 'lien ket', 'url', 'link chat', 'xem tin nhan'],
   head: ['thong tin khach hang', 'thong tin khach', 'thong tin nguoi nhan', 'khach hang'],
+  total: ['tong don', 'tong', 'tong tien', 'tong cong', 'tong thanh toan', 'thanh tien', 'tong don hang'],
 };
 const labelOf = (raw) => {
   const f = fold(raw);
@@ -105,6 +120,13 @@ export function matchProduct(text, products) {
   return best;
 }
 
+/** "Bình nước x 1 : 400k" → { rest: "Bình nước x 1", price: 400000 }. A price needs k / đ / vnd, thousands dots, or 4+ digits. */
+export function extractPrice(seg) {
+  const m = String(seg).match(/^(.*?)\s*[:=\-–—]\s*(\d+(?:[.,]\d{3})+|\d{4,}|\d+(?:[.,]\d+)?\s*(?:k|nghìn|nghin|ngàn|ngan|tr|triệu|trieu|đ|d|vnd))\s*(?:đ|d|vnd|vnđ)?\.?$/i);
+  if (!m || !m[1].trim()) return { rest: String(seg).trim(), price: 0 };
+  return { rest: m[1].trim(), price: parseMoney(m[2]) || 0 };
+}
+
 /** One item segment → candidate readings [name, qty] in priority order. */
 function readings(seg) {
   const s = seg.replace(/^\s*(?:\d+\s*[.)]\s+|[-•*·]\s*)/, '').trim();
@@ -133,7 +155,7 @@ export function parseChatOrder(text, products = [], { shipFlat = 15000 } = {}) {
   const urlRank = (u) => (/instagram\.com|threads\.(net|com)|facebook\.com|fb\.com|m\.me|messenger\.com|zalo\.me|chat\.zalo|shopee\.vn/i.test(u) ? 0 : 1);
   const link = [...urls].sort((a, b) => urlRank(a) - urlRank(b))[0] || '';
   const body = String(text || '').replace(/https?:\/\/[^\s<>"']+/gi, ' ');
-  const res = { items: [], name: '', phone: '', address: '', account: '', platform: '', note: '', link, shipFee: shipFlat, shipPayer: 'customer', shipFound: false, unread: [] };
+  const res = { total: 0, items: [], name: '', phone: '', address: '', account: '', platform: '', note: '', link, shipFee: shipFlat, shipPayer: 'customer', shipFound: false, unread: [] };
   if (/threads\.(net|com)/i.test(link)) res.platform = 'threads';
   else if (/instagram\.com/i.test(link)) res.platform = 'instagram';
 
@@ -150,6 +172,8 @@ export function parseChatOrder(text, products = [], { shipFlat = 15000 } = {}) {
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.replace(/^[\s*•\-–—·>]+/, '').replace(/[\s]+$/, '').trim();
     if (!line || /^[━─=_.\s-]+$/.test(line)) continue;
+    const bare = labelOf(line);
+    if (bare === 'head' || bare === 'items') { mode = bare === 'head' ? 'customer' : 'items'; continue; } // "Thông tin đơn hàng" with no colon
     const lm = line.match(/^([^:：]{1,28})[:：]\s*(.*)$/);
     const kind = lm ? labelOf(lm[1]) : '';
     const value = lm ? lm[2].trim() : '';
@@ -164,6 +188,7 @@ export function parseChatOrder(text, products = [], { shipFlat = 15000 } = {}) {
         case 'threads': res.account = value; res.platform = res.platform || 'threads'; break;
         case 'note': notes.push(value); break;
         case 'link': break;
+        case 'total': res.total = parseMoney(value) || 0; break;
         case 'ship': { const s = parseShip(`ship ${value}`, shipFlat); if (s) Object.assign(res, { shipFee: s.fee, shipPayer: s.payer, shipFound: true }); break; }
         case 'items': addItemText(value); mode = 'items'; break;
         default: res.unread.push(line);
@@ -189,15 +214,16 @@ export function parseChatOrder(text, products = [], { shipFlat = 15000 } = {}) {
   }
 
   // items: first reading whose name is a known product, else the first reading with a quantity, else the whole text once
-  for (const seg of itemSegs) {
+  for (const rawSeg of itemSegs) {
+    const { rest: seg, price } = extractPrice(rawSeg);
     const { whole, list } = readings(seg);
     let hit = null;
     const whole1 = matchProduct(whole, products);
     if (whole1 && !list.some(([n]) => matchProduct(n, products))) hit = { m: whole1, qty: 1, name: whole };
     for (const [n, q] of list) { const m = matchProduct(n, products); if (m && (!hit || m.score > hit.m.score)) { hit = { m, qty: q, name: n }; } }
     if (!hit && whole1) hit = { m: whole1, qty: 1, name: whole };
-    if (hit) res.items.push({ productId: hit.m.product.id, variantId: hit.m.variant?.id || '', qty: Math.max(1, hit.qty), name: hit.name.trim(), matched: true, fuzzy: hit.m.score < 0.9 });
-    else if (list.length) res.items.push({ productId: '', variantId: '', qty: Math.max(1, list[0][1]), name: list[0][0].trim(), matched: false });
+    if (hit) res.items.push({ productId: hit.m.product.id, variantId: hit.m.variant?.id || '', qty: Math.max(1, hit.qty), name: hit.name.trim(), matched: true, fuzzy: hit.m.score < 0.9, price });
+    else if (list.length) res.items.push({ productId: '', variantId: '', qty: Math.max(1, list[0][1]), name: list[0][0].trim(), matched: false, price });
     else res.unread.push(seg);
   }
   res.note = notes.join('. ');

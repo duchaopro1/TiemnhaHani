@@ -19,6 +19,7 @@ export function normalizeOrder(o) {
     platform: str(o.platform),
     code: str(o.code).trim(),
     messageLink: str(o.messageLink).trim(),
+    customerNote: str(o.customerNote),
     date: str(o.date),
     shippedAt: str(o.shippedAt),
     doneAt: str(o.doneAt),

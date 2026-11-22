@@ -8,7 +8,7 @@ import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClose
 import { describeError } from './errors.js';
 import { buildCatalog, onShop, COMBO_LABEL, diffCatalog } from './catalog.js';
 import { parseOrderMessage } from './shoporder.js';
-import { parseChatOrder, safeLink } from './chatorder.js';
+import { parseChatOrder, safeLink, ORDER_TEMPLATE } from './chatorder.js';
 import { exportRange, quickRanges, ordersInRange, buildSheets, toCsv, isoLocal } from './export.js';
 
 /* ================= helpers ================= */
@@ -779,7 +779,7 @@ function filteredOrders() {
   const q = normalize(f.q);
   return S.orders
     .filter((o) => (!f.platform || o.platform === f.platform) && (!f.status || o.status === f.status) && (!f.month || (o.date || '').startsWith(f.month)))
-    .filter((o) => !q || normalize([o.code, o.customer, o.note, o.tracking, ...(o.items || []).map((l) => itemLabel(l.productId, l.variantId, l.productName))].join(' ')).includes(q))
+    .filter((o) => !q || normalize([o.code, o.customer, o.customerNote, o.note, o.tracking, ...(o.items || []).map((l) => itemLabel(l.productId, l.variantId, l.productName))].join(' ')).includes(q))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
@@ -1059,7 +1059,7 @@ function openOrderFormNow(existing, restored) {
         <label class="field">Ngày tạo đơn<input type="date" name="date" value="${esc(o.date)}" required></label>
         <label class="field">Ngày bắt đầu giao<input type="date" name="shippedAt" value="${esc(o.shippedAt || '')}"></label>
         <label class="field">Ngày hoàn thành<input type="date" name="doneAt" value="${esc(o.doneAt || '')}"></label>
-        <label class="field">Khách hàng<input name="customer" value="${esc(o.customer)}" placeholder="Tên / @username"></label>
+        <label class="field">Tên tài khoản (Instagram / Threads)<input name="customer" value="${esc(o.customer)}" placeholder="@username"></label>
         <label class="field">Link tin nhắn khách<span class="msg-link"><input name="messageLink" value="${esc(o.messageLink || '')}" placeholder="https://… (dán link cuộc trò chuyện)"><a id="msg-open" class="btn ghost sm" target="_blank" rel="noopener noreferrer" ${safeLink(o.messageLink) ? `href="${esc(safeLink(o.messageLink))}"` : 'hidden'}>Mở ↗</a></span></label>
         <label class="field">Trạng thái
           <select name="status" class="st-select st-${o.status}">${Object.entries(STATUSES).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
@@ -1115,6 +1115,7 @@ function openOrderFormNow(existing, restored) {
         </div>
       </div>
       <div id="pay-box"></div>
+      <label class="field" style="margin-top:12px">Ghi chú khách hàng <span class="muted small">(họ tên, SĐT, địa chỉ… chỉ hiện trong chi tiết đơn này)</span><textarea name="customerNote" rows="3">${esc(o.customerNote || '')}</textarea></label>
       <label class="field" style="margin-top:12px">Ghi chú<textarea name="note" rows="2">${esc(o.note)}</textarea></label>
       <div class="summary" id="order-summary"></div>
     </form>`;
@@ -1254,7 +1255,7 @@ function openOrderFormNow(existing, restored) {
       const readHeader = () => {
         const d = formData(form);
         return {
-          platform: d.platform, code: d.code.trim(), messageLink: safeLink(d.messageLink) || (d.messageLink || '').trim(), date: d.date, shippedAt: d.shippedAt || '', doneAt: d.doneAt || '', customer: d.customer.trim(), status: d.status, note: d.note, card: d.card === 'on',
+          platform: d.platform, code: d.code.trim(), messageLink: safeLink(d.messageLink) || (d.messageLink || '').trim(), date: d.date, shippedAt: d.shippedAt || '', doneAt: d.doneAt || '', customer: d.customer.trim(), customerNote: d.customerNote || '', status: d.status, note: d.note, card: d.card === 'on',
           wrap1: d.wrap1 || '', wrap2: d.wrap2 || '', wrap3: d.wrap3 || '',
           ...shipChoice(d), tracking: (d.tracking || '').trim(), discount: num(d.discount), platformFee: num(d.platformFee),
           paid: d.paid === '' || d.paid === undefined ? null : num(d.paid),
@@ -3383,21 +3384,25 @@ function prefillFromChat(r) {
   const totals = {};
   for (const i of r.items) if (i.productId) totals[i.productId] = (totals[i.productId] || 0) + i.qty;
   const items = r.items.map((i) => {
-    if (!i.productId) return { ...blankLine(), productName: i.name, qty: i.qty, price: 0 };
+    const given = i.price ? Math.round(i.price / i.qty) : 0; // the message prices the whole line
+    if (!i.productId) return { ...blankLine(), productName: i.name, qty: i.qty, price: given };
     const p = product(i.productId);
     const v = i.variantId ? variantOf(i.productId, i.variantId) : null;
     const pr = store.get('presets', p.defaultPreset);
-    return { ...blankLine(), productId: i.productId, variantId: v ? v.id : '', qty: i.qty, price: tierPrice(p, totals[i.productId], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
+    return { ...blankLine(), productId: i.productId, variantId: v ? v.id : '', qty: i.qty, price: given || tierPrice(p, totals[i.productId], variantPrice(p, v)), pack1: pr?.pack1 || '', pack2: pr?.pack2 || '', pack3: pr?.pack3 || '' };
   });
   const lost = r.items.filter((i) => !i.productId);
   const guess = r.items.filter((i) => i.productId && i.fuzzy);
+  const goods = items.reduce((n, l) => n + num(l.qty) * num(l.price), 0);
+  const customerNote = [r.name && `Họ tên: ${r.name}`, r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`].filter(Boolean).join('\n');
   const note = [
-    r.phone && `SĐT: ${r.phone}`, r.address && `Địa chỉ: ${r.address}`, r.name && `Người nhận: ${r.name}`, r.note && `Khách ghi chú: ${r.note}`,
+    r.note && `Khách ghi chú: ${r.note}`,
+    r.total && r.total !== goods + num(r.shipPayer === 'shop' ? 0 : r.shipFee) && `⚠ Tin ghi tổng đơn ${money(r.total)}, app tính ${money(goods + num(r.shipPayer === 'shop' ? 0 : r.shipFee))}. Kiểm tra lại giá.`,
     lost.length && `⚠ Chưa gắn được sản phẩm: ${lost.map((i) => `${i.name} ×${i.qty}`).join(', ')}. Chọn lại trong danh sách.`,
     guess.length && `⚠ Đoán theo tên, kiểm tra lại: ${guess.map((i) => `“${i.name}” → ${itemLabel(i.productId, i.variantId)}`).join('; ')}.`,
     r.unread.length && `⚠ Dòng chưa đọc được: ${r.unread.join(' / ')}`,
   ].filter(Boolean).join('\n');
-  const prefill = { platform: r.platform || 'instagram', date: today(), customer: r.account || r.name, status: 'pending', note, shipFee: r.shipFee, shipPayer: r.shipPayer, items };
+  const prefill = { platform: r.platform || 'instagram', date: today(), customer: r.account || r.name, customerNote, status: 'pending', note, shipFee: r.shipFee, shipPayer: r.shipPayer, items };
   const link = safeLink(r.link);
   if (link) prefill.messageLink = link;
   return { prefill, chat: r };
@@ -3423,6 +3428,15 @@ function openPasteOrder() {
     wide: false,
     body: `<p class="muted" style="margin-top:0">Dán tin nhắn chứa đơn hàng: <b>sản phẩm + số lượng + phí ship</b>, <b>thông tin khách</b> và <b>link tới cuộc trò chuyện</b>. App mở một đơn mới đã điền sẵn (sản phẩm, số lượng, giá, ship, khách, link) để bạn kiểm tra trước khi lưu. Cũng đọc được tin tạo từ cửa hàng web (có dòng <code>#HANI …</code>).</p>
       <textarea id="paste-msg" rows="11" style="width:100%" placeholder="Móc khoá mica in ảnh x2&#10;Cúp pha lê mini vàng x1&#10;Ship: 15k   (hoặc: freeship)&#10;Tên: Nguyễn Lan&#10;SĐT: 0912345678&#10;Địa chỉ: 12 Lê Lợi, Q.1&#10;IG: @lan.ng&#10;https://www.instagram.com/direct/t/…"></textarea>
+      <details class="dc-install" open><summary>Tin mẫu để đồng nghiệp copy</summary>
+        <p class="small muted" style="margin:6px 0">Copy tin này, điền vào các ô <b>[ngoặc vuông]</b> (xoá dòng sản phẩm 2 nếu không dùng), rồi gửi cho khách xác nhận hoặc dán lại vào đây để tạo đơn.</p>
+        <textarea id="tpl-msg" rows="13" readonly style="width:100%;font-size:13px">${esc(ORDER_TEMPLATE)}</textarea>
+        <button type="button" class="btn ghost sm" id="tpl-copy" style="margin-top:6px">📋 Sao chép tin mẫu</button>
+        <ul class="small" style="margin:8px 0 0;padding-left:20px;line-height:1.6">
+          <li><b>Giá</b> ghi sau dấu hai chấm là giá cả dòng (VD: <b>x 2 : 800k</b> là 2 cái, tổng 800.000đ); không ghi giá thì app lấy giá trong kho.</li>
+          <li><b>Tên tài khoản</b> (IG / Threads) và <b>link tin nhắn</b> tách riêng trong đơn; họ tên, SĐT, địa chỉ vào <b>Ghi chú khách hàng</b> (chỉ hiện khi mở chi tiết đơn).</li>
+        </ul>
+      </details>
       <details class="dc-install"><summary>Cách viết tin để app đọc đúng</summary>
         <ul class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.6">
           <li>Mỗi sản phẩm một dòng, số lượng ghi <b>x2</b>, <b>- 2</b> hoặc <b>2 cái</b>. Tên viết tắt, không dấu vẫn nhận (VD: “cup do x2”); không khớp sản phẩm nào thì thành dòng “chưa gắn” để bạn chọn lại.</li>
@@ -3433,6 +3447,10 @@ function openPasteOrder() {
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="paste-go">Tạo đơn từ tin nhắn</button>`,
     onMount(m) {
       $('#paste-msg', m).focus();
+      $('#tpl-copy', m).onclick = async () => {
+        try { await navigator.clipboard.writeText(ORDER_TEMPLATE); toast('Đã sao chép tin mẫu'); }
+        catch { const t = $('#tpl-msg', m); t.focus(); t.select(); notify('Chưa tự sao chép được. Tin mẫu đã được bôi đen, bạn bấm Ctrl + C để sao chép.'); }
+      };
       $('[data-close2]', m).onclick = () => m.requestClose();
       $('#paste-go', m).onclick = async () => {
         const out = await openOrderFromMessage($('#paste-msg', m).value, '', () => m.close());
