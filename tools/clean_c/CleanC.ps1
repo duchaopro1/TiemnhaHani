@@ -7,6 +7,7 @@
     powershell -ExecutionPolicy Bypass -File .\CleanC.ps1             # report: size of each cleanable category
     powershell -ExecutionPolicy Bypass -File .\CleanC.ps1 -Big        # also list the biggest folders / files in your profile
     powershell -ExecutionPolicy Bypass -File .\CleanC.ps1 -Clean      # ask y/N per category, then delete
+    powershell -ExecutionPolicy Bypass -File .\CleanC.ps1 -Dig "C:\Users\<you>\AppData\Local\Google"   # list what is big inside one folder
 
   Only well-known cache / temp locations are touched. Documents, Downloads, Desktop, Pictures,
   browser passwords / history / cookies, and anything in C:\Windows (except Temp, update download
@@ -15,7 +16,8 @@
 param(
     [switch]$Clean,
     [switch]$Big,
-    [int]$Top = 15
+    [int]$Top = 15,
+    [string]$Dig = ''
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -51,6 +53,21 @@ function Remove-Globs([string[]]$globs) {
     }
 }
 
+if ($Dig) {
+    if (-not (Test-Path -LiteralPath $Dig)) { Write-Host "Folder not found: $Dig" -ForegroundColor Red; return }
+    Write-Host ''
+    Write-Host ('--- Biggest sub-folders of {0} ---' -f $Dig) -ForegroundColor Cyan
+    Get-ChildItem -LiteralPath $Dig -Force -Directory | ForEach-Object {
+        $s = (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+        [pscustomobject]@{ Folder = $_.FullName; Bytes = [long]$s; Size = (Fmt $s) }
+    } | Sort-Object Bytes -Descending | Select-Object -First $Top | Format-Table Folder, Size -AutoSize
+    Write-Host ('--- {0} biggest files in {1} ---' -f $Top, $Dig) -ForegroundColor Cyan
+    Get-ChildItem -LiteralPath $Dig -Recurse -Force -File -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First $Top |
+        Select-Object @{ n = 'Size'; e = { Fmt $_.Length } }, FullName | Format-Table -AutoSize
+    return
+}
+
 $U  = $env:USERPROFILE
 $LA = $env:LOCALAPPDATA
 $RA = $env:APPDATA
@@ -79,8 +96,15 @@ $cats = @(
     @{ Name = 'Browser caches (Chrome, Edge, Firefox)'; Admin = $false
        Globs = @("$LA\Google\Chrome\User Data\*\Cache\*", "$LA\Google\Chrome\User Data\*\Code Cache\*", "$LA\Google\Chrome\User Data\*\GPUCache\*",
                  "$LA\Microsoft\Edge\User Data\*\Cache\*",  "$LA\Microsoft\Edge\User Data\*\Code Cache\*",  "$LA\Microsoft\Edge\User Data\*\GPUCache\*",
+                 "$LA\CocCoc\Browser\User Data\*\Cache\*", "$LA\CocCoc\Browser\User Data\*\Code Cache\*", "$LA\CocCoc\Browser\User Data\*\GPUCache\*",
                  "$LA\Mozilla\Firefox\Profiles\*\cache2\*")
        Warn = 'CLOSE the browsers first. Only caches: passwords, history, cookies and logins are kept.' },
+    @{ Name = 'CapCut cache (User Data\Cache)'; Admin = $false
+       Globs = @("$LA\CapCut\User Data\Cache\*")
+       Warn = 'CLOSE CapCut first. Only the auto-generated cache (SmartCrop, speech recognition...) is deleted. Your projects/drafts (User Data\Projects) and the app are NOT touched; CapCut rebuilds the cache when needed.' },
+    @{ Name = 'Zalo update installers (ZaloData\media\update)'; Admin = $false
+       Globs = @("$RA\ZaloData\media\update\*")
+       Warn = 'Old downloaded Zalo update packages. Your messages and received files are NOT touched.' },
     @{ Name = 'VS Code caches'; Admin = $false
        Globs = @("$RA\Code\Cache\*", "$RA\Code\CachedData\*", "$RA\Code\CachedExtensionVSIXs\*", "$RA\Code\Code Cache\*", "$RA\Code\GPUCache\*")
        Warn = 'Rebuilt on next start. Settings and extensions are kept.' },
@@ -152,6 +176,12 @@ if ($Big) {
 
     Write-Host ('--- Biggest folders inside {0} ---' -f "$LA") -ForegroundColor Cyan
     Get-ChildItem -LiteralPath $LA -Force -Directory | ForEach-Object {
+        $s = (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+        [pscustomobject]@{ Folder = $_.FullName; Bytes = [long]$s; Size = (Fmt $s) }
+    } | Sort-Object Bytes -Descending | Select-Object -First $Top | Format-Table Folder, Size -AutoSize
+
+    Write-Host ('--- Biggest folders inside {0} ---' -f "$RA") -ForegroundColor Cyan
+    Get-ChildItem -LiteralPath $RA -Force -Directory | ForEach-Object {
         $s = (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
         [pscustomobject]@{ Folder = $_.FullName; Bytes = [long]$s; Size = (Fmt $s) }
     } | Sort-Object Bytes -Descending | Select-Object -First $Top | Format-Table Folder, Size -AutoSize
