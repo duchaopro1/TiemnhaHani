@@ -712,3 +712,17 @@ test('kiểm tra đơn đang giao với file Shopee: chỉ đơn đang giao mà 
   assert.equal(w.waiting.length, 1);
   assert.equal(w.complete.length, 0);
 });
+
+test('nhập Shopee: phí sàn gộp phí cố định + phí dịch vụ + phí xử lý giao dịch (tên cột mới) hoặc phí thanh toán (tên cũ)', () => {
+  const head = ['Mã đơn hàng', 'Trạng Thái Đơn Hàng', 'Số lượng', 'Giá ưu đãi', 'Phí cố định', 'Phí Dịch Vụ', 'Phí xử lý giao dịch'];
+  const [o] = rowsToOrders([head, ['AAA', 'Hoàn thành', 1, 30000, 4800, 3000, 1800]]);
+  assert.equal(o.platformFee, 9600);
+  const old = ['Mã đơn hàng', 'Số lượng', 'Giá ưu đãi', 'Phí cố định', 'Phí Dịch Vụ', 'Phí thanh toán'];
+  assert.equal(rowsToOrders([old, ['BBB', 1, 30000, 4800, 3000, 1800]])[0].platformFee, 9600);
+});
+test('nhập Shopee: đơn nhiều dòng chỉ tính phí một lần (phí lặp trên mọi dòng của đơn)', () => {
+  const head = ['Mã đơn hàng', 'Số lượng', 'Giá ưu đãi', 'Phí cố định', 'Phí Dịch Vụ', 'Phí xử lý giao dịch'];
+  const [o] = rowsToOrders([head, ['CCC', 1, 30000, 9600, 3000, 3600], ['CCC', 1, 30000, 9600, 3000, 3600]]);
+  assert.equal(o.items.length, 2);
+  assert.equal(o.platformFee, 16200);
+});

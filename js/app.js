@@ -1099,7 +1099,7 @@ function openOrderFormNow(existing, restored) {
           </div>
         </div>
         <label class="field">Giảm giá / voucher shop<input type="number" min="0" step="1000" name="discount" value="${num(o.discount)}"></label>
-        <label class="field">Phí sàn (Shopee…)<input type="number" min="0" step="100" name="platformFee" value="${num(o.platformFee)}"></label>
+        <label class="field" title="Shopee: phí cố định + phí dịch vụ + phí xử lý giao dịch (phí thanh toán). Nhập file Shopee tự cộng đủ ba khoản.">Phí sàn (Shopee: cố định + dịch vụ + xử lý giao dịch)<input type="number" min="0" step="100" name="platformFee" value="${num(o.platformFee)}"></label>
       </div>
       <h3 style="margin:18px 0 8px">Thanh toán của khách</h3>
       <div class="form-grid">

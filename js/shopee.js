@@ -25,7 +25,8 @@ const COLUMNS = {
   buyerShip: ['phi van chuyen ma nguoi mua tra', 'buyer paid shipping fee'],
   fixedFee: ['phi co dinh', 'commission fee'],
   serviceFee: ['phi dich vu', 'service fee'],
-  paymentFee: ['phi thanh toan', 'transaction fee'],
+  // Shopee's own wording differs between exports and screens: "Phí xử lý giao dịch" (current), "Phí thanh toán" (older)
+  paymentFee: ['phi xu ly giao dich', 'phi thanh toan', 'transaction fee'],
   tracking: ['ma van don', 'tracking number', 'tracking no'],
   customer: ['ten nguoi nhan', 'receiver name', 'nguoi mua', 'username (buyer)'],
   note: ['nhan xet tu nguoi mua', 'remark from buyer', 'ghi chu'],
