@@ -19,6 +19,8 @@ const COLUMNS = {
   productName: ['ten san pham', 'product name'],
   variant: ['ten phan loai hang', 'variation name'],
   qty: ['so luong', 'quantity'],
+  returnStatus: ['trang thai tra hang/hoan tien', 'return / refund status', 'return/refund status'],
+  returnedQty: ['so luong san pham duoc hoan tra', 'returned quantity'],
   unitPrice: ['gia uu dai', 'deal price', 'gia goc', 'original price'],
   lineTotal: ['tong gia ban (san pham)', 'product subtotal'],
   shopVoucher: ['ma giam gia cua shop', 'seller voucher'],
@@ -44,6 +46,18 @@ export function mapStatus(text) {
   if (s.includes('hoan thanh') || s.includes('completed') || s.includes('da giao') || s.includes('delivered')) return 'done';
   if (s.includes('dang giao') || s.includes('shipping') || s.includes('van chuyen')) return 'shipping';
   return 'pending';
+}
+
+/**
+ * Did Shopee approve a return / refund for this order? The order status can still say "Hoàn thành" while the
+ * "Trạng thái Trả hàng/Hoàn tiền" column says "Đã Chấp Thuận Yêu Cầu": that order was sent back and refunded.
+ * A request still waiting, rejected or withdrawn by the buyer does not count.
+ */
+export function returnApproved(text) {
+  const s = normalize(text);
+  if (!s) return false;
+  if (/tu choi|reject|declin|huy yeu cau|cancel|withdraw|dang cho|cho xu ly|dang xu ly|pending|processing/.test(s)) return false;
+  return /chap thuan|chap nhan|approved|accepted|refunded|da hoan tien|hoan tien thanh cong|hoan tat/.test(s);
 }
 
 /**
@@ -120,6 +134,7 @@ export function rowsToOrders(rows, { taxRate = 0 } = {}) {
         discount: parseNumber(get(row, 'shopVoucher')),
         shipFee: parseNumber(get(row, 'buyerShip')),
         shipPayer: 'customer',
+        returnApproved: false, returnedQty: 0,
         tracking: String(get(row, 'tracking') || '').trim(),
         platformFee: parseNumber(get(row, 'fixedFee')) + parseNumber(get(row, 'serviceFee')) + parseNumber(get(row, 'paymentFee')),
         items: [],
@@ -127,6 +142,7 @@ export function rowsToOrders(rows, { taxRate = 0 } = {}) {
       orders.set(code, order);
     }
     const qty = parseNumber(get(row, 'qty')) || 1;
+    if (returnApproved(get(row, 'returnStatus'))) { order.returnApproved = true; order.returnedQty += idx.returnedQty === undefined ? qty : parseNumber(get(row, 'returnedQty')); }
     const lineTotal = parseNumber(get(row, 'lineTotal'));
     const price = lineTotal ? lineTotal / qty : parseNumber(get(row, 'unitPrice'));
     const variant = String(get(row, 'variant') || '').trim();
@@ -139,6 +155,11 @@ export function rowsToOrders(rows, { taxRate = 0 } = {}) {
       qty,
       price,
     });
+  }
+  // approved return of everything in the order: it is a returned order whatever its status text says
+  for (const o of orders.values()) {
+    const pieces = o.items.reduce((n, l) => n + l.qty, 0);
+    if (o.returnApproved && o.status !== 'cancelled' && o.returnedQty >= pieces) o.status = 'returned';
   }
   if (taxRate > 0) {
     for (const o of orders.values()) {

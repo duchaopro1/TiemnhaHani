@@ -740,3 +740,20 @@ test('nhập Shopee: thuế 1,5% × (tiền hàng − giảm giá) cộng vào p
   assert.equal(o.C.platformFee, 0); assert.equal(o.D.platformFee, 0);
   assert.equal(rowsToOrders(rows)[0].platformFee, 9600, 'không truyền thuế thì giữ nguyên');
 });
+
+import { returnApproved } from '../js/shopee.js';
+test('Shopee: trạng thái Trả hàng/Hoàn tiền được chấp thuận thì đơn là đơn hoàn dù trạng thái đơn ghi Hoàn thành', () => {
+  const head = ['Mã đơn hàng', 'Trạng Thái Đơn Hàng', 'Trạng thái Trả hàng/Hoàn tiền', 'Số lượng', 'Số lượng sản phẩm được hoàn trả', 'Giá ưu đãi'];
+  const rows = [head,
+    ['A', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 119000],
+    ['B', 'Hoàn thành', '', 1, 0, 119000],
+    ['C', 'Hoàn thành', 'Đã Từ Chối Yêu Cầu', 1, 0, 119000],
+    ['D', 'Hoàn thành', 'Đang Chờ Người Bán Xử Lý', 1, 0, 119000],
+    ['E', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 2, 1, 50000],       // chỉ hoàn 1 trong 2: không phải đơn hoàn cả đơn
+    ['F', 'Đã hủy', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 119000]];
+  const o = Object.fromEntries(rowsToOrders(rows).map((x) => [x.code, x.status]));
+  assert.deepEqual(o, { A: 'returned', B: 'done', C: 'done', D: 'done', E: 'done', F: 'cancelled' });
+  assert.equal(returnApproved('Đã Chấp Thuận Yêu Cầu'), true);
+  assert.equal(returnApproved('Đã Từ Chối Yêu Cầu'), false);
+  assert.equal(returnApproved(''), false);
+});
