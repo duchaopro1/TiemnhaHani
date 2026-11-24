@@ -28,11 +28,12 @@ test('lợi nhuận: shop chịu ship vs khách chịu ship', () => {
     items: [{ productId: 'p1', qty: 2, price: 45000, pack1: 'box', pack2: 'rib', pack3: '' }],
     shipFee: 30000, shipPayer: 'customer', discount: 5000, platformFee: 2000,
   };
-  // 90.000 - 5.000 - 23.000 - 4.000 (đóng gói 1 lần) - 2.000
-  assert.equal(orderSummary(c, order).profit, 56000);
-  assert.equal(orderSummary(c, { ...order, shipPayer: 'shop' }).profit, 26000);
+  // p1 chỉ có một loại nên tính nhập trước bán trước: 2 cái đầu lấy đợt 1 (11.000/cái = 22.000)
+  // 90.000 - 5.000 - 22.000 - 4.000 (đóng gói 1 lần) - 2.000
+  assert.equal(orderSummary(c, order).profit, 57000);
+  assert.equal(orderSummary(c, { ...order, shipPayer: 'shop' }).profit, 27000);
   // đóng gói riêng từng cái => 8.000
-  assert.equal(orderSummary(c, { ...order, items: [{ ...order.items[0], packEach: true }] }).profit, 52000);
+  assert.equal(orderSummary(c, { ...order, items: [{ ...order.items[0], packEach: true }] }).profit, 53000);
 });
 
 test('tồn kho trừ theo đơn, bỏ qua đơn huỷ', () => {

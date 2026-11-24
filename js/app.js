@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, doneDay, clearCostSnapshot, applyCostSnapshot, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, doneDay, staleDoneOrders, resnapshotDone, isFifoProduct, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus, parseCodes, reviewDelivery } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -533,7 +533,7 @@ function pageRevenue() {
     <div class="toolbar">
       <button class="btn ghost sm" data-action="resnap-costs" title="Tính lại giá vốn của mọi đơn đã hoàn thành theo giá nhập hiện tại (dùng khi bạn vừa sửa một đợt nhập sai)">↻ Tính lại giá vốn theo giá hiện tại</button>
       <label class="field inline">Tiền công mỗi sản phẩm <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
-      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Tiền công = tiền công mỗi sản phẩm × số sản phẩm trong đơn. Lợi nhuận sau công = lợi nhuận − tiền công. <b>Giá vốn của mỗi đơn được chốt lúc đơn hoàn thành</b>: nhập hàng giá khác sau này không làm đổi đơn cũ. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
+      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Tiền công = tiền công mỗi sản phẩm × số sản phẩm trong đơn. Lợi nhuận sau công = lợi nhuận − tiền công. <b>Giá vốn của mỗi đơn được chốt lúc đơn hoàn thành</b> (sản phẩm có nhiều loại: giá trung bình các đợt nhập; sản phẩm chỉ một loại: nhập trước bán trước, đợt cũ bán hết rồi mới tới đợt mới), nhập hàng giá khác sau này không làm đổi đơn cũ. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
     </div>
     <div class="card table-wrap rev-wrap">
       ${rows.length ? `<table class="rev-table">
@@ -2839,7 +2839,7 @@ function openProductForm(existing) {
     </form>
     ${existing ? `<h3 style="margin:16px 0 8px">Lịch sử nhập (${imports.length})</h3>
       ${imports.length ? `<div class="table-wrap"><table><tbody>${imports.map((i) => `<tr><td>${fmtDate(i.date)}${isReceived(i) ? '' : ' ' + transitChip(i)}</td><td>${esc(variantOf(p.id, i.variantId)?.name || '')}</td><td class="num">${num(i.qty)} cái</td><td class="num">${money(i.unitCost)}/cái</td><td><button class="icon-btn" data-edit-imp="${i.id}">✎</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">Chưa nhập lần nào.</p>'}
-      <p class="small">Giá vốn TB: <b>${money(costs.product[p.id])}</b> · Tồn: <b>${num(stock.products[p.id])}</b></p>` : ''}`,
+      <p class="small">Giá vốn TB: <b>${money(costs.product[p.id])}</b>${costs.fifo?.[p.id] ? ` · đợt đang bán (nhập trước bán trước): <b>${money(fifoNextUnit(costs.fifo[p.id]))}</b>` : ''} · Tồn: <b>${num(stock.products[p.id])}</b></p>` : ''}`,
     foot: `<button class="btn ghost" data-close2>Huỷ</button><button class="btn" id="p-save">Lưu</button>`,
     onMount(m) {
       const form = $('#product-form', m);
@@ -3377,6 +3377,9 @@ function prefillFromMessage(r, webOrderId = '') {
   return { prefill };
 }
 
+/** Cost of the next piece to be sold from a first-in-first-out product. */
+const fifoNextUnit = (f) => { let skip = f.consumed; for (const b of f.batches) { if (skip < b.qty) return b.unit; skip -= b.qty; } return f.batches[f.batches.length - 1].unit; };
+
 /** An order from a chat message the shop owner pasted (free text + a link back to the conversation). */
 function prefillFromChat(r) {
   if (!r.items.length && !r.phone && !r.address && !r.account) {
@@ -3859,7 +3862,7 @@ document.addEventListener('click', async (e) => {
       const done = S.orders.filter((o) => o.status === 'done');
       if (!done.length) return toast('Chưa có đơn hoàn thành nào');
       if (!(await ask(`Tính lại giá vốn của ${done.length} đơn đã hoàn thành theo giá nhập hiện tại? Lợi nhuận các đơn cũ sẽ đổi theo giá vốn trung bình bây giờ.`, 'Tính lại'))) return;
-      await store.upsertMany('orders', done.map(clearCostSnapshot), { quiet: true });
+      await store.upsertMany('orders', resnapshotDone(store.state, done, { all: true }), { quiet: true });
       return toast(`Đã chốt lại giá vốn cho ${done.length} đơn`);
     }
     case 'check-delivery': return openDeliveryCheck();
@@ -4006,9 +4009,9 @@ async function boot() {
   }
   store.whenReady().then(async () => {
     // orders finished before costs were fixed: fix them once, at today's average prices
-    const stale = store.state.orders.filter((o) => o.status === 'done' && applyCostSnapshot(o, () => costTable(store.state)) !== o);
+    const stale = staleDoneOrders(store.state);
     if (stale.length) {
-      try { await store.upsertMany('orders', stale, { quiet: true }); toast(`Đã chốt giá vốn cho ${stale.length} đơn đã hoàn thành`, 6000); } catch { /* tried again next time the page opens */ }
+      try { await store.upsertMany('orders', resnapshotDone(store.state, stale), { quiet: true }); toast(`Đã chốt giá vốn cho ${stale.length} đơn đã hoàn thành`, 6000); } catch { /* tried again next time the page opens */ }
     }
     await resumeDraft(); shortReady = true; render(); });
 }

@@ -411,13 +411,30 @@ export let store;
 /** Every save of an order goes through here so a change of status leaves its dates (shippedAt / doneAt). */
 function stampOrders(s) {
   const day = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-  // a finished order also keeps the costs of the day it was completed (see applyCostSnapshot)
-  const stamp = (doc, getCosts) => applyCostSnapshot(stampStatusDates(s.get('orders', doc.id), doc, day()), getCosts);
-  const lazyCosts = () => { let c; return () => (c ||= costTable(s.state)); };
+  // A finished order also keeps its costs (see applyCostSnapshot). Orders saved together are fixed one after another,
+  // oldest first, so first-in-first-out hands each its own batch.
+  const run = (docs) => {
+    let st = null; let map = null;
+    const done = [];
+    const out = new Array(docs.length);
+    const seq = docs.map((_, i) => i).sort((x, y) => (docs[x]?.date || '').localeCompare(docs[y]?.date || '') || (docs[x]?.code || '').localeCompare(docs[y]?.code || ''));
+    for (const i of seq) {
+      const d = docs[i];
+      if (!d?.id) { out[i] = d; continue; }
+      const fixed = applyCostSnapshot(stampStatusDates(s.get('orders', d.id), d, day()), () => {
+        if (!st) { st = s.state; map = new Map(st.orders.map((o) => [o.id, o])); done.forEach((x) => map.set(x.id, x)); }
+        return costTable({ ...st, orders: [...map.values()] }, { excludeOrderId: d.id });
+      });
+      out[i] = fixed;
+      done.push(fixed);
+      if (map) map.set(fixed.id, fixed);
+    }
+    return out;
+  };
   const one = s.upsert.bind(s);
   const many = s.upsertMany.bind(s);
-  s.upsert = (coll, doc, ...rest) => one(coll, coll === 'orders' && doc?.id ? stamp(doc, lazyCosts()) : doc, ...rest);
-  s.upsertMany = (coll, docs, ...rest) => { const g = lazyCosts(); return many(coll, coll === 'orders' ? docs.map((d) => (d?.id ? stamp(d, g) : d)) : docs, ...rest); };
+  s.upsert = (coll, doc, ...rest) => one(coll, coll === 'orders' && doc?.id ? run([doc])[0] : doc, ...rest);
+  s.upsertMany = (coll, docs, ...rest) => many(coll, coll === 'orders' ? run(docs) : docs, ...rest);
 }
 
 export async function initStore() {

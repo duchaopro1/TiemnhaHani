@@ -76,7 +76,7 @@ const num = (v) => (Number.isFinite(+v) ? +v : 0);
  * when buying stock is spread across the units.
  * Falls back to the item's manual `baseCost` when it has never been imported.
  */
-export function costTable(state) {
+export function costTable(state, { excludeOrderId = '' } = {}) {
   const table = { product: {}, packaging: {} };
   for (const imp of state.imports || []) {
     if (!isReceived(imp)) continue; // goods still on their way don't set the cost yet
@@ -102,7 +102,39 @@ export function costTable(state) {
     const parts = comboParts(p);
     if (parts.length) product[p.id] = parts.reduce((n, c) => n + num(c.qty) * partUnitCost(c, product), 0);
   }
-  return { product, packaging: avg('packaging', state.packaging), shared, combos: comboMap(state.products) };
+  // Products with a single type (no variants, not a combo) are costed first-in-first-out: the oldest batch sells first.
+  const fifo = {}; const fifoIds = new Set();
+  for (const p of state.products || []) {
+    if (!isFifoProduct(p)) continue;
+    fifoIds.add(p.id);
+    const batches = (state.imports || []).map((imp, idx) => ({ imp, idx }))
+      .filter(({ imp }) => isReceived(imp) && imp.kind !== 'packaging' && imp.itemId === p.id && num(imp.qty) > 0)
+      .sort((a, b) => (importDate(a.imp) || '').localeCompare(importDate(b.imp) || '') || (a.imp.date || '').localeCompare(b.imp.date || '') || a.idx - b.idx)
+      .map(({ imp }) => ({ qty: num(imp.qty), unit: (num(imp.qty) * num(imp.unitCost) + num(imp.extraFee)) / num(imp.qty) }));
+    if (batches.length) fifo[p.id] = { batches, consumed: 0 };
+  }
+  // pieces already taken from those batches: every finished order (the one being fixed does not count itself)
+  for (const o of state.orders || []) {
+    if (o.status !== 'done' || o.id === excludeOrderId) continue;
+    for (const l of o.items || []) if (fifo[l.productId]) fifo[l.productId].consumed += num(l.qty);
+  }
+  return { product, packaging: avg('packaging', state.packaging), shared, combos: comboMap(state.products), fifo, fifoIds };
+}
+
+/** A product bought and sold in one type only: its cost follows the batches (first in, first out) instead of an average. */
+export const isFifoProduct = (p) => !!p && !comboParts(p).length && !(p.variants && p.variants.length);
+
+/** Cost of `qty` pieces taken after `start` pieces were already taken from `batches` ([{ qty, unit }], oldest first). */
+export function fifoSpan(batches, start, qty) {
+  let skip = start; let need = qty; let cost = 0;
+  for (const b of batches) {
+    if (need <= 0) break;
+    if (skip >= b.qty) { skip -= b.qty; continue; }
+    const take = Math.min(b.qty - skip, need);
+    cost += take * b.unit; need -= take; skip = 0;
+  }
+  if (need > 0 && batches.length) cost += need * batches[batches.length - 1].unit; // more sold than imported: last price
+  return cost;
 }
 
 /**
@@ -181,6 +213,8 @@ export function liveLineCost(costs, line) {
   const qty = num(line.qty);
   let product = qty * num(costs.product[line.productId]);
   const combo = costs.combos?.get?.(line.productId);
+  const f = costs.fifo?.[line.productId];
+  if (f && !combo) product = fifoSpan(f.batches, f.consumed, qty);
   if (combo && comboParts(combo).some(isPoolPart)) {
     // a pool part costs what the picked product costs (the average of the pool until it is picked)
     product = 0;
@@ -646,12 +680,12 @@ export function applyCostSnapshot(order, getCosts) {
   const lineStale = (l) => l.productId && !(l.snap && l.snap.key === lineKey(l));
   const wrapStale = !(order.snapWrap && order.snapWrap.key === wrapKey(order));
   if (!(order.items || []).some(lineStale) && !wrapStale) return order;
-  const costs = getCosts();
+  const costs = getCosts(order);
   const items = (order.items || []).map((l) => {
     if (!lineStale(l)) return l;
     const { snap, ...rest } = l;
     const c = liveLineCost(costs, rest);
-    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging } };
+    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging, fifo: !!costs.fifoIds?.has(rest.productId) } };
   });
   let wrapping = 0;
   for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
@@ -663,3 +697,33 @@ export const clearCostSnapshot = (order) => {
   const { snapWrap, ...rest } = order;
   return { ...rest, items: (order.items || []).map(({ snap, ...l }) => l) };
 };
+
+/**
+ * Finished orders whose fixed costs are missing or out of date: no snapshot, a snapshot of another line, or an
+ * average-based snapshot on a product that is now costed first-in-first-out.
+ */
+export function staleDoneOrders(state) {
+  const fifoIds = new Set((state.products || []).filter(isFifoProduct).map((p) => p.id));
+  const stale = (l) => l.productId && (!(l.snap && l.snap.key === lineKey(l)) || (fifoIds.has(l.productId) && !l.snap.fifo));
+  return (state.orders || []).filter((o) => o.status === 'done' && ((o.items || []).some(stale) || !(o.snapWrap && o.snapWrap.key === wrapKey(o))));
+}
+
+/**
+ * Fix the costs of finished orders in the order they were completed, so first-in-first-out takes batches in sequence.
+ * `all` throws every old snapshot away; otherwise only lines that are missing or out of date are redone.
+ * Returns the orders with their costs fixed (ready to save).
+ */
+export function resnapshotDone(state, targets, { all = false } = {}) {
+  const ids = new Set(targets.map((o) => o.id));
+  let rest = (state.orders || []).filter((o) => !ids.has(o.id));
+  const sorted = [...targets].sort((a, b) => doneDay(a).localeCompare(doneDay(b)) || (a.date || '').localeCompare(b.date || '') || (a.code || '').localeCompare(b.code || ''));
+  const out = [];
+  for (const o of sorted) {
+    const costs = costTable({ ...state, orders: rest });
+    const base = all ? clearCostSnapshot(o) : { ...o, items: (o.items || []).map((l) => (l.snap && costs.fifoIds.has(l.productId) && !l.snap.fifo ? (({ snap, ...x }) => x)(l) : l)) };
+    const snapped = applyCostSnapshot(base, () => costs);
+    out.push(snapped);
+    rest = [...rest, snapped];
+  }
+  return out;
+}
