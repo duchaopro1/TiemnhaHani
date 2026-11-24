@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SHIP_FLAT, shipModeOf, costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice, originOf, TRANSIT_BY_ORIGIN } from '../js/calc.js';
+import { aggregate, SHIP_FLAT, shipModeOf, costTable, orderSummary, stockLevels, splitFee, variantKey, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, countByStatus, operatingCosts, lineCost, adjustForCount, stockState, orderPayment, toCollect, isReceived, importDate, allocateShipping, findDuplicateOrders, completedRevenue, stageQuantities, orderShortages, withTransit, transitHistory, comboParts, isCombo, expandLine, comboMap, isPoolPart, poolKey, parsePick, tierPrice, originOf, TRANSIT_BY_ORIGIN } from '../js/calc.js';
 import { rowsToOrders, parseNumber, mapStatus, mergeShopeeStatus } from '../js/shopee.js';
 
 const state = {
@@ -756,4 +756,22 @@ test('Shopee: trạng thái Trả hàng/Hoàn tiền được chấp thuận th�
   assert.equal(returnApproved('Đã Chấp Thuận Yêu Cầu'), true);
   assert.equal(returnApproved('Đã Từ Chối Yêu Cầu'), false);
   assert.equal(returnApproved(''), false);
+});
+
+test('đơn Shopee trả hàng: phí sàn = phí dịch vụ PiShip, không thuế; tính lỗ ở doanh thu và tổng hợp', () => {
+  const head = ['Mã đơn hàng', 'Trạng Thái Đơn Hàng', 'Trạng thái Trả hàng/Hoàn tiền', 'Số lượng', 'Số lượng sản phẩm được hoàn trả', 'Giá ưu đãi', 'Phí cố định'];
+  const [o] = rowsToOrders([head, ['R', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 119000, 0]], { taxRate: 0.015, pishipFee: 2700 });
+  assert.equal(o.status, 'returned'); assert.equal(o.platformFee, 2700);
+  const costs = costTable({ products: [], packaging: [], imports: [], orders: [] });
+  const order = { ...o, id: 'r', date: '2026-11-18', items: [] };
+  const done = { id: 'd', platform: 'shopee', status: 'done', date: '2026-11-18', shipPayer: 'customer', shipFee: 0, discount: 0, platformFee: 0, items: [{ productId: 'x', qty: 1, price: 10000 }] };
+  assert.equal(aggregate(costs, [order, done]).profit, 10000 - 2700);
+  assert.equal(aggregate(costs, [order, done]).orders, 1, 'đơn trả hàng không tính là đơn bán');
+  const { rows, total } = completedRevenue(costs, [order, done], 0);
+  assert.equal(rows.length, 2); assert.equal(total.orders, 1);
+  const r = rows.find((x) => x.returned);
+  assert.equal(r.profit, -2700); assert.equal(r.revenue, 0);
+  assert.equal(total.profit, 10000 - 2700);
+  // đơn trả hàng nhập tay (không có phí) hoặc đã huỷ: không ghi lỗ
+  assert.equal(completedRevenue(costs, [{ ...order, platformFee: 0 }, { ...order, status: 'cancelled' }], 0).rows.length, 0);
 });

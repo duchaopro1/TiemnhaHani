@@ -412,9 +412,20 @@ export function splitFee(fee, qtys) {
 }
 
 /** Aggregate stats for a list of orders. */
+/**
+ * What a returned Shopee order still costs: the PiShip service fee stays charged although the sale is refunded (the
+ * return shipping is paid back by PiShip, so it nets to zero). Only a returned order with a platform fee counts.
+ */
+export const returnLoss = (order) => (order.status === 'returned' ? Math.max(0, num(order.platformFee)) : 0);
+
 export function aggregate(costs, orders) {
-  const total = { orders: 0, revenue: 0, cost: 0, profit: 0, byPlatform: {}, byProduct: {} };
+  const total = { orders: 0, revenue: 0, cost: 0, profit: 0, returnLoss: 0, byPlatform: {}, byProduct: {} };
   for (const order of orders) {
+    const loss = returnLoss(order);
+    if (loss) {
+      total.returnLoss += loss; total.cost += loss; total.profit -= loss;
+      (total.byPlatform[order.platform] ||= { orders: 0, revenue: 0, profit: 0 }).profit -= loss;
+    }
     if (INACTIVE_STATUSES.has(order.status)) continue;
     const s = orderSummary(costs, order);
     total.orders += 1;
@@ -504,6 +515,13 @@ export function completedRevenue(costs, orders, laborPerItem = DEFAULT_LABOR) {
   const rows = [];
   const total = { orders: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, shipFee: 0, ship: 0, fee: 0, cost: 0, before: 0, labor: 0, profit: 0, pieces: 0 };
   for (const order of orders) {
+    const loss = returnLoss(order);
+    if (loss) { // a returned order: no sale, only the fee Shopee keeps
+      const row = { order, returned: true, pieces: 0, total: 0, gross: 0, discount: 0, revenue: 0, product: 0, packaging: 0, shipFee: 0, ship: 0, fee: loss, labor: 0, cost: loss, before: -loss, profit: -loss };
+      rows.push(row);
+      for (const k of Object.keys(total)) if (k !== 'orders') total[k] += row[k];
+      continue;
+    }
     if (order.status !== 'done') continue;
     const s = orderSummary(costs, order);
     const pieces = (order.items || []).reduce((n, l) => n + num(l.qty), 0);
