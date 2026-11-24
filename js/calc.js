@@ -97,9 +97,6 @@ export function costTable(state, { excludeOrderId = '', asOf = '' } = {}) {
     return out;
   };
   const product = avg('product', state.products);
-  // Products with several types: a running average over the stock that is left (see movingAverages).
-  const moving = movingAverages(state, { excludeOrderId, asOf });
-  for (const p of state.products || []) if (!isFifoProduct(p) && moving[p.id] !== undefined) product[p.id] = moving[p.id];
   // A combo costs what its parts cost; it is never imported itself.
   for (const p of state.products || []) {
     const parts = comboParts(p);
@@ -116,61 +113,20 @@ export function costTable(state, { excludeOrderId = '', asOf = '' } = {}) {
       .map(({ imp }) => ({ qty: num(imp.qty), unit: (num(imp.qty) * num(imp.unitCost) + num(imp.extraFee)) / num(imp.qty) }));
     if (batches.length) fifo[p.id] = { batches, consumed: 0 };
   }
-  // pieces already taken from those batches: every finished order (the one being fixed does not count itself)
+  const combos = comboMap(state.products);
+  // pieces already taken from those batches: every finished order, combos by their parts (the one being fixed does not count itself)
   for (const o of state.orders || []) {
     if (o.status !== 'done' || o.id === excludeOrderId || (asOf && doneDay(o) > asOf)) continue;
-    for (const l of o.items || []) if (fifo[l.productId]) fifo[l.productId].consumed += num(l.qty);
+    for (const l of o.items || []) for (const part of expandLine(l, combos)) if (part.productId && fifo[part.productId]) fifo[part.productId].consumed += num(part.qty);
   }
-  return { product, packaging: avg('packaging', state.packaging), shared, combos: comboMap(state.products), fifo, fifoIds };
+  return { product, packaging: avg('packaging', state.packaging), shared, combos, fifo, fifoIds };
 }
 
 /**
- * Running (moving) average cost per product, in the order things happened: a received import adds its pieces and
- * money to the stock, a finished order takes pieces out at the average of that moment (and removes that money).
- * So pieces sold before a new import no longer pull the average: 50 left at 1.000 + 100 bought at 1.200 → 1.133.
- * Imports of all types of a product count together. With nothing left the last average stays.
- * `excludeOrderId`: an order that is being costed does not count itself; `asOf`: ignore anything after this day.
- * Returns { [productId]: current cost } for products that have an import.
+ * Every product that is bought as itself (not a combo) is costed first-in-first-out by pieces: the oldest batch is used up
+ * before the next one starts. Types (colours, letters) do not matter, only the count of pieces of the product.
  */
-export function movingAverages(state, { excludeOrderId = '', asOf = '' } = {}) {
-  const combos = comboMap(state.products);
-  const events = {};
-  const push = (pid, e) => { (events[pid] ||= []).push(e); };
-  (state.imports || []).forEach((imp, idx) => {
-    if (!isReceived(imp) || imp.kind === 'packaging' || num(imp.qty) <= 0) return;
-    if (asOf && (importDate(imp) || '') > asOf) return;
-    push(imp.itemId, { t: importDate(imp) || '', k: 0, i: idx, qty: num(imp.qty), total: num(imp.qty) * num(imp.unitCost) + num(imp.extraFee) });
-  });
-  (state.orders || []).forEach((o, idx) => {
-    if (o.status !== 'done' || o.id === excludeOrderId) return;
-    const t = doneDay(o);
-    if (asOf && t > asOf) return;
-    for (const line of o.items || []) for (const part of expandLine(line, combos)) if (part.productId && num(part.qty) > 0) push(part.productId, { t, k: 1, i: idx, qty: num(part.qty) });
-  });
-  const out = {};
-  for (const [pid, list] of Object.entries(events)) {
-    if (!list.some((e) => e.k === 0)) continue;
-    list.sort((a, b) => a.t.localeCompare(b.t) || a.k - b.k || a.i - b.i);
-    let qty = 0, value = 0, last = 0;
-    for (const e of list) {
-      if (e.k === 0) { qty += e.qty; value += e.total; last = value / qty; continue; }
-      const avg = qty > 0 ? value / qty : last;
-      const take = Math.min(e.qty, qty);
-      value -= avg * take; qty -= take;
-      if (qty <= 0) { qty = 0; value = 0; }
-    }
-    out[pid] = qty > 0 ? value / qty : last;
-  }
-  // nothing imported yet on that day: fall back to every import so an order done "before" its first import still gets a cost
-  if (asOf) {
-    const all = movingAverages({ ...state, orders: [] }, {});
-    for (const [pid, v] of Object.entries(all)) if (out[pid] === undefined) out[pid] = v;
-  }
-  return out;
-}
-
-/** A product bought and sold in one type only: its cost follows the batches (first in, first out) instead of an average. */
-export const isFifoProduct = (p) => !!p && !comboParts(p).length && !(p.variants && p.variants.length);
+export const isFifoProduct = (p) => !!p && !comboParts(p).length;
 
 /** Cost of `qty` pieces taken after `start` pieces were already taken from `batches` ([{ qty, unit }], oldest first). */
 export function fifoSpan(batches, start, qty) {
@@ -263,13 +219,22 @@ export function liveLineCost(costs, line) {
   const combo = costs.combos?.get?.(line.productId);
   const f = costs.fifo?.[line.productId];
   if (f && !combo) product = fifoSpan(f.batches, f.consumed, qty);
-  if (combo && comboParts(combo).some(isPoolPart)) {
-    // a pool part costs what the picked product costs (the average of the pool until it is picked)
+  if (combo) {
+    // a combo costs its parts, each taken from its own batches; a pool part costs the picked product (the average of the pool until picked)
     product = 0;
+    const taken = {};
+    const piece = (pid, n) => {
+      const fi = costs.fifo?.[pid];
+      if (!fi) return n * num(costs.product[pid]);
+      const c = fifoSpan(fi.batches, fi.consumed + num(taken[pid]), n);
+      taken[pid] = num(taken[pid]) + n;
+      return c;
+    };
     for (let u = 0; u < Math.max(0, Math.round(qty)); u++) {
       comboParts(combo).forEach((c, i) => {
         const pick = isPoolPart(c) ? parsePick(line.picks?.[u]?.[i], c.pool) : null;
-        product += num(c.qty) * (pick ? num(costs.product[pick.productId]) : partUnitCost(c, costs.product));
+        if (isPoolPart(c)) product += pick ? piece(pick.productId, num(c.qty)) : num(c.qty) * partUnitCost(c, costs.product);
+        else product += piece(c.productId, num(c.qty));
       });
     }
   }
@@ -733,7 +698,7 @@ export function applyCostSnapshot(order, getCosts) {
     if (!lineStale(l)) return l;
     const { snap, ...rest } = l;
     const c = liveLineCost(costs, rest);
-    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging, fifo: !!costs.fifoIds?.has(rest.productId), v: 2 } };
+    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging, fifo: true } };
   });
   let wrapping = 0;
   for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
@@ -750,12 +715,11 @@ export const clearCostSnapshot = (order) => {
  * Finished orders whose fixed costs are missing or out of date: no snapshot, a snapshot of another line, or an
  * average-based snapshot on a product that is now costed first-in-first-out.
  */
-/** A line's fixed cost is out of date: none, for another line, or made by an older way of costing (v2 = running average / FIFO). */
-const snapStale = (l, fifoIds) => !!l.productId && (!(l.snap && l.snap.key === lineKey(l)) || (fifoIds.has(l.productId) ? !l.snap.fifo : !l.snap.v));
+/** A line's fixed cost is out of date: none, for another line, or made by an older way of costing (all-import average, moving average). */
+const snapStale = (l) => !!l.productId && !(l.snap && l.snap.key === lineKey(l) && l.snap.fifo);
 
 export function staleDoneOrders(state) {
-  const fifoIds = new Set((state.products || []).filter(isFifoProduct).map((p) => p.id));
-  const stale = (l) => snapStale(l, fifoIds);
+  const stale = snapStale;
   return (state.orders || []).filter((o) => o.status === 'done' && ((o.items || []).some(stale) || !(o.snapWrap && o.snapWrap.key === wrapKey(o))));
 }
 
@@ -771,7 +735,7 @@ export function resnapshotDone(state, targets, { all = false } = {}) {
   const out = [];
   for (const o of sorted) {
     const costs = costTable({ ...state, orders: rest }, { asOf: doneDay(o) });
-    const base = all ? clearCostSnapshot(o) : { ...o, items: (o.items || []).map((l) => (l.snap && snapStale(l, costs.fifoIds) ? (({ snap, ...x }) => x)(l) : l)) };
+    const base = all ? clearCostSnapshot(o) : { ...o, items: (o.items || []).map((l) => (l.snap && snapStale(l) ? (({ snap, ...x }) => x)(l) : l)) };
     const snapped = applyCostSnapshot(base, () => costs);
     out.push(snapped);
     rest = [...rest, snapped];
