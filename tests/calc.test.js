@@ -726,3 +726,17 @@ test('nhập Shopee: đơn nhiều dòng chỉ tính phí một lần (phí lặ
   assert.equal(o.items.length, 2);
   assert.equal(o.platformFee, 16200);
 });
+
+test('nhập Shopee: thuế 1,5% × (tiền hàng − giảm giá) cộng vào phí sàn; đơn huỷ / không có phí thì không tính', () => {
+  const head = ['Mã đơn hàng', 'Trạng Thái Đơn Hàng', 'Số lượng', 'Giá ưu đãi', 'Mã giảm giá của Shop', 'Phí cố định', 'Phí Dịch Vụ', 'Phí xử lý giao dịch'];
+  const rows = [head,
+    ['A', 'Hoàn thành', 1, 30000, 0, 4800, 3000, 1800],      // thuế 450 → 10.050
+    ['B', 'Hoàn thành', 2, 30000, 600, 9600, 3000, 3600],    // (60.000 − 600) × 1,5% = 891
+    ['C', 'Đã hủy', 1, 30000, 0, 0, 0, 0],
+    ['D', 'Hoàn thành', 1, 119000, 0, 0, 0, 0]];             // Shopee chưa tính phí
+  const o = Object.fromEntries(rowsToOrders(rows, { taxRate: 0.015 }).map((x) => [x.code, x]));
+  assert.equal(o.A.platformFee, 9600 + 450); assert.equal(o.A.tax, 450);
+  assert.equal(o.B.platformFee, 16200 + 891);
+  assert.equal(o.C.platformFee, 0); assert.equal(o.D.platformFee, 0);
+  assert.equal(rowsToOrders(rows)[0].platformFee, 9600, 'không truyền thuế thì giữ nguyên');
+});

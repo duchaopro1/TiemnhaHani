@@ -119,6 +119,8 @@ const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
 /** Save some settings on top of the newest saved copy (not the copy drawn on screen), so two quick changes never overwrite each other. */
 const patchSettings = (patch) => store.upsert('meta', { ...(store.get('meta', 'settings') || settings), ...patch });
 /** The flat shipping fee set in the settings (a missing or invalid figure falls back to the default). */
+/** Tax Shopee withholds, as a fraction of the price (default 1,5%: 1% VAT + 0,5% personal income tax). */
+const taxRate = () => (Number.isFinite(settings.taxRatePct) && settings.taxRatePct >= 0 ? settings.taxRatePct : 1.5) / 100;
 const shipFlat = () => (Number.isFinite(settings.shipFlat) && settings.shipFlat >= 0 ? settings.shipFlat : SHIP_FLAT);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
 /** "Đã hết" when there is none left, "Sắp hết" while at or under the warning level, nothing otherwise. */
@@ -1510,7 +1512,7 @@ async function readShopeeOrders(file) {
   // A .csv is text (UTF-8): read as bytes it comes out with broken accents and the "Mã đơn hàng" column is not found.
   const wb = /\.csv$/i.test(file.name || '') ? XLSX.read(await file.text(), { type: 'string' }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-  return rowsToOrders(rows);
+  return rowsToOrders(rows, { taxRate: taxRate() });
 }
 
 async function importShopeeFile(file) {
@@ -3540,6 +3542,8 @@ function pageSettings() {
         <h3>Thiết lập</h3>
         <label class="field">Mức cảnh báo tồn kho mặc định<input type="number" min="0" id="set-low" value="${num(settings.lowStock)}"></label>
         <label class="field" style="margin-top:12px">Phí ship đồng giá (đ)<input type="number" min="0" step="1000" id="set-shipflat" value="${shipFlat()}"></label>
+        <label class="field" style="margin-top:12px">Thuế Shopee tính thêm vào phí sàn (% giá bán)<input type="number" min="0" max="20" step="0.1" id="set-tax" value="${taxRate() * 100}"></label>
+        <p class="small muted" style="margin:4px 0 0">Mặc định 1,5% (thuế GTGT 1% + TNCN 0,5% Shopee khấu trừ). Khi nhập file Shopee, thuế = tỉ lệ này × (tiền hàng − giảm giá của shop), cộng vào <b>Phí sàn</b> của đơn (đơn huỷ hoặc chưa có phí thì không tính). Nhập 0 nếu không muốn tính. Nhập lại file để đơn cũ cập nhật.</p>
         <p class="small muted" style="margin:4px 0 0">Dùng cho hai lựa chọn <b>Ship</b> và <b>Freeship</b> khi lên đơn. Chỉ áp cho đơn tạo hoặc sửa sau này: đơn đã lưu giữ nguyên số tiền ship của nó.</p>
         <p class="small muted" style="margin-top:12px">Shopee: đã ghi nhớ ${mapCount} sản phẩm được gắn. ${mapCount ? '<button class="btn ghost sm" data-action="clear-map">Xoá ghi nhớ</button>' : ''}</p>
         ${!S.products.length && !S.orders.length ? '<button class="btn pink" data-action="demo">Nạp dữ liệu mẫu để thử</button>' : ''}
@@ -3926,6 +3930,7 @@ document.addEventListener('change', async (e) => {
     const v = t.value === '' ? SHIP_FLAT : Math.max(0, Math.round(num(t.value)));
     await patchSettings({ shipFlat: v });
   }
+  if (t.id === 'set-tax') await patchSettings({ taxRatePct: t.value === '' ? 1.5 : Math.min(20, Math.max(0, num(t.value))) });
   if (t.id === 'set-labor') await patchSettings({ laborPerItem: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { const f = t.files[0]; t.value = ''; await importShopeeFile(f); } // cleared first: choosing the same file again must fire a new change
   if (t.id === 'restore-file' && t.files[0]) {

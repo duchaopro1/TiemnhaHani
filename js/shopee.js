@@ -96,8 +96,10 @@ function findColumns(headers) {
  * Each line carries `sku`/`productName` so the caller can map it to a product.
  * Order-level money fields appear on every row of the same order in Shopee's export,
  * so they're taken from the first row only.
+ * `taxRate` (0.015 = 1,5%): Shopee withholds VAT + personal income tax, which the export has no column for; it is added to
+ * the platform fee as rate × (goods − shop voucher). Orders Shopee charged no fee for (cancelled, not settled) get none.
  */
-export function rowsToOrders(rows) {
+export function rowsToOrders(rows, { taxRate = 0 } = {}) {
   const headerRow = rows.findIndex((r) => r.some((c) => normalize(c) === 'ma don hang' || normalize(c) === 'order id'));
   if (headerRow < 0) throw new Error('Không tìm thấy cột "Mã đơn hàng" — có phải file xuất đơn hàng từ Shopee không?');
   const idx = findColumns(rows[headerRow]);
@@ -137,6 +139,14 @@ export function rowsToOrders(rows) {
       qty,
       price,
     });
+  }
+  if (taxRate > 0) {
+    for (const o of orders.values()) {
+      if (o.platformFee <= 0 || o.status === 'cancelled' || o.status === 'returned') continue;
+      const goods = o.items.reduce((n, l) => n + l.price * l.qty, 0) - o.discount;
+      o.tax = Math.max(0, Math.round(goods * taxRate));
+      o.platformFee += o.tax;
+    }
   }
   return [...orders.values()];
 }
