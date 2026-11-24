@@ -128,3 +128,58 @@ test('sản phẩm nhiều loại vẫn trung bình kể cả khi chốt lại h
   assert.equal(c.product.p, 1300);
   assert.ok(!c.fifo.p);
 });
+
+// ---- sản phẩm nhiều loại: bình quân di động theo hàng còn lại
+import { movingAverages } from '../js/calc.js';
+const mv = (qty, unitCost, date, extraFee = 0) => ({ kind: 'product', itemId: 'p', variantId: 'a', qty, unitCost, extraFee, date, status: 'received' });
+const sold = (id, qty, day) => ({ id, code: id, status: 'done', date: day, doneAt: day, shipPayer: 'customer', shipFee: 0, items: [{ productId: 'p', variantId: 'a', qty, price: 5000 }] });
+const mstate = (orders, imports) => ({ products, packaging, imports, orders });
+
+test('ví dụ của bạn: nhập 100 giá 1.000, bán 50, nhập 100 giá 1.200 → 1.133', () => {
+  const imports = [mv(100, 1000, '2026-01-05'), mv(100, 1200, '2026-03-01')];
+  const orders = [sold('a', 50, '2026-02-01')];
+  assert.equal(Math.round(movingAverages(mstate(orders, imports)).p), 1133);
+  assert.equal(Math.round(costTable(mstate(orders, imports)).product.p), 1133);
+});
+test('chưa bán gì thì bằng trung bình cộng (1.100); bán hết đợt cũ rồi thì chỉ còn giá đợt mới', () => {
+  const imports = [mv(100, 1000, '2026-01-05'), mv(100, 1200, '2026-03-01')];
+  assert.equal(movingAverages(mstate([], imports)).p, 1100);
+  assert.equal(movingAverages(mstate([sold('a', 100, '2026-02-01')], imports)).p, 1200);
+});
+test('ship của đợt vào giá vốn; hết hàng thì giữ giá lần trước', () => {
+  const imports = [mv(10, 1000, '2026-01-05', 1000)]; // 1.100/cái
+  assert.equal(movingAverages(mstate([], imports)).p, 1100);
+  assert.equal(movingAverages(mstate([sold('a', 10, '2026-02-01')], imports)).p, 1100);
+});
+test('đơn chốt đúng giá trung bình lúc hoàn thành, đơn trước không đổi khi nhập thêm', () => {
+  const imports1 = [mv(100, 1000, '2026-01-05')];
+  const a = applyCostSnapshot(sold('a', 50, '2026-02-01'), () => costTable(mstate([], imports1)));
+  assert.equal(orderSummary(costTable(mstate([a], imports1)), a).product, 50000);
+  const imports2 = [...imports1, mv(100, 1200, '2026-03-01')];
+  const c2 = costTable(mstate([a], imports2));
+  assert.equal(orderSummary(c2, a).product, 50000, 'đơn đã bán 50 cái giá 1.000 không đổi');
+  const b = applyCostSnapshot({ ...sold('b', 30, '2026-03-05'), status: 'done' }, (o) => costTable(mstate([a], imports2), { excludeOrderId: o.id }));
+  assert.equal(Math.round(orderSummary(c2, b).product), Math.round(30 * 170000 / 150));
+});
+test('chốt lại theo thứ tự thời gian: đơn cũ không bị đợt nhập sau kéo giá', () => {
+  const imports = [mv(100, 1000, '2026-01-05'), mv(100, 1200, '2026-03-01')];
+  const orders = [sold('a', 50, '2026-02-01'), sold('b', 30, '2026-03-05')];
+  const out = resnapshotDone(mstate(orders, imports), orders, { all: true });
+  const c = costTable(mstate(orders, imports));
+  const by = Object.fromEntries(out.map((o) => [o.id, Math.round(orderSummary(c, o).product)]));
+  assert.equal(by.a, 50000, 'đơn tháng 2 theo giá 1.000, chưa biết đợt tháng 3');
+  assert.equal(by.b, Math.round(30 * 170000 / 150), 'đơn tháng 3 theo 1.133');
+});
+test('đơn combo lấy hàng từ các sản phẩm thành phần: số bán đó cũng trừ tồn khi tính trung bình', () => {
+  const state = { products: [{ id: 'p', name: 'Móc', variants: [{ id: 'a', name: 'A' }] }, { id: 'cb', name: 'Combo', combo: [{ productId: 'p', variantId: 'a', qty: 2 }] }], packaging: [], imports: [mv(100, 1000, '2026-01-05'), mv(100, 1200, '2026-03-01')], orders: [{ id: 'x', status: 'done', date: '2026-02-01', doneAt: '2026-02-01', items: [{ productId: 'cb', qty: 25 }] }] };
+  assert.equal(Math.round(movingAverages(state).p), 1133); // 25 combo × 2 móc = 50 móc đã bán
+});
+test('snapshot bản cũ (chưa có v: 2) của sản phẩm nhiều loại được chốt lại một lần', () => {
+  const imports = [mv(100, 1000, '2026-01-05')];
+  const o = sold('a', 10, '2026-02-01');
+  const old = { ...o, items: [{ ...o.items[0], snap: { key: JSON.stringify(['p', 'a', 10, null, '', '', '', false]), product: 10000, packaging: 0 } }], snapWrap: { key: JSON.stringify(['', '', '']), value: 0 } };
+  assert.equal(staleDoneOrders(mstate([old], imports)).length, 1);
+  const fixed = resnapshotDone(mstate([old], imports), [old]);
+  assert.equal(fixed[0].items[0].snap.v, 2);
+  assert.equal(staleDoneOrders(mstate(fixed, imports)).length, 0);
+});
