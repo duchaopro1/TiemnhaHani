@@ -282,7 +282,7 @@ export function orderSummary(costs, order) {
   // still charges (PiShip), which is its whole loss; a cancelled order is 0.
   if (INACTIVE_STATUSES.has(order.status)) {
     const loss = returnLoss(order);
-    return { gross, discount, revenue: 0, product: 0, packaging: 0, wrapping: 0, fee: loss, ship: 0, cost: loss, profit: -loss };
+    return { gross, discount, revenue: 0, product: 0, packaging: 0, wrapping: 0, fee: loss, ship: 0, cost: loss, profit: 0 - loss };
   }
   const fee = num(order.platformFee);
   const ship = order.shipPayer === 'shop' ? num(order.shipFee) : 0;
