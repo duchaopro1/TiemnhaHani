@@ -776,19 +776,20 @@ test('đơn Shopee trả hàng: phí sàn = phí dịch vụ PiShip, không thu�
   assert.equal(completedRevenue(costs, [{ ...order, platformFee: 0 }, { ...order, status: 'cancelled' }], 0).rows.length, 0);
 });
 
-test('phí PiShip 2.700: cộng vào đơn hoàn thành đặt trong 1/11 → 23/11, đơn trả hàng chỉ còn phí này, ngoài khoảng thì không', () => {
+test('phí PiShip 2.700: cộng vào đơn hoàn thành đặt trong 1/11 → 24/11, đơn trả hàng chỉ còn phí này, ngoài khoảng thì không', () => {
   const head = ['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'Trạng thái Trả hàng/Hoàn tiền', 'Số lượng', 'Số lượng sản phẩm được hoàn trả', 'Giá ưu đãi', 'Phí cố định'];
   const rows = [head,
     ['IN', '2026-11-05 10:00', 'Hoàn thành', '', 1, 0, 30000, 4800],
     ['EDGE', '2026-11-23 23:00', 'Hoàn thành', '', 1, 0, 30000, 4800],
-    ['OUT', '2026-11-24 08:00', 'Hoàn thành', '', 1, 0, 30000, 4800],      // đã huỷ PiShip
+    ['LAST', '2026-11-24 20:00', 'Hoàn thành', '', 1, 0, 30000, 4800],     // ngày 24 vẫn còn PiShip
+    ['OUT', '2026-11-25 08:00', 'Hoàn thành', '', 1, 0, 30000, 4800],      // tạo sau ngày 24: đã huỷ PiShip
     ['BEFORE', '2026-10-30 08:00', 'Hoàn thành', '', 1, 0, 30000, 4800],
     ['RIN', '2026-11-10 08:00', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 30000, 0],
-    ['ROUT', '2026-11-25 08:00', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 30000, 0],
+    ['ROUT', '2026-11-26 08:00', 'Hoàn thành', 'Đã Chấp Thuận Yêu Cầu', 1, 1, 30000, 0],
     ['WAIT', '2026-11-12 08:00', 'Chờ giao hàng', '', 1, 0, 30000, 4800],   // chưa hoàn thành: chưa cộng
     ['CANC', '2026-11-12 08:00', 'Đã hủy', '', 1, 0, 30000, 0]];
-  const o = Object.fromEntries(rowsToOrders(rows, { piship: { fee: 2700, from: '2026-11-01', to: '2026-11-23' } }).map((x) => [x.code, x.platformFee]));
-  assert.deepEqual(o, { IN: 7500, EDGE: 7500, OUT: 4800, BEFORE: 4800, RIN: 2700, ROUT: 0, WAIT: 4800, CANC: 0 });
+  const o = Object.fromEntries(rowsToOrders(rows, { piship: { fee: 2700, from: '2026-11-01', to: '2026-11-24' } }).map((x) => [x.code, x.platformFee]));
+  assert.deepEqual(o, { IN: 7500, EDGE: 7500, LAST: 7500, OUT: 4800, BEFORE: 4800, RIN: 2700, ROUT: 0, WAIT: 4800, CANC: 0 });
   const noLimit = Object.fromEntries(rowsToOrders(rows, { piship: { fee: 2700 } }).map((x) => [x.code, x.platformFee]));
   assert.equal(noLimit.OUT, 7500); assert.equal(noLimit.BEFORE, 7500);
   assert.equal(rowsToOrders(rows)[0].platformFee, 4800, 'không truyền cấu hình thì không cộng');

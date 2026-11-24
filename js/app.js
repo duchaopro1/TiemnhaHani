@@ -120,10 +120,10 @@ const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
 const patchSettings = (patch) => store.upsert('meta', { ...(store.get('meta', 'settings') || settings), ...patch });
 /** The flat shipping fee set in the settings (a missing or invalid figure falls back to the default). */
 /** Tax Shopee withholds, as a fraction of the price (default 1,5%: 1% VAT + 0,5% personal income tax). */
-/** PiShip service fee: 2.700đ on Shopee orders made from 1/11 to 23/11/2026 (PiShip was cancelled on 24/11); the dates can be changed or emptied in Cài đặt. */
+/** PiShip service fee: 2.700đ on Shopee orders made from 1/11 to 24/11/2026; orders made after 24/11 get none (PiShip was cancelled). The dates can be changed or emptied in Cài đặt. */
 const pishipFee = () => (Number.isFinite(settings.pishipFee) && settings.pishipFee >= 0 ? settings.pishipFee : 2700);
 const pishipFrom = () => (settings.pishipFrom === undefined ? '2026-11-01' : settings.pishipFrom);
-const pishipTo = () => (settings.pishipTo === undefined ? '2026-11-23' : settings.pishipTo);
+const pishipTo = () => (settings.pishipTo === undefined ? '2026-11-24' : settings.pishipTo);
 const taxRate = () => (Number.isFinite(settings.taxRatePct) && settings.taxRatePct >= 0 ? settings.taxRatePct : 1.5) / 100;
 const shipFlat = () => (Number.isFinite(settings.shipFlat) && settings.shipFlat >= 0 ? settings.shipFlat : SHIP_FLAT);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
@@ -3553,7 +3553,7 @@ function pageSettings() {
           <label class="field">Áp dụng cho đơn đặt từ ngày<input type="date" id="set-piship-from" value="${esc(pishipFrom())}"></label>
           <label class="field">đến hết ngày<input type="date" id="set-piship-to" value="${esc(pishipTo())}"></label>
         </div>
-        <p class="small muted" style="margin:4px 0 0">File Shopee không có cột phí PiShip nên khi nhập file app tự cộng khoản này (mặc định 2.700đ) vào <b>Phí sàn</b> của <b>đơn hoàn thành</b> đặt trong khoảng ngày trên (mặc định 1/11 đến hết 23/11/2026, vì đã huỷ PiShip từ 24/11). <b>Đơn trả hàng</b> trong khoảng đó chỉ còn khoản này (PiShip hoàn phí vận chuyển trả hàng, VD 16.500đ, nên triệt tiêu) và ghi là lỗ ở trang Doanh thu. Đơn ngoài khoảng không cộng. Xoá trống một ô ngày = không giới hạn phía đó. Nhập lại file để đơn đã có cập nhật.</p>
+        <p class="small muted" style="margin:4px 0 0">File Shopee không có cột phí PiShip nên khi nhập file app tự cộng khoản này (mặc định 2.700đ) vào <b>Phí sàn</b> của <b>đơn hoàn thành</b> đặt trong khoảng ngày trên (mặc định 1/11 đến hết 24/11/2026; đơn tạo sau 24/11 không còn PiShip vì đã huỷ đăng ký). <b>Đơn trả hàng</b> trong khoảng đó chỉ còn khoản này (PiShip hoàn phí vận chuyển trả hàng, VD 16.500đ, nên triệt tiêu) và ghi là lỗ ở trang Doanh thu. Đơn ngoài khoảng không cộng. Xoá trống một ô ngày = không giới hạn phía đó. Nhập lại file để đơn đã có cập nhật.</p>
         <p class="small muted" style="margin:4px 0 0">Dùng cho hai lựa chọn <b>Ship</b> và <b>Freeship</b> khi lên đơn. Chỉ áp cho đơn tạo hoặc sửa sau này: đơn đã lưu giữ nguyên số tiền ship của nó.</p>
         <p class="small muted" style="margin-top:12px">Shopee: đã ghi nhớ ${mapCount} sản phẩm được gắn. ${mapCount ? '<button class="btn ghost sm" data-action="clear-map">Xoá ghi nhớ</button>' : ''}</p>
         ${!S.products.length && !S.orders.length ? '<button class="btn pink" data-action="demo">Nạp dữ liệu mẫu để thử</button>' : ''}
