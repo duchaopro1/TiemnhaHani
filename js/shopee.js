@@ -111,10 +111,11 @@ function findColumns(headers) {
  * Order-level money fields appear on every row of the same order in Shopee's export,
  * so they're taken from the first row only.
  * `taxRate` (0.015 = 1,5%): Shopee withholds VAT + personal income tax, which the export has no column for; it is added to
- * `pishipFee`: a returned order keeps the PiShip service fee (not in the export, 2.700đ by default in the app); the return
- * shipping is refunded by PiShip, so only this fee remains as its platform fee. Tax is added to the platform fee as rate × (goods − shop voucher). Orders Shopee charged no fee for (cancelled, not settled) get none.
+ * `piship` = { fee, from, to }: the PiShip service fee (not in the export) is added to the platform fee of orders made from
+ * `from` to `to` (YYYY-MM-DD, either may be empty = no limit): a completed order gets it on top of the fees in the file; a
+ * returned order keeps only this fee (PiShip refunds the return shipping, so that nets to zero). Orders outside the window get none. Tax is added to the platform fee as rate × (goods − shop voucher). Orders Shopee charged no fee for (cancelled, not settled) get none.
  */
-export function rowsToOrders(rows, { taxRate = 0, pishipFee = 0 } = {}) {
+export function rowsToOrders(rows, { taxRate = 0, piship = null } = {}) {
   const headerRow = rows.findIndex((r) => r.some((c) => normalize(c) === 'ma don hang' || normalize(c) === 'order id'));
   if (headerRow < 0) throw new Error('Không tìm thấy cột "Mã đơn hàng" — có phải file xuất đơn hàng từ Shopee không?');
   const idx = findColumns(rows[headerRow]);
@@ -157,10 +158,11 @@ export function rowsToOrders(rows, { taxRate = 0, pishipFee = 0 } = {}) {
       price,
     });
   }
+  const pishipDue = (o) => (piship && piship.fee > 0 && (!piship.from || o.date >= piship.from) && (!piship.to || o.date <= piship.to) ? Math.round(piship.fee) : 0);
   // approved return of everything in the order: it is a returned order whatever its status text says
   for (const o of orders.values()) {
     const pieces = o.items.reduce((n, l) => n + l.qty, 0);
-    if (o.returnApproved && o.status !== 'cancelled' && o.returnedQty >= pieces) { o.status = 'returned'; o.platformFee = Math.max(0, pishipFee); }
+    if (o.returnApproved && o.status !== 'cancelled' && o.returnedQty >= pieces) { o.status = 'returned'; o.platformFee = pishipDue(o) ; }
   }
   if (taxRate > 0) {
     for (const o of orders.values()) {
@@ -170,6 +172,7 @@ export function rowsToOrders(rows, { taxRate = 0, pishipFee = 0 } = {}) {
       o.platformFee += o.tax;
     }
   }
+  for (const o of orders.values()) if (o.status === 'done') o.platformFee += pishipDue(o);
   return [...orders.values()];
 }
 

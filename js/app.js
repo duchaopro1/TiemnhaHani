@@ -120,7 +120,10 @@ const vStock = (pid, vid) => num(stock.variants[variantKey(pid, vid)]);
 const patchSettings = (patch) => store.upsert('meta', { ...(store.get('meta', 'settings') || settings), ...patch });
 /** The flat shipping fee set in the settings (a missing or invalid figure falls back to the default). */
 /** Tax Shopee withholds, as a fraction of the price (default 1,5%: 1% VAT + 0,5% personal income tax). */
+/** PiShip service fee: 2.700đ on Shopee orders made from 1/11 to 23/11/2026 (PiShip was cancelled on 24/11); the dates can be changed or emptied in Cài đặt. */
 const pishipFee = () => (Number.isFinite(settings.pishipFee) && settings.pishipFee >= 0 ? settings.pishipFee : 2700);
+const pishipFrom = () => (settings.pishipFrom === undefined ? '2026-11-01' : settings.pishipFrom);
+const pishipTo = () => (settings.pishipTo === undefined ? '2026-11-23' : settings.pishipTo);
 const taxRate = () => (Number.isFinite(settings.taxRatePct) && settings.taxRatePct >= 0 ? settings.taxRatePct : 1.5) / 100;
 const shipFlat = () => (Number.isFinite(settings.shipFlat) && settings.shipFlat >= 0 ? settings.shipFlat : SHIP_FLAT);
 const lowOf = (item) => num(item?.lowStock ?? settings.lowStock);
@@ -1513,7 +1516,7 @@ async function readShopeeOrders(file) {
   // A .csv is text (UTF-8): read as bytes it comes out with broken accents and the "Mã đơn hàng" column is not found.
   const wb = /\.csv$/i.test(file.name || '') ? XLSX.read(await file.text(), { type: 'string' }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-  return rowsToOrders(rows, { taxRate: taxRate(), pishipFee: pishipFee() });
+  return rowsToOrders(rows, { taxRate: taxRate(), piship: { fee: pishipFee(), from: pishipFrom(), to: pishipTo() } });
 }
 
 async function importShopeeFile(file) {
@@ -3545,8 +3548,12 @@ function pageSettings() {
         <label class="field" style="margin-top:12px">Phí ship đồng giá (đ)<input type="number" min="0" step="1000" id="set-shipflat" value="${shipFlat()}"></label>
         <label class="field" style="margin-top:12px">Thuế Shopee tính thêm vào phí sàn (% giá bán)<input type="number" min="0" max="20" step="0.1" id="set-tax" value="${taxRate() * 100}"></label>
         <p class="small muted" style="margin:4px 0 0">Mặc định 1,5% (thuế GTGT 1% + TNCN 0,5% Shopee khấu trừ). Khi nhập file Shopee, thuế = tỉ lệ này × (tiền hàng − giảm giá của shop), cộng vào <b>Phí sàn</b> của đơn (đơn huỷ hoặc chưa có phí thì không tính). Nhập 0 nếu không muốn tính. Nhập lại file để đơn cũ cập nhật.</p>
-        <label class="field" style="margin-top:12px">Phí dịch vụ PiShip của đơn Shopee trả hàng (đ)<input type="number" min="0" step="100" id="set-piship" value="${pishipFee()}"></label>
-        <p class="small muted" style="margin:4px 0 0">File Shopee không có cột này. Đơn trả hàng vẫn bị trừ khoản này (mặc định 2.700đ), ghi vào <b>Phí sàn</b> của đơn và tính là lỗ ở trang Doanh thu. Phí vận chuyển trả hàng (VD 16.500đ) được PiShip hoàn đúng bằng đó nên triệt tiêu, không ghi gì. Nhập lại file để đơn cũ cập nhật.</p>
+        <label class="field" style="margin-top:12px">Phí dịch vụ PiShip của đơn Shopee (đ)<input type="number" min="0" step="100" id="set-piship" value="${pishipFee()}"></label>
+        <div class="form-grid" style="margin-top:8px">
+          <label class="field">Áp dụng cho đơn đặt từ ngày<input type="date" id="set-piship-from" value="${esc(pishipFrom())}"></label>
+          <label class="field">đến hết ngày<input type="date" id="set-piship-to" value="${esc(pishipTo())}"></label>
+        </div>
+        <p class="small muted" style="margin:4px 0 0">File Shopee không có cột phí PiShip nên khi nhập file app tự cộng khoản này (mặc định 2.700đ) vào <b>Phí sàn</b> của <b>đơn hoàn thành</b> đặt trong khoảng ngày trên (mặc định 1/11 đến hết 23/11/2026, vì đã huỷ PiShip từ 24/11). <b>Đơn trả hàng</b> trong khoảng đó chỉ còn khoản này (PiShip hoàn phí vận chuyển trả hàng, VD 16.500đ, nên triệt tiêu) và ghi là lỗ ở trang Doanh thu. Đơn ngoài khoảng không cộng. Xoá trống một ô ngày = không giới hạn phía đó. Nhập lại file để đơn đã có cập nhật.</p>
         <p class="small muted" style="margin:4px 0 0">Dùng cho hai lựa chọn <b>Ship</b> và <b>Freeship</b> khi lên đơn. Chỉ áp cho đơn tạo hoặc sửa sau này: đơn đã lưu giữ nguyên số tiền ship của nó.</p>
         <p class="small muted" style="margin-top:12px">Shopee: đã ghi nhớ ${mapCount} sản phẩm được gắn. ${mapCount ? '<button class="btn ghost sm" data-action="clear-map">Xoá ghi nhớ</button>' : ''}</p>
         ${!S.products.length && !S.orders.length ? '<button class="btn pink" data-action="demo">Nạp dữ liệu mẫu để thử</button>' : ''}
@@ -3934,6 +3941,8 @@ document.addEventListener('change', async (e) => {
     await patchSettings({ shipFlat: v });
   }
   if (t.id === 'set-piship') await patchSettings({ pishipFee: t.value === '' ? 2700 : Math.max(0, Math.round(num(t.value))) });
+  if (t.id === 'set-piship-from') await patchSettings({ pishipFrom: t.value });
+  if (t.id === 'set-piship-to') await patchSettings({ pishipTo: t.value });
   if (t.id === 'set-tax') await patchSettings({ taxRatePct: t.value === '' ? 1.5 : Math.min(20, Math.max(0, num(t.value))) });
   if (t.id === 'set-labor') await patchSettings({ laborPerItem: Math.max(0, num(t.value)) });
   if (t.id === 'shopee-file' && t.files[0]) { const f = t.files[0]; t.value = ''; await importShopeeFile(f); } // cleared first: choosing the same file again must fire a new change
