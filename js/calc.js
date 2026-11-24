@@ -278,6 +278,12 @@ export function orderSummary(costs, order) {
   if (order.snapWrap && order.snapWrap.key === wrapKey(order)) wrapping = num(order.snapWrap.value);
   packaging += wrapping;
   const discount = num(order.discount);
+  // A cancelled or returned order sold nothing: no revenue, no goods cost. Only a returned order keeps the fee Shopee
+  // still charges (PiShip), which is its whole loss; a cancelled order is 0.
+  if (INACTIVE_STATUSES.has(order.status)) {
+    const loss = returnLoss(order);
+    return { gross, discount, revenue: 0, product: 0, packaging: 0, wrapping: 0, fee: loss, ship: 0, cost: loss, profit: -loss };
+  }
   const fee = num(order.platformFee);
   const ship = order.shipPayer === 'shop' ? num(order.shipFee) : 0;
   const revenue = gross - discount;

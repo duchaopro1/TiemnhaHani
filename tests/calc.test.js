@@ -794,3 +794,14 @@ test('phí PiShip 2.700: cộng vào đơn hoàn thành đặt trong 1/11 → 24
   assert.equal(noLimit.OUT, 7500); assert.equal(noLimit.BEFORE, 7500);
   assert.equal(rowsToOrders(rows)[0].platformFee, 4800, 'không truyền cấu hình thì không cộng');
 });
+
+test('đơn huỷ / trả hàng: không doanh thu, không giá vốn; trả hàng chỉ lỗ phí PiShip, huỷ là 0', () => {
+  const costs = costTable({ products: [{ id: 'x', name: 'X', baseCost: 5000 }], packaging: [], imports: [], orders: [] });
+  const base = { shipPayer: 'customer', shipFee: 0, discount: 0, items: [{ productId: 'x', qty: 1, price: 119000 }] };
+  assert.equal(orderSummary(costs, { ...base, status: 'done', platformFee: 2700 }).profit, 119000 - 5000 - 2700);
+  const ret = orderSummary(costs, { ...base, status: 'returned', platformFee: 2700 });
+  assert.deepEqual([ret.revenue, ret.product, ret.cost, ret.profit], [0, 0, 2700, -2700]);
+  const can = orderSummary(costs, { ...base, status: 'cancelled', platformFee: 2700 });
+  assert.deepEqual([can.revenue, can.cost, can.profit], [0, 0, 0]);
+  assert.equal(orderSummary(costs, { ...base, status: 'returned', platformFee: 0 }).profit, 0);
+});
