@@ -1,7 +1,7 @@
 import { store, initStore, firebaseEnabled, restoreBackup, uid } from './store.js';
 import {
   PLATFORMS, STATUSES, INACTIVE_STATUSES, PACK_SLOTS, WRAP_SLOTS,
-  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, doneDay, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
+  costTable, lineCost, orderSummary, stockLevels, aggregate, variantKey, splitFee, countByStatus, OPEN_STATUSES, operatingCosts, adjustForCount, completedRevenue, doneDay, clearCostSnapshot, applyCostSnapshot, stageQuantities, STAGE_KEYS, orderShortages, TRANSIT_STAGES, TRANSIT_BY_ORIGIN, originOf, withTransit, transitHistory, isCombo, comboParts, isPoolPart, poolKey, parsePick, tierPrice, DEFAULT_LABOR, SHIP_FLAT, shipModeOf, stockState, orderPayment, toCollect, isReceived, allocateShipping, findDuplicateOrders,
 } from './calc.js';
 import { rowsToOrders, listingKey, normalize, mergeShopeeStatus, parseCodes, reviewDelivery } from './shopee.js';
 import { stable, normalizeOrder, getDraft, putDraft, deleteDraft, markDraftClosed, openDraftKeys } from './drafts.js';
@@ -531,8 +531,9 @@ function pageRevenue() {
       <div class="card kpi-card"><div class="label">Lợi nhuận sau công${total.revenue ? ` · ${margin}%` : ''}</div><div class="value ${profitCls(total.profit)}">${money(total.profit)}</div></div>
     </div>
     <div class="toolbar">
+      <button class="btn ghost sm" data-action="resnap-costs" title="Tính lại giá vốn của mọi đơn đã hoàn thành theo giá nhập hiện tại (dùng khi bạn vừa sửa một đợt nhập sai)">↻ Tính lại giá vốn theo giá hiện tại</button>
       <label class="field inline">Tiền công mỗi sản phẩm <input type="number" min="0" step="1000" id="set-labor" value="${labor}" style="width:110px"> đ</label>
-      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Tiền công = tiền công mỗi sản phẩm × số sản phẩm trong đơn. Lợi nhuận sau công = lợi nhuận − tiền công. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
+      <span class="muted small">Lợi nhuận = doanh thu − (giá vốn SP + đóng gói + ship shop chịu + phí sàn). Tiền công = tiền công mỗi sản phẩm × số sản phẩm trong đơn. Lợi nhuận sau công = lợi nhuận − tiền công. <b>Giá vốn của mỗi đơn được chốt lúc đơn hoàn thành</b>: nhập hàng giá khác sau này không làm đổi đơn cũ. Chưa gồm chi phí vận hành (vật tư dùng chung), xem ở Tổng quan.</span>
     </div>
     <div class="card table-wrap rev-wrap">
       ${rows.length ? `<table class="rev-table">
@@ -3854,6 +3855,13 @@ document.addEventListener('click', async (e) => {
     case 'backup': return download(`hani-backup-${today()}.json`, JSON.stringify(store.state, null, 2), 'application/json');
     case 'export-orders': return openExportDialog();
     case 'paste-order': return openPasteOrder();
+    case 'resnap-costs': {
+      const done = S.orders.filter((o) => o.status === 'done');
+      if (!done.length) return toast('Chưa có đơn hoàn thành nào');
+      if (!(await ask(`Tính lại giá vốn của ${done.length} đơn đã hoàn thành theo giá nhập hiện tại? Lợi nhuận các đơn cũ sẽ đổi theo giá vốn trung bình bây giờ.`, 'Tính lại'))) return;
+      await store.upsertMany('orders', done.map(clearCostSnapshot), { quiet: true });
+      return toast(`Đã chốt lại giá vốn cho ${done.length} đơn`);
+    }
     case 'check-delivery': return openDeliveryCheck();
     case 'web-orders': return openWebOrders();
     case 'sync-shop-now': return syncShop({ force: true }).then(() => { if (ui.shopSync?.state === 'ok') toast('Đã cập nhật cửa hàng web'); else if (ui.shopSync?.state === 'error') notify('Chưa cập nhật được cửa hàng web: ' + ui.shopSync.text); });
@@ -3996,7 +4004,13 @@ async function boot() {
     await store.init();
     render();
   }
-  store.whenReady().then(async () => { await resumeDraft(); shortReady = true; render(); });
+  store.whenReady().then(async () => {
+    // orders finished before costs were fixed: fix them once, at today's average prices
+    const stale = store.state.orders.filter((o) => o.status === 'done' && applyCostSnapshot(o, () => costTable(store.state)) !== o);
+    if (stale.length) {
+      try { await store.upsertMany('orders', stale, { quiet: true }); toast(`Đã chốt giá vốn cho ${stale.length} đơn đã hoàn thành`, 6000); } catch { /* tried again next time the page opens */ }
+    }
+    await resumeDraft(); shortReady = true; render(); });
 }
 
 /** After a reload (or a new version of the page) with an order form open: offer that order back. */

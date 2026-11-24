@@ -162,8 +162,22 @@ export function packUnits(line) {
   return line.packEach ? Math.max(1, num(line.qty)) : 1;
 }
 
-/** Cost breakdown of one order line. */
+/** What a line is made of for costing; a snapshot is only valid while the line still has this exact key. */
+const lineKey = (l) => JSON.stringify([l.productId || '', l.variantId || '', num(l.qty), l.picks || null, l.pack1 || '', l.pack2 || '', l.pack3 || '', !!l.packEach]);
+const wrapKey = (o) => JSON.stringify([o.wrap1 || '', o.wrap2 || '', o.wrap3 || '']);
+
+/** Cost breakdown of one order line. A line of a finished order uses the cost fixed when it was completed. */
 export function lineCost(costs, line) {
+  const c = liveLineCost(costs, line);
+  const s = line.snap;
+  if (s && s.key === lineKey(line)) {
+    return { ...c, product: num(s.product), packaging: num(s.packaging), total: num(s.product) + num(s.packaging), profit: c.revenue - num(s.product) - num(s.packaging) };
+  }
+  return c;
+}
+
+/** The cost of a line at today's average prices (ignores any snapshot). */
+export function liveLineCost(costs, line) {
   const qty = num(line.qty);
   let product = qty * num(costs.product[line.productId]);
   const combo = costs.combos?.get?.(line.productId);
@@ -202,6 +216,7 @@ export function orderSummary(costs, order) {
   // Outer packaging of the whole order: once per order, shared supplies are operating cost instead.
   let wrapping = 0;
   for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
+  if (order.snapWrap && order.snapWrap.key === wrapKey(order)) wrapping = num(order.snapWrap.value);
   packaging += wrapping;
   const discount = num(order.discount);
   const fee = num(order.platformFee);
@@ -612,3 +627,39 @@ export function stampStatusDates(prev, next, today) {
   if (next.status !== 'done' && !kept('doneAt')) out.doneAt = '';
   return out;
 }
+
+/**
+ * Fix an order's costs at the moment it is completed, so a later import at another price does not rewrite its profit.
+ *  - status "Hoàn thành": every line (and the outer wrapping) keeps the cost of today; lines that already hold a valid
+ *    snapshot are left alone, a line whose product / quantity / packaging changed gets a new one.
+ *  - any other status: snapshots are removed (the order is costed at the live average again).
+ * `getCosts` is only called when something needs fixing. Returns the same object when nothing changes.
+ */
+export function applyCostSnapshot(order, getCosts) {
+  if (!order) return order;
+  const hasSnap = (order.items || []).some((l) => l.snap) || order.snapWrap;
+  if (order.status !== 'done') {
+    if (!hasSnap) return order;
+    const { snapWrap, ...rest } = order;
+    return { ...rest, items: (order.items || []).map(({ snap, ...l }) => l) };
+  }
+  const lineStale = (l) => l.productId && !(l.snap && l.snap.key === lineKey(l));
+  const wrapStale = !(order.snapWrap && order.snapWrap.key === wrapKey(order));
+  if (!(order.items || []).some(lineStale) && !wrapStale) return order;
+  const costs = getCosts();
+  const items = (order.items || []).map((l) => {
+    if (!lineStale(l)) return l;
+    const { snap, ...rest } = l;
+    const c = liveLineCost(costs, rest);
+    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging } };
+  });
+  let wrapping = 0;
+  for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
+  return { ...order, items, snapWrap: { key: wrapKey(order), value: wrapping } };
+}
+
+/** Throw the fixed costs away so the next save fixes them again at today's prices. */
+export const clearCostSnapshot = (order) => {
+  const { snapWrap, ...rest } = order;
+  return { ...rest, items: (order.items || []).map(({ snap, ...l }) => l) };
+};
