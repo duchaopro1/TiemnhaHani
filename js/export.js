@@ -1,5 +1,5 @@
 // Order export: pick a date range, then build spreadsheet rows (no DOM — testable in Node).
-import { PLATFORMS, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, PACK_SLOTS, orderSummary, lineCost, orderPayment } from './calc.js';
+import { PLATFORMS, STATUSES, INACTIVE_STATUSES, OPEN_STATUSES, PACK_SLOTS, orderSummary, lineCost, orderCtx, orderPayment } from './calc.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 /** YYYY-MM-DD in the viewer's own time zone (toISOString would shift to UTC). */
@@ -86,8 +86,9 @@ export function buildSheets({ orders, costs, range, names, operating = null }) {
       +o.shipFee || 0, o.shipPayer === 'shop' ? 'Shop chịu' : 'Khách chịu', o.tracking || '', z(s.ship), z(s.cost), z(s.profit),
       pay.tracked ? pay.paid : '', pay.tracked ? toCollectNow : '', o.note || '',
     ]);
+    const lctx = orderCtx(o);
     for (const l of o.items || []) {
-      const c = lineCost(costs, l);
+      const c = lineCost(costs, l, lctx);
       const full = names.item(l.productId, '', l.productName || '?');
       const withVariant = names.item(l.productId, l.variantId, '');
       lineRows.push([

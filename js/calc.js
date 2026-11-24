@@ -76,7 +76,7 @@ const num = (v) => (Number.isFinite(+v) ? +v : 0);
  * when buying stock is spread across the units.
  * Falls back to the item's manual `baseCost` when it has never been imported.
  */
-export function costTable(state, { excludeOrderId = '', asOf = '' } = {}) {
+export function costTable(state) {
   const table = { product: {}, packaging: {} };
   for (const imp of state.imports || []) {
     if (!isReceived(imp)) continue; // goods still on their way don't set the cost yet
@@ -114,13 +114,25 @@ export function costTable(state, { excludeOrderId = '', asOf = '' } = {}) {
     if (batches.length) fifo[p.id] = { batches, consumed: 0 };
   }
   const combos = comboMap(state.products);
-  // pieces already taken from those batches: every finished order, combos by their parts (the one being fixed does not count itself)
-  for (const o of state.orders || []) {
-    if (o.status !== 'done' || o.id === excludeOrderId || (asOf && doneDay(o) > asOf)) continue;
-    for (const l of o.items || []) for (const part of expandLine(l, combos)) if (part.productId && fifo[part.productId]) fifo[part.productId].consumed += num(part.qty);
+  // The queue: every order that is not cancelled / returned takes its pieces from the batches in the order of the day it was
+  // made (the day it is packed), combos by their parts. `before` = how many pieces of the product the orders ahead of it took.
+  const running = {};
+  for (const o of (state.orders || []).filter((x) => !INACTIVE_STATUSES.has(x.status)).sort(orderSeq)) {
+    const per = {};
+    for (const l of o.items || []) for (const part of expandLine(l, combos)) if (part.productId && fifo[part.productId]) per[part.productId] = (per[part.productId] || 0) + num(part.qty);
+    for (const [pid, n] of Object.entries(per)) { (fifo[pid].before ||= new Map()).set(o.id, running[pid] || 0); running[pid] = (running[pid] || 0) + n; }
   }
+  for (const pid of Object.keys(fifo)) fifo[pid].total = fifo[pid].consumed = running[pid] || 0;
   return { product, packaging: avg('packaging', state.packaging), shared, combos, fifo, fifoIds };
 }
+
+/** Order in the queue: the day the order was made, then when it was entered, then its code (numbers compared as numbers). */
+export const orderSeq = (a, b) => (a.date || '').localeCompare(b.date || '')
+  || (a.createdAt && b.createdAt ? a.createdAt - b.createdAt : 0)
+  || (a.code || '').localeCompare(b.code || '', 'vi', { numeric: true })
+  || (a.id || '').localeCompare(b.id || '');
+/** Context to cost one order's lines one after another (a later line of the same product comes after the earlier ones). */
+export const orderCtx = (order) => ({ orderId: order?.id || '', taken: {} });
 
 /**
  * Every product that is bought as itself (not a combo) is costed first-in-first-out by pieces: the oldest batch is used up
@@ -203,8 +215,8 @@ const lineKey = (l) => JSON.stringify([l.productId || '', l.variantId || '', num
 const wrapKey = (o) => JSON.stringify([o.wrap1 || '', o.wrap2 || '', o.wrap3 || '']);
 
 /** Cost breakdown of one order line. A line of a finished order uses the cost fixed when it was completed. */
-export function lineCost(costs, line) {
-  const c = liveLineCost(costs, line);
+export function lineCost(costs, line, ctx) {
+  const c = liveLineCost(costs, line, ctx);
   const s = line.snap;
   if (s && s.key === lineKey(line)) {
     return { ...c, product: num(s.product), packaging: num(s.packaging), total: num(s.product) + num(s.packaging), profit: c.revenue - num(s.product) - num(s.packaging) };
@@ -213,23 +225,22 @@ export function lineCost(costs, line) {
 }
 
 /** The cost of a line at today's average prices (ignores any snapshot). */
-export function liveLineCost(costs, line) {
+export function liveLineCost(costs, line, ctx = orderCtx(null)) {
   const qty = num(line.qty);
   let product = qty * num(costs.product[line.productId]);
   const combo = costs.combos?.get?.(line.productId);
-  const f = costs.fifo?.[line.productId];
-  if (f && !combo) product = fifoSpan(f.batches, f.consumed, qty);
+  // cost of `n` pieces of a product, right after the pieces its order's earlier lines and the orders ahead of it took
+  const piece = (pid, n) => {
+    const fi = costs.fifo?.[pid];
+    if (!fi) return n * num(costs.product[pid]);
+    const start = (ctx.orderId && fi.before?.has(ctx.orderId) ? fi.before.get(ctx.orderId) : fi.total) + num(ctx.taken[pid]);
+    ctx.taken[pid] = num(ctx.taken[pid]) + n;
+    return fifoSpan(fi.batches, start, n);
+  };
+  if (!combo && line.productId) product = piece(line.productId, qty);
   if (combo) {
     // a combo costs its parts, each taken from its own batches; a pool part costs the picked product (the average of the pool until picked)
     product = 0;
-    const taken = {};
-    const piece = (pid, n) => {
-      const fi = costs.fifo?.[pid];
-      if (!fi) return n * num(costs.product[pid]);
-      const c = fifoSpan(fi.batches, fi.consumed + num(taken[pid]), n);
-      taken[pid] = num(taken[pid]) + n;
-      return c;
-    };
     for (let u = 0; u < Math.max(0, Math.round(qty)); u++) {
       comboParts(combo).forEach((c, i) => {
         const pick = isPoolPart(c) ? parsePick(line.picks?.[u]?.[i], c.pool) : null;
@@ -254,8 +265,9 @@ export function liveLineCost(costs, line) {
  */
 export function orderSummary(costs, order) {
   let gross = 0, product = 0, packaging = 0;
+  const ctx = orderCtx(order);
   for (const line of order.items || []) {
-    const c = lineCost(costs, line);
+    const c = lineCost(costs, line, ctx);
     gross += c.revenue;
     product += c.product;
     packaging += c.packaging;
@@ -413,9 +425,10 @@ export function aggregate(costs, orders) {
     pf.orders += 1;
     pf.revenue += s.revenue;
     pf.profit += s.profit;
+    const lctx = orderCtx(order);
     for (const line of order.items || []) {
       if (!line.productId) continue;
-      const c = lineCost(costs, line);
+      const c = lineCost(costs, line, lctx);
       const pr = (total.byProduct[line.productId] ||= { qty: 0, revenue: 0, profit: 0 });
       pr.qty += num(line.qty);
       pr.revenue += c.revenue;
@@ -690,15 +703,16 @@ export function applyCostSnapshot(order, getCosts) {
     const { snapWrap, ...rest } = order;
     return { ...rest, items: (order.items || []).map(({ snap, ...l }) => l) };
   }
-  const lineStale = (l) => l.productId && !(l.snap && l.snap.key === lineKey(l));
+  const lineStale = (l) => snapStale(l);
   const wrapStale = !(order.snapWrap && order.snapWrap.key === wrapKey(order));
   if (!(order.items || []).some(lineStale) && !wrapStale) return order;
   const costs = getCosts(order);
+  const ctx = orderCtx(order);
   const items = (order.items || []).map((l) => {
-    if (!lineStale(l)) return l;
     const { snap, ...rest } = l;
-    const c = liveLineCost(costs, rest);
-    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging, fifo: true } };
+    const c = liveLineCost(costs, rest, ctx); // every line is walked so the next line of the same product starts after this one
+    if (!lineStale(l)) return l;
+    return { ...rest, snap: { key: lineKey(rest), product: c.product, packaging: c.packaging, fifo: true, ord: 1 } };
   });
   let wrapping = 0;
   for (const slot of WRAP_SLOTS) if (order[slot] && !costs.shared?.[order[slot]]) wrapping += num(costs.packaging[order[slot]]);
@@ -716,7 +730,7 @@ export const clearCostSnapshot = (order) => {
  * average-based snapshot on a product that is now costed first-in-first-out.
  */
 /** A line's fixed cost is out of date: none, for another line, or made by an older way of costing (all-import average, moving average). */
-const snapStale = (l) => !!l.productId && !(l.snap && l.snap.key === lineKey(l) && l.snap.fifo);
+const snapStale = (l) => !!l.productId && !(l.snap && l.snap.key === lineKey(l) && l.snap.fifo && l.snap.ord === 1);
 
 export function staleDoneOrders(state) {
   const stale = snapStale;
@@ -724,21 +738,15 @@ export function staleDoneOrders(state) {
 }
 
 /**
- * Fix the costs of finished orders in the order they were completed, so first-in-first-out takes batches in sequence.
+ * Fix the costs of finished orders again. A product's batches are used in the order the orders were made, so each
+ * order's place in the queue does not depend on when it was completed and one pass over all orders is enough.
  * `all` throws every old snapshot away; otherwise only lines that are missing or out of date are redone.
  * Returns the orders with their costs fixed (ready to save).
  */
 export function resnapshotDone(state, targets, { all = false } = {}) {
-  const ids = new Set(targets.map((o) => o.id));
-  let rest = (state.orders || []).filter((o) => !ids.has(o.id));
-  const sorted = [...targets].sort((a, b) => doneDay(a).localeCompare(doneDay(b)) || (a.date || '').localeCompare(b.date || '') || (a.code || '').localeCompare(b.code || ''));
-  const out = [];
-  for (const o of sorted) {
-    const costs = costTable({ ...state, orders: rest }, { asOf: doneDay(o) });
+  const costs = costTable(state);
+  return targets.map((o) => {
     const base = all ? clearCostSnapshot(o) : { ...o, items: (o.items || []).map((l) => (l.snap && snapStale(l) ? (({ snap, ...x }) => x)(l) : l)) };
-    const snapped = applyCostSnapshot(base, () => costs);
-    out.push(snapped);
-    rest = [...rest, snapped];
-  }
-  return out;
+    return applyCostSnapshot(base, () => costs);
+  });
 }

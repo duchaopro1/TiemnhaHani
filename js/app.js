@@ -1206,7 +1206,7 @@ function openOrderFormNow(existing, restored) {
       };
       const drawMeta = (i) => {
         const l = o.items[i];
-        const c = lineCost(costs, l);
+        const c = lineCost(costs, l, { orderId: existing?.id || '', taken: {} });
         const el = $(`[data-line="${i}"] .meta`, m);
         el.innerHTML = `
           <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" data-f="packEach" ${l.packEach ? 'checked' : ''} style="width:auto"> Đóng gói riêng từng cái (×${num(l.qty)})</label>
@@ -3378,7 +3378,7 @@ function prefillFromMessage(r, webOrderId = '') {
 }
 
 /** Cost of the next piece to be sold from a first-in-first-out product. */
-const fifoNextUnit = (f) => { let skip = f.consumed; for (const b of f.batches) { if (skip < b.qty) return b.unit; skip -= b.qty; } return f.batches[f.batches.length - 1].unit; };
+const fifoNextUnit = (f) => { let skip = f.total; for (const b of f.batches) { if (skip < b.qty) return b.unit; skip -= b.qty; } return f.batches[f.batches.length - 1].unit; };
 
 /** An order from a chat message the shop owner pasted (free text + a link back to the conversation). */
 function prefillFromChat(r) {
